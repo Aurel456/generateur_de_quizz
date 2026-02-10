@@ -1,0 +1,464 @@
+"""
+app.py — Interface Streamlit principale pour le générateur de quizz et exercices.
+"""
+
+import streamlit as st
+import time
+
+from pdf_processor import extract_and_chunk, get_text_stats, extract_text_from_pdf, count_tokens
+from llm_service import get_model_info
+from quiz_generator import generate_quiz, Quiz
+from exercise_generator import generate_exercises
+from quiz_exporter import export_quiz_html
+
+# ─── Configuration de la page ───────────────────────────────────────────────────
+
+st.set_page_config(
+    page_title="📝 Générateur de Quizz & Exercices",
+    page_icon="📝",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ─── CSS personnalisé ───────────────────────────────────────────────────────────
+
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    .stApp {
+        font-family: 'Inter', sans-serif;
+    }
+
+    .main-header {
+        text-align: center;
+        padding: 1.5rem 0;
+        margin-bottom: 1rem;
+    }
+
+    .main-header h1 {
+        background: linear-gradient(135deg, #6c63ff 0%, #3f51b5 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 2.2rem;
+        font-weight: 700;
+    }
+
+    .stat-card {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border-radius: 12px;
+        padding: 1.2rem;
+        border: 1px solid #2a2a40;
+        text-align: center;
+    }
+
+    .stat-card .stat-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #6c63ff;
+    }
+
+    .stat-card .stat-label {
+        font-size: 0.85rem;
+        color: #a0a0b8;
+        margin-top: 0.3rem;
+    }
+
+    .question-box {
+        background: #16213e;
+        border: 1px solid #2a2a40;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .exercise-box {
+        background: #16213e;
+        border: 1px solid #2a2a40;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .verified-badge {
+        display: inline-block;
+        padding: 0.3rem 0.8rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .verified-ok {
+        background: rgba(0, 200, 83, 0.15);
+        color: #00c853;
+        border: 1px solid rgba(0, 200, 83, 0.3);
+    }
+
+    .verified-fail {
+        background: rgba(255, 23, 68, 0.15);
+        color: #ff1744;
+        border: 1px solid rgba(255, 23, 68, 0.3);
+    }
+
+    div[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f0f1a 0%, #1a1a2e 100%);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ─── Header ─────────────────────────────────────────────────────────────────────
+
+st.markdown("""
+<div class="main-header">
+    <h1>📝 Générateur de Quizz & Exercices</h1>
+    <p style="color: #a0a0b8;">Uploadez un PDF et générez automatiquement des quizz QCM et exercices avec IA</p>
+</div>
+""", unsafe_allow_html=True)
+
+# ─── Session state ──────────────────────────────────────────────────────────────
+
+if "quiz" not in st.session_state:
+    st.session_state.quiz = None
+if "exercises" not in st.session_state:
+    st.session_state.exercises = None
+if "chunks" not in st.session_state:
+    st.session_state.chunks = None
+if "pdf_stats" not in st.session_state:
+    st.session_state.pdf_stats = None
+
+# ─── Sidebar ────────────────────────────────────────────────────────────────────
+
+with st.sidebar:
+    st.markdown("## 📄 Document PDF")
+    uploaded_file = st.file_uploader(
+        "Choisir un fichier PDF",
+        type=["pdf"],
+        help="Uploadez le PDF à partir duquel générer les questions."
+    )
+
+    st.divider()
+
+    st.markdown("## ⚙️ Paramètres de lecture")
+    read_mode = st.selectbox(
+        "Mode de lecture",
+        options=["paragraph", "global", "hybrid"],
+        format_func=lambda x: {
+            "paragraph": "📝 Par paragraphe",
+            "global": "🌐 Global (texte complet)",
+            "hybrid": "🔀 Hybride (les deux)"
+        }[x],
+        index=2,
+        help=(
+            "**Paragraphe** : Questions basées sur chaque paragraphe.\n\n"
+            "**Global** : Texte complet découpé en chunks.\n\n"
+            "**Hybride** : Combine les deux pour une meilleure couverture."
+        )
+    )
+
+    max_chunk_tokens = st.slider(
+        "Taille max des chunks (tokens)",
+        min_value=500,
+        max_value=4000,
+        value=2000,
+        step=100,
+        help="Nombre max de tokens par chunk envoyé au LLM."
+    )
+
+    st.divider()
+
+    # Info modèle
+    model_info = get_model_info()
+    st.markdown("## 🤖 Modèle LLM")
+    st.caption(f"**Modèle** : `{model_info['model_name']}`")
+    st.caption(f"**Contexte** : {model_info['context_window']:,} tokens")
+    st.caption(f"**API** : `{model_info['api_base']}`")
+
+# ─── Traitement du PDF ──────────────────────────────────────────────────────────
+
+if uploaded_file is not None:
+    # Extraire les stats et chunks
+    if st.session_state.pdf_stats is None or st.session_state.get("_last_file") != uploaded_file.name:
+        with st.spinner("📄 Analyse du PDF en cours..."):
+            st.session_state.pdf_stats = get_text_stats(uploaded_file)
+            uploaded_file.seek(0)  # Reset le curseur
+            st.session_state.chunks = extract_and_chunk(
+                uploaded_file, mode=read_mode, max_tokens=max_chunk_tokens
+            )
+            uploaded_file.seek(0)
+            st.session_state._last_file = uploaded_file.name
+            # Reset les résultats précédents
+            st.session_state.quiz = None
+            st.session_state.exercises = None
+
+    stats = st.session_state.pdf_stats
+    chunks = st.session_state.chunks
+
+    # Afficher les statistiques
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-value">{stats['num_pages']}</div>
+            <div class="stat-label">Pages</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-value">{stats['total_tokens']:,}</div>
+            <div class="stat-label">Tokens total</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-value">{len(chunks)}</div>
+            <div class="stat-label">Chunks</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col4:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-value">{stats['avg_tokens_per_page']}</div>
+            <div class="stat-label">Tokens/page</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.divider()
+
+    # ─── Onglets Quizz / Exercices ──────────────────────────────────────────────
+
+    tab_quiz, tab_exercises, tab_preview = st.tabs(["🎯 Quizz QCM", "🧮 Exercices", "👁️ Aperçu texte"])
+
+    # ═══ ONGLET QUIZZ ═══════════════════════════════════════════════════════════
+
+    with tab_quiz:
+        st.markdown("### ⚙️ Configuration du Quizz")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            difficulty = st.select_slider(
+                "Niveau de difficulté",
+                options=["facile", "moyen", "difficile"],
+                value="moyen",
+                help="Facile = faits simples, Moyen = compréhension, Difficile = analyse/synthèse"
+            )
+
+            num_questions = st.slider(
+                "Nombre de questions",
+                min_value=3,
+                max_value=30,
+                value=10,
+                help="Nombre total de questions QCM à générer."
+            )
+
+        with col_b:
+            num_choices = st.slider(
+                "Nombre de choix (A, B, C, ...)",
+                min_value=4,
+                max_value=7,
+                value=4,
+                help="Nombre de réponses proposées par question (A à G)."
+            )
+
+            num_correct = st.slider(
+                "Nombre de bonnes réponses par question",
+                min_value=1,
+                max_value=num_choices - 1,
+                value=1,
+                help="Combien de réponses correctes parmi les choix."
+            )
+
+        # Bouton de génération
+        if st.button("🚀 Générer le Quizz", type="primary", use_container_width=True):
+            progress_bar = st.progress(0, text="Génération en cours...")
+            status_text = st.empty()
+
+            def quiz_progress(current, total):
+                if total > 0:
+                    progress_bar.progress(
+                        current / total,
+                        text=f"Traitement du chunk {current + 1}/{total}..."
+                    )
+
+            try:
+                quiz = generate_quiz(
+                    chunks=chunks,
+                    difficulty=difficulty,
+                    num_questions=num_questions,
+                    num_choices=num_choices,
+                    num_correct=num_correct,
+                    progress_callback=quiz_progress
+                )
+                st.session_state.quiz = quiz
+                progress_bar.progress(1.0, text="✅ Quizz généré !")
+                time.sleep(0.5)
+                progress_bar.empty()
+                status_text.empty()
+                st.rerun()
+
+            except Exception as e:
+                progress_bar.empty()
+                st.error(f"❌ Erreur lors de la génération : {str(e)}")
+
+        # Affichage du quizz
+        if st.session_state.quiz is not None:
+            quiz = st.session_state.quiz
+
+            st.markdown(f"### 📋 Résultat : {len(quiz.questions)} questions générées")
+
+            for i, q in enumerate(quiz.questions):
+                with st.expander(f"**Q{i+1}.** {q.question}", expanded=(i < 3)):
+                    for label, text in q.choices.items():
+                        is_correct = label in q.correct_answers
+                        icon = "✅" if is_correct else "⬜"
+                        color = "green" if is_correct else "inherit"
+                        st.markdown(
+                            f"**{icon} {label}.** {text}",
+                        )
+
+                    if q.explanation:
+                        st.info(f"💡 **Explication :** {q.explanation}")
+
+                    if q.source_pages:
+                        st.caption(f"📄 Source : pages {', '.join(map(str, q.source_pages))}")
+
+            # Bouton de téléchargement HTML
+            st.divider()
+            try:
+                html_content = export_quiz_html(quiz)
+                st.download_button(
+                    label="📥 Télécharger le Quizz (HTML interactif)",
+                    data=html_content,
+                    file_name="quizz.html",
+                    mime="text/html",
+                    type="primary",
+                    use_container_width=True
+                )
+                st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur.")
+            except Exception as e:
+                st.error(f"Erreur lors de l'export HTML : {e}")
+
+    # ═══ ONGLET EXERCICES ════════════════════════════════════════════════════════
+
+    with tab_exercises:
+        st.markdown("### ⚙️ Configuration des Exercices")
+
+        num_exercises = st.slider(
+            "Nombre d'exercices",
+            min_value=1,
+            max_value=10,
+            value=3,
+            help="Nombre d'exercices à générer (niveau moyen-difficile)."
+        )
+
+        st.info(
+            "🔬 Les exercices sont de niveau **moyen à difficile** avec des réponses numériques. "
+            "Chaque exercice est **vérifié par un agent IA** qui exécute du code Python pour "
+            "confirmer que la réponse est correcte."
+        )
+
+        if st.button("🧮 Générer les Exercices", type="primary", use_container_width=True):
+            progress_bar = st.progress(0, text="Génération et vérification en cours...")
+
+            def exercise_progress(current, total):
+                if total > 0:
+                    progress_bar.progress(
+                        current / total,
+                        text=f"Chunk {current + 1}/{total} — Génération + vérification..."
+                    )
+
+            try:
+                exercises = generate_exercises(
+                    chunks=chunks,
+                    num_exercises=num_exercises,
+                    progress_callback=exercise_progress
+                )
+                st.session_state.exercises = exercises
+                progress_bar.progress(1.0, text="✅ Exercices générés et vérifiés !")
+                time.sleep(0.5)
+                progress_bar.empty()
+                st.rerun()
+
+            except Exception as e:
+                progress_bar.empty()
+                st.error(f"❌ Erreur lors de la génération : {str(e)}")
+
+        # Affichage des exercices
+        if st.session_state.exercises is not None:
+            exercises = st.session_state.exercises
+
+            st.markdown(f"### 📋 {len(exercises)} exercice(s) généré(s)")
+
+            for i, ex in enumerate(exercises):
+                with st.expander(
+                    f"**Exercice {i+1}** — {'✅ Vérifié' if ex.verified else '⚠️ Non vérifié'}",
+                    expanded=True
+                ):
+                    # Statut de vérification
+                    if ex.verified:
+                        st.success("✅ Réponse vérifiée par exécution de code")
+                    else:
+                        st.warning("⚠️ La vérification automatique n'a pas pu confirmer la réponse")
+
+                    # Énoncé
+                    st.markdown("#### 📝 Énoncé")
+                    st.markdown(ex.statement)
+
+                    # Réponse
+                    st.markdown(f"#### 🎯 Réponse attendue : `{ex.expected_answer}`")
+
+                    # Étapes de résolution
+                    if ex.steps:
+                        st.markdown(f"#### 📊 Résolution ({ex.num_steps} étapes)")
+                        for j, step in enumerate(ex.steps):
+                            st.markdown(f"**{j+1}.** {step}")
+
+                    # Correction IA
+                    if ex.correction:
+                        st.markdown("#### 🤖 Correction IA")
+                        st.markdown(ex.correction)
+
+                    # Code de vérification
+                    if ex.verification_code:
+                        with st.popover("🔍 Code de vérification"):
+                            st.code(ex.verification_code, language="python")
+
+                    # Output de vérification
+                    if ex.verification_output:
+                        with st.popover("📋 Détails de la vérification"):
+                            st.text(ex.verification_output)
+
+                    # Source
+                    if ex.source_pages:
+                        st.caption(f"📄 Source : pages {', '.join(map(str, ex.source_pages))}")
+
+    # ═══ ONGLET APERÇU TEXTE ════════════════════════════════════════════════════
+
+    with tab_preview:
+        st.markdown("### 👁️ Aperçu du texte extrait")
+        st.caption(f"Mode de lecture : **{read_mode}** — {len(chunks)} chunks créés")
+
+        for i, chunk in enumerate(chunks[:20]):  # Limiter à 20 chunks pour l'affichage
+            with st.expander(
+                f"Chunk {i+1} — {chunk.token_count} tokens — "
+                f"Pages {', '.join(map(str, chunk.source_pages))}",
+                expanded=(i == 0)
+            ):
+                st.text(chunk.text[:1000] + ("..." if len(chunk.text) > 1000 else ""))
+
+        if len(chunks) > 20:
+            st.info(f"... et {len(chunks) - 20} chunks supplémentaires non affichés.")
+
+else:
+    # Message quand aucun PDF n'est uploadé
+    st.markdown("""
+    <div style="text-align: center; padding: 4rem 2rem;">
+        <div style="font-size: 4rem; margin-bottom: 1rem;">📄</div>
+        <h2 style="color: #6c63ff; margin-bottom: 0.5rem;">Aucun PDF uploadé</h2>
+        <p style="color: #a0a0b8; max-width: 500px; margin: 0 auto;">
+            Uploadez un fichier PDF dans la barre latérale pour commencer à 
+            générer des quizz et exercices automatiquement avec l'IA.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
