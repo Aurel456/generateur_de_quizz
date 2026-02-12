@@ -104,6 +104,27 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
     *   Cliquez sur **"Générer les Exercices"**.
     *   L'agent IA va générer et *vérifier* chaque exercice via l'exécution de code Python.
 
+## 🧠 Fonctionnement détaillé
+
+### 📏 Stratégies de Chunking
+Le logiciel découpe le PDF en "chunks" (segments) avant de les envoyer au LLM pour éviter de dépasser la fenêtre de contexte et pour permettre une analyse ciblée :
+- **Page par page (Défaut)** : Chaque page est traitée comme une unité isolée. C'est la méthode la plus précise pour l'attribution des sources.
+- **Par blocs de tokens** : Le texte est découpé en segments de taille fixe (ex: 10 000 tokens). Cela permet au modèle d'avoir une vision plus large et de faire des liens entre des informations réparties sur plusieurs pages.
+
+### 🎯 Distribution des Questions (Quizz)
+Le système ne se contente pas d'envoyer tout le texte au hasard. Pour un quizz de $N$ questions :
+1. Il calcule le poids de chaque chunk par rapport au volume total de texte.
+2. Il répartit les $N$ questions proportionnellement à la taille des chunks.
+3. Seuls les chunks "utiles" sont envoyés à l'IA, optimisant ainsi la consommation de tokens et la pertinence pédagogique.
+
+### 🤖 Vérification Agentique (Exercices)
+Contrairement aux quizz classiques, les exercices mathématiques ou logiques passent par un cycle de **vérification en boucle fermée** :
+1. **Génération** : Un premier LLM crée l'énoncé, la solution et un script Python de vérification.
+2. **Exécution** : Un **Agent ReAct** (via LangGraph) prend le script, l'exécute dans un environnement Python (REPL).
+3. **Validation** : L'agent compare le résultat de l'exécution avec la réponse annoncée par le premier LLM. 
+   - Si les résultats concordent, l'exercice est marqué comme **Vérifié ✅**.
+   - En cas d'erreur, le système peut tenter de re-générer l'exercice (auto-correction).
+
 ---
 
 ## 🏗️ Architecture du projet
@@ -131,7 +152,7 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 
 - **Sécurité** : L'agent de vérification des exercices exécute du code Python généré par le LLM **localement**. Bien que `PythonREPLTool` soit utilisé, il n'y a pas de sandbox Docker par défaut. Utilisez ce logiciel dans un environnement de confiance ou configurez un environnement d'exécution isolé si nécessaire pour la production.
 - **Modèles** : L'interface permet de choisir n'importe quel modèle disponible sur votre API. Testé principalement avec `gtp-oss-120b`.
-- **Chunking** : Si le PDF est très long, le mode "Global" peut dépasser la fenêtre de contexte. Préférez le mode "Paragraphe" ou "Hybride" avec une taille de chunk raisonnable (2000-4000 tokens).
+- **Chunking** : Deux modes sont disponibles : **Page par page** (recommandé pour la précision des sources) et **Par blocs de tokens** (pour une analyse large, jusqu'à 15 000 tokens).
 
 ## 📄 Licence
 

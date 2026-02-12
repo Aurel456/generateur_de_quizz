@@ -133,10 +133,26 @@ def chunk_text(
     return chunks
 
 
+def split_into_pages(pages: List[dict]) -> List[TextChunk]:
+    """
+    Sépare le texte par page (1 chunk = 1 page).
+    """
+    chunks = []
+    for page_data in pages:
+        text = page_data["text"].strip()
+        if text:
+            chunks.append(TextChunk(
+                text=text,
+                source_pages=[page_data["page"]],
+                token_count=count_tokens(text)
+            ))
+    return chunks
+
+
 def extract_and_chunk(
     pdf_file,
-    mode: Literal["paragraph", "global", "hybrid"] = "hybrid",
-    max_tokens: int = 2000,
+    mode: Literal["page", "token"] = "page",
+    max_tokens: int = 10000,
     overlap_tokens: int = 200
 ) -> List[TextChunk]:
     """
@@ -144,11 +160,10 @@ def extract_and_chunk(
     
     Args:
         pdf_file: Fichier PDF (path ou file-like).
-        mode: "paragraph" (1 chunk ≈ 1 paragraphe), 
-              "global" (texte complet chunké), 
-              "hybrid" (les deux combinés, dédupliqués).
-        max_tokens: Taille max d'un chunk en tokens.
-        overlap_tokens: Overlap entre chunks.
+        mode: "page" (1 chunk = 1 page), 
+              "token" (découpage par taille fixe de tokens).
+        max_tokens: Taille max d'un chunk en tokens (pour le mode "token").
+        overlap_tokens: Overlap entre chunks (pour le mode "token").
     
     Returns:
         Liste de TextChunk.
@@ -158,22 +173,11 @@ def extract_and_chunk(
     if not pages:
         return []
 
-    if mode == "paragraph":
-        chunks = split_into_paragraphs(pages)
-        # Fusionner les paragraphes trop petits, découper les trop grands
-        chunks = _normalize_chunks(chunks, max_tokens)
-        return chunks
+    if mode == "page":
+        return split_into_pages(pages)
     
-    elif mode == "global":
+    elif mode == "token":
         return chunk_text(pages, max_tokens, overlap_tokens)
-    
-    elif mode == "hybrid":
-        para_chunks = split_into_paragraphs(pages)
-        para_chunks = _normalize_chunks(para_chunks, max_tokens)
-        global_chunks = chunk_text(pages, max_tokens, overlap_tokens)
-        # Combiner mais éviter la redondance excessive
-        # On prend les paragraphes + les chunks globaux qui couvrent des zones non couvertes
-        return para_chunks + global_chunks
     
     else:
         raise ValueError(f"Mode inconnu : {mode}")

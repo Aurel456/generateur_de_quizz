@@ -143,27 +143,25 @@ with st.sidebar:
     st.markdown("## ⚙️ Paramètres de lecture")
     read_mode = st.selectbox(
         "Mode de lecture",
-        options=["paragraph", "global", "hybrid"],
+        options=["page", "token"],
         format_func=lambda x: {
-            "paragraph": "📝 Par paragraphe",
-            "global": "🌐 Global (texte complet)",
-            "hybrid": "🔀 Hybride (les deux)"
+            "page": "📄 Page par page",
+            "token": "🏷️ Par blocs de tokens"
         }[x],
-        index=2,
+        index=0,
         help=(
-            "**Paragraphe** : Questions basées sur chaque paragraphe.\n\n"
-            "**Global** : Texte complet découpé en chunks.\n\n"
-            "**Hybride** : Combine les deux pour une meilleure couverture."
+            "**Page par page** : Chaque page du PDF devient un chunk indépendant. Idéal pour des sources précises.\n\n"
+            "**Par blocs de tokens** : Découpe le texte en segments de taille fixe. Idéal pour une vision globale."
         )
     )
 
     max_chunk_tokens = st.slider(
         "Taille max des chunks (tokens)",
-        min_value=500,
-        max_value=4000,
-        value=2000,
-        step=100,
-        help="Nombre max de tokens par chunk envoyé au LLM."
+        min_value=1000,
+        max_value=15000,
+        value=10000,
+        step=500,
+        help="Nombre de tokens par segment (uniquement pour le mode 'Par blocs de tokens')."
     )
 
     st.divider()
