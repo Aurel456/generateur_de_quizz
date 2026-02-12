@@ -5,11 +5,13 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 ## ✨ Fonctionnalités
 
 ### 🎯 Quizz QCM
-- **Extraction intelligente** du texte depuis un PDF (modes Paragraphe / Global / Hybride).
+- **Extraction flexible** du texte depuis un PDF :
+  - **Mode "Page par page"** : Idéal pour conserver la référence précise des pages sources.
+  - **Mode "Par blocs de tokens"** : Permet d'analyser de longs contextes en continu (fenêtre glissante).
 - **Sélection dynamique du modèle** : Choisissez le modèle LLM directement depuis l'interface (récupération automatique via l'API).
 - **Génération multi-niveaux** : 
   - Configurez simultanément le nombre de questions pour chaque niveau (**Facile**, **Moyen**, **Difficile**) en un seul run.
-  - Personnalisation totale des **prompts de difficulté** via un éditeur Markdown intégré.
+  - **Éditeur de Prompts** : Personnalisez totalement les instructions pédagogiques pour chaque niveau de difficulté directement dans l'interface.
 - **Paramétrage précis** :
   - Nombre de choix de réponses (A, B, C, D... jusqu'à G).
   - Nombre de bonnes réponses (choix multiple possible).

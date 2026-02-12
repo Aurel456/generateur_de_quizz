@@ -288,34 +288,37 @@ def generate_exercises(
     if not chunks:
         return []
     
-    # Distribuer les exercices entre les chunks
-    exercises_per_chunk = max(1, num_exercises // len(chunks))
-    remaining = num_exercises
-    
+    # Sélectionner des chunks répartis équitablement dans le document
+    if len(chunks) <= num_exercises:
+        selected_chunks = chunks
+        exercises_per_chunk_list = [1] * len(chunks)
+        # Distribue le reste
+        remaining = num_exercises - len(chunks)
+        for i in range(remaining):
+            exercises_per_chunk_list[i % len(chunks)] += 1
+    else:
+        # On a plus de chunks que d'exercices demandés
+        # On sélectionne N chunks répartis uniformément
+        step = len(chunks) / num_exercises
+        indices = [int(i * step) for i in range(num_exercises)]
+        selected_chunks = [chunks[i] for i in indices]
+        exercises_per_chunk_list = [1] * len(selected_chunks)
+
     all_exercises = []
-    total_chunks = min(len(chunks), num_exercises)  # pas plus de chunks que d'exercices
     
-    for i, chunk in enumerate(chunks[:total_chunks]):
-        if remaining <= 0:
-            break
-        
+    for i, (chunk, n_exercises) in enumerate(zip(selected_chunks, exercises_per_chunk_list)):
         if progress_callback:
-            progress_callback(i, total_chunks)
-        
-        n = min(exercises_per_chunk, remaining)
-        if i == total_chunks - 1:
-            n = remaining  # Dernier chunk prend le reste
+            progress_callback(i, len(selected_chunks))
         
         try:
-            exercises = generate_exercises_from_chunk(chunk, n, model=model)
+            exercises = generate_exercises_from_chunk(chunk, n_exercises, model=model)
             all_exercises.extend(exercises)
-            remaining -= len(exercises)
         except Exception as e:
-            print(f"Erreur sur le chunk {i}: {e}")
+            print(f"Erreur sur le chunk {chunk.source_pages}: {e}")
             continue
     
     if progress_callback:
-        progress_callback(total_chunks, total_chunks)
+        progress_callback(len(selected_chunks), len(selected_chunks))
     
     return all_exercises[:num_exercises]
 

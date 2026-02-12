@@ -186,15 +186,25 @@ with st.sidebar:
 
 if uploaded_file is not None:
     # Extraire les stats et chunks
-    if st.session_state.pdf_stats is None or st.session_state.get("_last_file") != uploaded_file.name:
-        with st.spinner("📄 Analyse du PDF en cours..."):
-            st.session_state.pdf_stats = get_text_stats(uploaded_file)
-            uploaded_file.seek(0)  # Reset le curseur
+    # Identifier si les paramètres ont changé
+    current_params = f"{uploaded_file.name}_{read_mode}_{max_chunk_tokens}"
+    
+    if st.session_state.pdf_stats is None or st.session_state.get("_last_params") != current_params:
+        with st.spinner("📄 Analyse et découpage du PDF en cours..."):
+            # Si c'est un nouveau fichier, on recalcule les stats
+            if st.session_state.get("_last_file") != uploaded_file.name:
+                st.session_state.pdf_stats = get_text_stats(uploaded_file)
+                uploaded_file.seek(0)
+            
+            # Recalculer les chunks (changement de fichier OU de mode)
             st.session_state.chunks = extract_and_chunk(
                 uploaded_file, mode=read_mode, max_tokens=max_chunk_tokens
             )
             uploaded_file.seek(0)
+            
             st.session_state._last_file = uploaded_file.name
+            st.session_state._last_params = current_params
+            
             # Reset les résultats précédents
             st.session_state.quiz = None
             st.session_state.exercises = None
