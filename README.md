@@ -6,9 +6,11 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 ### 🎯 Quizz QCM
 - **Extraction intelligente** du texte depuis un PDF (modes Paragraphe / Global / Hybride).
-- **Génération personnalisable** :
-  - Difficulté : Facile, Moyen, Difficile.
-  - Nombre de questions (3 à 30).
+- **Sélection dynamique du modèle** : Choisissez le modèle LLM directement depuis l'interface (récupération automatique via l'API).
+- **Génération multi-niveaux** : 
+  - Configurez simultanément le nombre de questions pour chaque niveau (**Facile**, **Moyen**, **Difficile**) en un seul run.
+  - Personnalisation totale des **prompts de difficulté** via un éditeur Markdown intégré.
+- **Paramétrage précis** :
   - Nombre de choix de réponses (A, B, C, D... jusqu'à G).
   - Nombre de bonnes réponses (choix multiple possible).
 - **Export HTML interactif** : Téléchargez un fichier HTML autonome avec design sombre, score en temps réel et explications détaillées.
@@ -89,9 +91,12 @@ streamlit run app.py
 L'application s'ouvrira dans votre navigateur par défaut (généralement `http://localhost:8501`).
 
 1.  **Upload** : Chargez votre fichier PDF dans la barre latérale.
-2.  **Configuration** : Ajustez le mode de lecture (recommandé : "Hybride") et la taille des chunks.
+2.  **Configuration** : 
+    * Ajustez le mode de lecture (recommandé : "Hybride") et la taille des chunks.
+    * Sélectionnez le **Modèle LLM** souhaité dans la liste déroulante.
 3.  **Onglet Quizz** :
-    *   Choisissez la difficulté et les paramètres.
+    *   Saisissez le nombre de questions pour chaque niveau (Facile, Moyen, Difficile).
+    *   (Optionnel) Modifiez les instructions spécifiques envoyées à l'IA dans l'expandeur **"Personnaliser les Prompts"**.
     *   Cliquez sur **"Générer le Quizz"**.
     *   Visualisez les questions et téléchargez le fichier HTML.
 4.  **Onglet Exercices** :
@@ -125,7 +130,7 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 ## ⚠️ Notes importantes
 
 - **Sécurité** : L'agent de vérification des exercices exécute du code Python généré par le LLM **localement**. Bien que `PythonREPLTool` soit utilisé, il n'y a pas de sandbox Docker par défaut. Utilisez ce logiciel dans un environnement de confiance ou configurez un environnement d'exécution isolé si nécessaire pour la production.
-- **Modèles** : Testé avec `gtp-oss-120b` (contexte 32k). Ajustez `MODEL_CONTEXT_WINDOW` dans le `.env` si vous utilisez un modèle différent.
+- **Modèles** : L'interface permet de choisir n'importe quel modèle disponible sur votre API. Testé principalement avec `gtp-oss-120b`.
 - **Chunking** : Si le PDF est très long, le mode "Global" peut dépasser la fenêtre de contexte. Préférez le mode "Paragraphe" ou "Hybride" avec une taille de chunk raisonnable (2000-4000 tokens).
 
 ## 📄 Licence
