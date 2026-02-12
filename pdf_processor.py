@@ -78,22 +78,24 @@ def chunk_text(
 ) -> List[TextChunk]:
     """
     Découpe le texte complet en chunks de taille max_tokens avec overlap.
-    
-    Args:
-        pages: Liste de dicts {"page": int, "text": str}
-        max_tokens: Taille maximale d'un chunk en tokens.
-        overlap_tokens: Nombre de tokens de chevauchement entre chunks.
-    
-    Returns:
-        Liste de TextChunk.
+    Gère correctement l'attribution des pages sources et insère des marqueurs de page.
     """
     # Concaténer tout le texte avec des marqueurs de page
     full_text = ""
-    page_boundaries = []  # (char_start, page_num)
+    page_spans = []  # List of (char_start, char_end, page_num)
+    
     for page_data in pages:
-        start = len(full_text)
-        full_text += page_data["text"] + "\n\n"
-        page_boundaries.append((start, page_data["page"]))
+        # On ajoute un marqueur explicite pour le LLM et pour le débogage
+        header = f"\n\n[Début Page {page_data['page']}]\n"
+        footer = f"\n[Fin Page {page_data['page']}]"
+        
+        page_content = header + page_data["text"] + footer
+        
+        start_idx = len(full_text)
+        full_text += page_content
+        end_idx = len(full_text)
+        
+        page_spans.append((start_idx, end_idx, page_data["page"]))
 
     tokens = _encoder.encode(full_text)
     total_tokens = len(tokens)
@@ -102,33 +104,36 @@ def chunk_text(
         return []
 
     chunks = []
-    start = 0
+    start_token = 0
     
-    while start < total_tokens:
-        end = min(start + max_tokens, total_tokens)
-        chunk_tokens = tokens[start:end]
-        chunk_text_str = _encoder.decode(chunk_tokens)
+    while start_token < total_tokens:
+        end_token = min(start_token + max_tokens, total_tokens)
+        chunk_tokens_list = tokens[start_token:end_token]
+        chunk_text_str = _encoder.decode(chunk_tokens_list)
         
-        # Déterminer les pages sources
-        chunk_char_start = len(_encoder.decode(tokens[:start]))
+        # Calculer les offsets caractères pour déterminer les pages
+        # Note: decode(tokens[:start]) est nécessaire pour avoir l'offset exact
+        prefix_text = _encoder.decode(tokens[:start_token])
+        chunk_char_start = len(prefix_text)
         chunk_char_end = chunk_char_start + len(chunk_text_str)
+        
         source_pages = []
-        for boundary_start, page_num in page_boundaries:
-            # La page contribue au chunk si elle chevauche la plage de caractères
-            if boundary_start < chunk_char_end:
-                if page_num not in source_pages:
-                    source_pages.append(page_num)
+        for p_start, p_end, p_num in page_spans:
+            # Vérifier l'intersection des intervalles [start, end]
+            # Intersection = max(starts) < min(ends)
+            if max(chunk_char_start, p_start) < min(chunk_char_end, p_end):
+                source_pages.append(p_num)
         
         chunks.append(TextChunk(
             text=chunk_text_str.strip(),
             source_pages=source_pages,
-            token_count=len(chunk_tokens)
+            token_count=len(chunk_tokens_list)
         ))
         
         # Avancer avec overlap
-        if end >= total_tokens:
+        if end_token >= total_tokens:
             break
-        start = end - overlap_tokens
+        start_token = end_token - overlap_tokens
 
     return chunks
 

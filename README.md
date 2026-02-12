@@ -111,7 +111,9 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 ### 📏 Stratégies de Chunking
 Le logiciel découpe le PDF en "chunks" (segments) avant de les envoyer au LLM pour éviter de dépasser la fenêtre de contexte et pour permettre une analyse ciblée :
 - **Page par page (Défaut)** : Chaque page est traitée comme une unité isolée. C'est la méthode la plus précise pour l'attribution des sources.
-- **Par blocs de tokens** : Le texte est découpé en segments de taille fixe (ex: 10 000 tokens). Cela permet au modèle d'avoir une vision plus large et de faire des liens entre des informations réparties sur plusieurs pages.
+- **Par blocs de tokens** : Le texte est découpé en segments de taille fixe (ex: 10 000 tokens) avec chevauchement. 
+  - Idéal pour analyser des contextes longs.
+  - **Précision** : Des marqueurs `[Début Page X] ... [Fin Page X]` sont insérés automatiquement dans le texte pour que l'IA puisse citer précisément ses sources, même au milieu d'un bloc de 50 pages.
 
 ### 🎯 Distribution des Questions (Quizz)
 Le système ne se contente pas d'envoyer tout le texte au hasard. Pour un quizz de $N$ questions :
