@@ -6,8 +6,8 @@ import streamlit as st
 import time
 
 from pdf_processor import extract_and_chunk, get_text_stats, extract_text_from_pdf, count_tokens
-from llm_service import get_model_info
-from quiz_generator import generate_quiz, Quiz
+from llm_service import get_model_info, list_models
+from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
 from exercise_generator import generate_exercises
 from quiz_exporter import export_quiz_html
 
@@ -125,6 +125,8 @@ if "chunks" not in st.session_state:
     st.session_state.chunks = None
 if "pdf_stats" not in st.session_state:
     st.session_state.pdf_stats = None
+if "difficulty_prompts" not in st.session_state:
+    st.session_state.difficulty_prompts = DIFFICULTY_PROMPTS.copy()
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
@@ -166,10 +168,19 @@ with st.sidebar:
 
     st.divider()
 
-    # Info modèle
-    model_info = get_model_info()
+    # Sélection du modèle
     st.markdown("## 🤖 Modèle LLM")
-    st.caption(f"**Modèle** : `{model_info['model_name']}`")
+    available_models = list_models()
+    model_options = [m.id for m in available_models] if available_models else ["gtp-oss-120b"]
+    
+    selected_model = st.selectbox(
+        "Modèle LLM à sélectionner",
+        options=model_options,
+        index=0,
+        help="Choisissez le modèle IA à utiliser pour la génération."
+    )
+    
+    model_info = get_model_info(selected_model)
     st.caption(f"**Contexte** : {model_info['context_window']:,} tokens")
     st.caption(f"**API** : `{model_info['api_base']}`")
 
@@ -237,20 +248,25 @@ if uploaded_file is not None:
 
         col_a, col_b = st.columns(2)
         with col_a:
-            difficulty = st.select_slider(
-                "Niveau de difficulté",
-                options=["facile", "moyen", "difficile"],
-                value="moyen",
-                help="Facile = faits simples, Moyen = compréhension, Difficile = analyse/synthèse"
-            )
-
-            num_questions = st.slider(
-                "Nombre de questions",
-                min_value=3,
-                max_value=30,
-                value=10,
-                help="Nombre total de questions QCM à générer."
-            )
+            st.markdown("#### 📊 Nombre de questions par niveau")
+            
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                num_facile = st.number_input("Facile", min_value=0, max_value=50, value=0)
+            with c2:
+                num_moyen = st.number_input("Moyen", min_value=0, max_value=50, value=10)
+            with c3:
+                num_difficile = st.number_input("Difficile", min_value=0, max_value=50, value=0)
+            
+            difficulty_counts = {
+                "facile": num_facile,
+                "moyen": num_moyen,
+                "difficile": num_difficile
+            }
+            
+            total_questions = sum(difficulty_counts.values())
+            if total_questions == 0:
+                st.warning("⚠️ Sélectionnez au moins une question.")
 
         with col_b:
             num_choices = st.slider(
@@ -269,6 +285,25 @@ if uploaded_file is not None:
                 help="Combien de réponses correctes parmi les choix."
             )
 
+        # 📝 Édition des prompts
+        with st.expander("📝 Personnaliser les Prompts de Difficulté"):
+            st.info("Modifiez les instructions envoyées à l'IA pour chaque niveau de difficulté.")
+            st.session_state.difficulty_prompts["facile"] = st.text_area(
+                "Prompt Facile", 
+                value=st.session_state.difficulty_prompts["facile"],
+                height=100
+            )
+            st.session_state.difficulty_prompts["moyen"] = st.text_area(
+                "Prompt Moyen", 
+                value=st.session_state.difficulty_prompts["moyen"],
+                height=100
+            )
+            st.session_state.difficulty_prompts["difficile"] = st.text_area(
+                "Prompt Difficile", 
+                value=st.session_state.difficulty_prompts["difficile"],
+                height=100
+            )
+
         # Bouton de génération
         if st.button("🚀 Générer le Quizz", type="primary", use_container_width=True):
             progress_bar = st.progress(0, text="Génération en cours...")
@@ -284,10 +319,11 @@ if uploaded_file is not None:
             try:
                 quiz = generate_quiz(
                     chunks=chunks,
-                    difficulty=difficulty,
-                    num_questions=num_questions,
+                    difficulty_counts=difficulty_counts,
                     num_choices=num_choices,
                     num_correct=num_correct,
+                    difficulty_prompts=st.session_state.difficulty_prompts,
+                    model=selected_model,
                     progress_callback=quiz_progress
                 )
                 st.session_state.quiz = quiz
@@ -372,6 +408,7 @@ if uploaded_file is not None:
                 exercises = generate_exercises(
                     chunks=chunks,
                     num_exercises=num_exercises,
+                    model=selected_model,
                     progress_callback=exercise_progress
                 )
                 st.session_state.exercises = exercises

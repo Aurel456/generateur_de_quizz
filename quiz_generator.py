@@ -59,11 +59,14 @@ def _build_quiz_prompt(
     num_questions: int,
     num_choices: int,
     num_correct: int,
-    choice_labels: List[str]
+    choice_labels: List[str],
+    difficulty_prompts: Optional[Dict[str, str]] = None
 ) -> tuple:
     """Construit le prompt système et utilisateur pour la génération de quizz."""
     
     labels_str = ", ".join(choice_labels[:num_choices])
+    prompts = difficulty_prompts or DIFFICULTY_PROMPTS
+    diff_instruction = prompts.get(difficulty, DIFFICULTY_PROMPTS.get(difficulty, ""))
     
     system_prompt = f"""Tu es un expert en pédagogie et en création de quizz éducatifs.
 Tu dois générer exactement {num_questions} questions QCM (Questions à Choix Multiples).
@@ -71,7 +74,7 @@ Tu dois générer exactement {num_questions} questions QCM (Questions à Choix M
 RÈGLES STRICTES :
 1. Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})
 2. Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)
-3. {DIFFICULTY_PROMPTS[difficulty]}
+3. {diff_instruction}
 4. Chaque question doit inclure une explication de la réponse
 5. Les questions doivent être variées et couvrir différentes parties du texte
 6. Les choix de réponse doivent être du même type et de longueur similaire
@@ -104,7 +107,9 @@ def generate_quiz_from_chunk(
     difficulty: str = "moyen",
     num_questions: int = 5,
     num_choices: int = 4,
-    num_correct: int = 1
+    num_correct: int = 1,
+    difficulty_prompts: Optional[Dict[str, str]] = None,
+    model: Optional[str] = None
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -113,11 +118,11 @@ def generate_quiz_from_chunk(
     choice_labels = list(string.ascii_uppercase[:num_choices])
     
     system_prompt, user_prompt = _build_quiz_prompt(
-        chunk.text, difficulty, num_questions, num_choices, num_correct, choice_labels
+        chunk.text, difficulty, num_questions, num_choices, num_correct, choice_labels, difficulty_prompts
     )
     
     # Appel au LLM
-    result = call_llm_json(system_prompt, user_prompt, temperature=0.6)
+    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.6)
     
     # Parser les questions
     questions = []
@@ -141,88 +146,112 @@ def generate_quiz_from_chunk(
 
 def generate_quiz(
     chunks: List[TextChunk],
-    difficulty: str = "moyen",
-    num_questions: int = 10,
+    difficulty: Optional[str] = None,
+    num_questions: Optional[int] = None,
+    difficulty_counts: Optional[Dict[str, int]] = None,
     num_choices: int = 4,
     num_correct: int = 1,
+    difficulty_prompts: Optional[Dict[str, str]] = None,
+    model: Optional[str] = None,
     progress_callback=None
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
     
-    Distribue les questions entre les chunks proportionnellement à leur taille,
-    puis combine les résultats.
-    
     Args:
         chunks: Liste de TextChunk.
-        difficulty: "facile", "moyen", ou "difficile".
-        num_questions: Nombre total de questions souhaitées.
+        difficulty: "facile", "moyen", ou "difficile" (si difficulty_counts est None).
+        num_questions: Nombre total (si difficulty_counts est None).
+        difficulty_counts: Dict {difficulté: nombre}. Ex: {"facile": 5, "moyen": 10}.
         num_choices: Nombre de choix par question (4-7).
         num_correct: Nombre de bonnes réponses par question.
+        difficulty_prompts: Prompts personnalisés.
+        model: Modèle LLM à utiliser.
         progress_callback: Fonction callback(current, total) pour la progression.
     
     Returns:
         Quiz complet.
     """
     if not chunks:
-        return Quiz(title="Quizz vide", difficulty=difficulty)
-    
-    # Distribuer les questions entre les chunks
-    total_tokens = sum(c.token_count for c in chunks)
-    questions_per_chunk = []
-    remaining = num_questions
-    
-    for i, chunk in enumerate(chunks):
-        if i == len(chunks) - 1:
-            # Dernier chunk : prend les questions restantes
-            n = max(remaining, 1)
+        return Quiz(title="Quizz vide", difficulty="mixte")
+
+    # Déterminer les comptes par difficulté
+    if difficulty_counts is None:
+        if difficulty is None or num_questions is None:
+            difficulty_counts = {"moyen": 10}
         else:
-            # Proportionnel à la taille du chunk
-            ratio = chunk.token_count / total_tokens if total_tokens > 0 else 1 / len(chunks)
-            n = max(1, round(num_questions * ratio))
-            n = min(n, remaining)
-        questions_per_chunk.append(n)
-        remaining -= n
-        if remaining <= 0:
-            break
+            difficulty_counts = {difficulty: num_questions}
     
-    # Générer les questions par chunk
+    total_requested = sum(difficulty_counts.values())
     all_questions = []
-    total_chunks = len(questions_per_chunk)
     
-    for i, (chunk, n_questions) in enumerate(zip(chunks, questions_per_chunk)):
-        if n_questions <= 0:
+    # Pour chaque difficulté demandée, on répartit sur les chunks
+    diff_keys = [k for k, v in difficulty_counts.items() if v > 0]
+    total_steps = len(diff_keys) * len(chunks)
+    current_step = 0
+
+    for diff_name, diff_count in difficulty_counts.items():
+        if diff_count <= 0:
             continue
+            
+        # Distribuer les questions de cette difficulté entre les chunks
+        total_tokens = sum(c.token_count for c in chunks)
+        questions_per_chunk = []
+        remaining = diff_count
         
-        if progress_callback:
-            progress_callback(i, total_chunks)
+        for i, chunk in enumerate(chunks):
+            if i == len(chunks) - 1:
+                n = max(remaining, 0)
+            else:
+                ratio = chunk.token_count / total_tokens if total_tokens > 0 else 1 / len(chunks)
+                n = round(diff_count * ratio)
+                n = min(n, remaining)
+            questions_per_chunk.append(n)
+            remaining -= n
+            if remaining <= 0:
+                # Combler le reste avec des 0 pour avoir la même longueur que chunks
+                questions_per_chunk.extend([0] * (len(chunks) - len(questions_per_chunk)))
+                break
         
-        try:
-            questions = generate_quiz_from_chunk(
-                chunk, difficulty, n_questions, num_choices, num_correct
-            )
-            all_questions.extend(questions)
-        except Exception as e:
-            # Log l'erreur mais continue avec les autres chunks
-            print(f"Erreur sur le chunk {i}: {e}")
-            continue
-    
+        # Générer
+        for i, (chunk, n_questions) in enumerate(zip(chunks, questions_per_chunk)):
+            current_step += 1
+            if progress_callback:
+                progress_callback(current_step, total_steps)
+            
+            if n_questions <= 0:
+                continue
+                
+            try:
+                questions = generate_quiz_from_chunk(
+                    chunk=chunk,
+                    difficulty=diff_name,
+                    num_questions=n_questions,
+                    num_choices=num_choices,
+                    num_correct=num_correct,
+                    difficulty_prompts=difficulty_prompts,
+                    model=model
+                )
+                all_questions.extend(questions)
+            except Exception as e:
+                print(f"Erreur sur le chunk {i} ({diff_name}): {e}")
+                continue
+
     if progress_callback:
-        progress_callback(total_chunks, total_chunks)
-    
-    # Limiter au nombre demandé
-    all_questions = all_questions[:num_questions]
+        progress_callback(total_steps, total_steps)
     
     quiz = Quiz(
         title="Quizz généré depuis PDF",
-        difficulty=difficulty,
+        difficulty=", ".join(diff_keys) if len(diff_keys) > 1 else (diff_keys[0] if diff_keys else "inconnue"),
         questions=all_questions,
         metadata={
-            "num_chunks_used": total_chunks,
+            "difficulty_counts": difficulty_counts,
             "num_choices": num_choices,
             "num_correct_per_question": num_correct,
             "total_questions_generated": len(all_questions),
+            "model": model
         }
     )
     
     return quiz
+

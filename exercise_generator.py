@@ -37,10 +37,10 @@ class Exercise:
     source_pages: List[int] = field(default_factory=list)
 
 
-def _get_langchain_llm():
+def _get_langchain_llm(model: Optional[str] = None):
     """Crée une instance ChatOpenAI pour LangChain."""
     return ChatOpenAI(
-        model=MODEL_NAME,
+        model=model or MODEL_NAME,
         openai_api_base=OPENAI_API_BASE,
         openai_api_key=OPENAI_API_KEY,
         temperature=0.3,
@@ -96,7 +96,7 @@ Crée exactement {num_exercises} exercice(s) de niveau moyen à difficile avec d
     return system_prompt, user_prompt
 
 
-def _verify_exercise_with_agent(exercise: Exercise) -> Exercise:
+def _verify_exercise_with_agent(exercise: Exercise, model: Optional[str] = None) -> Exercise:
     """
     Vérifie un exercice en exécutant le code Python via un agent LangGraph.
     
@@ -111,7 +111,7 @@ def _verify_exercise_with_agent(exercise: Exercise) -> Exercise:
         return exercise
     
     try:
-        llm = _get_langchain_llm()
+        llm = _get_langchain_llm(model=model)
         python_tool = PythonREPLTool()
         tools = [python_tool]
 
@@ -220,7 +220,8 @@ def _verify_exercise_direct(exercise: Exercise) -> Exercise:
 def generate_exercises_from_chunk(
     chunk: TextChunk,
     num_exercises: int = 2,
-    max_retries: int = 3
+    max_retries: int = 3,
+    model: Optional[str] = None
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
@@ -233,7 +234,7 @@ def generate_exercises_from_chunk(
     
     for attempt in range(max_retries):
         try:
-            result = call_llm_json(system_prompt, user_prompt, temperature=0.5)
+            result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.5)
             
             for ex_data in result.get("exercises", []):
                 try:
@@ -248,7 +249,7 @@ def generate_exercises_from_chunk(
                     )
                     
                     # Vérifier l'exercice via l'agent
-                    exercise = _verify_exercise_with_agent(exercise)
+                    exercise = _verify_exercise_with_agent(exercise, model=model)
                     exercises.append(exercise)
                     
                 except (KeyError, TypeError) as e:
@@ -269,6 +270,7 @@ def generate_exercises_from_chunk(
 def generate_exercises(
     chunks: List[TextChunk],
     num_exercises: int = 5,
+    model: Optional[str] = None,
     progress_callback=None
 ) -> List[Exercise]:
     """
@@ -277,6 +279,7 @@ def generate_exercises(
     Args:
         chunks: Liste de TextChunk.
         num_exercises: Nombre total d'exercices souhaités.
+        model: Modèle LLM à utiliser.
         progress_callback: Fonction callback(current, total) pour la progression.
     
     Returns:
@@ -304,7 +307,7 @@ def generate_exercises(
             n = remaining  # Dernier chunk prend le reste
         
         try:
-            exercises = generate_exercises_from_chunk(chunk, n)
+            exercises = generate_exercises_from_chunk(chunk, n, model=model)
             all_exercises.extend(exercises)
             remaining -= len(exercises)
         except Exception as e:
@@ -315,3 +318,4 @@ def generate_exercises(
         progress_callback(total_chunks, total_chunks)
     
     return all_exercises[:num_exercises]
+

@@ -42,6 +42,16 @@ def get_client() -> OpenAI:
     return _client
 
 
+def list_models():
+    """Liste les modèles disponibles via l'API."""
+    client = get_client()
+    try:
+        return client.models.list().data
+    except Exception as e:
+        print(f"Erreur lors de la récupération des modèles : {e}")
+        return []
+
+
 def count_tokens(text: str) -> int:
     """Compte les tokens dans un texte."""
     return len(_encoder.encode(text))
@@ -62,6 +72,7 @@ def estimate_available_tokens(system_prompt: str, user_prompt: str) -> int:
 def call_llm(
     system_prompt: str,
     user_prompt: str,
+    model: Optional[str] = None,
     max_tokens: Optional[int] = None,
     temperature: float = 0.7,
     retries: int = 3,
@@ -73,6 +84,7 @@ def call_llm(
     Args:
         system_prompt: Prompt système.
         user_prompt: Prompt utilisateur.
+        model: Nom du modèle à utiliser. Si None, utilise MODEL_NAME.
         max_tokens: Nombre max de tokens pour la réponse. 
                     Si None, calculé automatiquement.
         temperature: Température de génération.
@@ -86,6 +98,7 @@ def call_llm(
         Exception: Si tous les retries échouent.
     """
     client = get_client()
+    target_model = model or MODEL_NAME
     
     # Calculer les tokens disponibles
     available = estimate_available_tokens(system_prompt, user_prompt)
@@ -111,7 +124,7 @@ def call_llm(
     for attempt in range(retries):
         try:
             kwargs = {
-                "model": MODEL_NAME,
+                "model": target_model,
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
@@ -128,7 +141,7 @@ def call_llm(
                 time.sleep(wait_time)
     
     raise RuntimeError(
-        f"Échec de l'appel LLM après {retries} tentatives. "
+        f"Échec de l'appel LLM avec le modèle {target_model} après {retries} tentatives. "
         f"Dernière erreur : {last_error}"
     )
 
@@ -136,6 +149,7 @@ def call_llm(
 def call_llm_json(
     system_prompt: str,
     user_prompt: str,
+    model: Optional[str] = None,
     max_tokens: Optional[int] = None,
     temperature: float = 0.5,
     retries: int = 3
@@ -155,7 +169,7 @@ def call_llm_json(
         "Pas de texte avant ou après le JSON. Pas de bloc markdown."
     )
     
-    raw = call_llm(json_system, user_prompt, max_tokens, temperature, retries)
+    raw = call_llm(json_system, user_prompt, model, max_tokens, temperature, retries)
     
     # Tentative 1 : parsing direct
     try:
@@ -186,11 +200,12 @@ def call_llm_json(
     )
 
 
-def get_model_info() -> dict:
+def get_model_info(model: Optional[str] = None) -> dict:
     """Retourne les informations sur le modèle configuré."""
     return {
-        "model_name": MODEL_NAME,
+        "model_name": model or MODEL_NAME,
         "api_base": OPENAI_API_BASE,
         "context_window": MODEL_CONTEXT_WINDOW,
         "max_response_tokens": int(MODEL_CONTEXT_WINDOW * RESPONSE_TOKEN_RATIO),
     }
+
