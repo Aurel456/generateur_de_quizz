@@ -12,7 +12,7 @@ import tiktoken
 from docx import Document as DocxDocument
 from pptx import Presentation
 from odf.opendocument import load as load_odf
-from odf import text, teletype
+from odf import text, teletype, draw
 
 
 @dataclass
@@ -90,20 +90,34 @@ def _extract_from_odf(file: BinaryIO) -> List[dict]:
     """Extrait le texte d'un fichier ODT ou ODP."""
     pages = []
     try:
-        # load_odf accepts a file path or a file-like object
         doc = load_odf(file)
-        all_text = []
         
-        # On essaie d'extraire tout ce qui ressemble à du texte (P, H, Span)
-        for element in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
-            content = teletype.extractText(element).strip()
-            if content:
-                all_text.append(content)
+        # 1. Essayer de détecter des slides (ODP)
+        slides = doc.getElementsByType(draw.Page)
         
-        text_content = "\n\n".join(all_text)
-        if text_content:
-            # ODF n'a pas non plus de concept de page simple à extraire pour nous
-            pages.append({"page": 1, "text": text_content})
+        if slides:
+            # Cas ODP : on traite chaque slide comme une page
+            for i, slide in enumerate(slides):
+                # extractText fonctionne récursivement sur le slide
+                slide_content = teletype.extractText(slide).strip()
+                # Nettoyage additionnel car l'extraction brute peut être bruyante sur les slides
+                slide_content = re.sub(r'\s+', ' ', slide_content).strip()
+                if slide_content:
+                    pages.append({"page": i + 1, "text": slide_content})
+        else:
+            # Cas ODT (Document texte) : on prend tout le contenu
+            # On pourrait essayer de splitter par saut de page manuel <text:soft-page-break/> mais c'est complexe
+            all_text = []
+            # On essaie d'extraire tout ce qui ressemble à du texte (P, H)
+            for element in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
+                content = teletype.extractText(element).strip()
+                if content:
+                    all_text.append(content)
+            
+            text_content = "\n\n".join(all_text)
+            if text_content:
+                pages.append({"page": 1, "text": text_content})
+
     except Exception as e:
         print(f"Erreur lors de l'extraction ODF : {e}")
     return pages
