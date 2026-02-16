@@ -9,7 +9,7 @@ from document_processor import extract_and_chunk, get_text_stats, count_tokens
 from llm_service import get_model_info, list_models
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
 from exercise_generator import generate_exercises
-from quiz_exporter import export_quiz_html
+from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
 
@@ -367,21 +367,36 @@ if uploaded_file is not None:
                     if q.source_pages:
                         st.caption(f"📄 Source : pages {', '.join(map(str, q.source_pages))}")
 
-            # Bouton de téléchargement HTML
+            # Boutons de téléchargement
             st.divider()
+            col_down1, col_down2 = st.columns(2)
+            
             try:
-                html_content = export_quiz_html(quiz)
-                st.download_button(
-                    label="📥 Télécharger le Quizz (HTML interactif)",
-                    data=html_content,
-                    file_name="quizz.html",
-                    mime="text/html",
-                    type="primary",
-                    use_container_width=True
-                )
-                st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur.")
+                with col_down1:
+                    html_content = export_quiz_html(quiz)
+                    st.download_button(
+                        label="📥 Télécharger le Quizz sous format HTML Interactif",
+                        data=html_content,
+                        file_name="quizz_interactif.html",
+                        mime="text/html",
+                        type="primary",
+                        use_container_width=True
+                    )
+                
+                with col_down2:
+                    csv_content = export_quiz_csv(quiz)
+                    st.download_button(
+                        label="📊 Télécharger le Quizz sous format CSV",
+                        data=csv_content,
+                        file_name="quizz.csv",
+                        mime="text/csv",
+                        type="secondary",
+                        use_container_width=True
+                    )
+                
+                st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur. Le fichier CSV est idéal pour Excel.")
             except Exception as e:
-                st.error(f"Erreur lors de l'export HTML : {e}")
+                st.error(f"Erreur lors de l'export : {e}")
 
     # ═══ ONGLET EXERCICES ════════════════════════════════════════════════════════
 
@@ -477,6 +492,21 @@ if uploaded_file is not None:
                     # Source
                     if ex.source_pages:
                         st.caption(f"📄 Source : pages {', '.join(map(str, ex.source_pages))}")
+
+            # Bouton de téléchargement CSV pour les exercices
+            st.divider()
+            try:
+                csv_exercises = export_exercises_csv(exercises)
+                st.download_button(
+                    label="📊 Télécharger les Exercices (CSV)",
+                    data=csv_exercises,
+                    file_name="exercices.csv",
+                    mime="text/csv",
+                    type="primary",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Erreur lors de l'export CSV : {e}")
 
     # ═══ ONGLET APERÇU TEXTE ════════════════════════════════════════════════════
 
