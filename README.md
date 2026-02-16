@@ -1,12 +1,13 @@
 # 📝 Générateur de Quizz & Exercices IA (Streamlit + LangGraph)
 
-Application Streamlit permettant de générer automatiquement des **Quizz QCM** et des **Exercices mathématiques/logiques** à partir de documents PDF, en utilisant des modèles LLM via l'API OpenAI (ou compatible).
+Application Streamlit permettant de générer automatiquement des **Quizz QCM** et des **Exercices mathématiques/logiques** à partir de documents PDF, DOCX, ODT, PPTX et TXT, en utilisant des modèles LLM via l'API OpenAI (ou compatible).
 
 ## ✨ Fonctionnalités
 
 ### 🎯 Quizz QCM
-- **Extraction flexible** du texte depuis un PDF :
-  - **Mode "Page par page"** : Idéal pour conserver la référence précise des pages sources.
+- **Extraction multi-format** : Support des fichiers **PDF, DOCX, ODT, ODP, PPTX et TXT**.
+- **Extraction flexible** du texte :
+  - **Mode "Page par page / Slide par slide"** : Idéal pour conserver la référence précise des sources.
   - **Mode "Par blocs de tokens"** : Permet d'analyser de longs contextes en continu (fenêtre glissante).
 - **Sélection dynamique du modèle** : Choisissez le modèle LLM directement depuis l'interface (récupération automatique via l'API).
 - **Génération multi-niveaux** : 
@@ -92,7 +93,7 @@ streamlit run app.py
 
 L'application s'ouvrira dans votre navigateur par défaut (généralement `http://localhost:8501`).
 
-1.  **Upload** : Chargez votre fichier PDF dans la barre latérale.
+1.  **Upload** : Chargez votre fichier (PDF, DOCX, ODT...) dans la barre latérale.
 2.  **Configuration** : 
     * Ajustez le mode de lecture (recommandé : "Hybride") et la taille des chunks.
     * Sélectionnez le **Modèle LLM** souhaité dans la liste déroulante.
@@ -134,7 +135,7 @@ Contrairement aux quizz classiques, les exercices mathématiques ou logiques pas
 ## 🏗️ Architecture du projet
 
 - `app.py` : Interface utilisateur principale (Streamlit).
-- `pdf_processor.py` : Extraction de texte (pdfplumber) et découpage intelligent (tiktoken).
+- `document_processor.py` : Extraction de texte (pdfplumber, python-docx, odfpy, python-pptx) et découpage intelligent (tiktoken).
 - `llm_service.py` : Client API OpenAI, gestion des tokens et retry logic.
 - `quiz_generator.py` : Logique de création des QCM (prompts, parsing JSON).
 - `exercise_generator.py` : Création d'exercices et **Vérification Agentique** (LangGraph + PythonREPLTool).
@@ -146,7 +147,7 @@ Contrairement aux quizz classiques, les exercices mathématiques ou logiques pas
 - `streamlit` : Interface Web.
 - `langchain`, `langgraph`, `langchain-openai`, `langchain-experimental` : Orchestration LLM et Agents.
 - `openai` : Client API standard.
-- `pdfplumber` : Extraction PDF robuste.
+- `pdfplumber`, `python-docx`, `odfpy`, `python-pptx` : Extraction multi-format.
 - `tiktoken` : Tokenizer OpenAI rapide.
 - `jinja2` : Templating HTML.
 

@@ -20,7 +20,7 @@ from llm_service import (
     MODEL_NAME,
     MODEL_CONTEXT_WINDOW,
 )
-from pdf_processor import TextChunk
+from document_processor import TextChunk
 
 
 @dataclass

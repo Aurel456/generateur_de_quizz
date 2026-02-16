@@ -1,0 +1,286 @@
+"""
+document_processor.py — Extraction de texte depuis divers formats (PDF, DOCX, ODT, PPTX) et chunking intelligent.
+"""
+
+import re
+import io
+from dataclasses import dataclass, field
+from typing import List, Literal, BinaryIO, Any
+
+import pdfplumber
+import tiktoken
+from docx import Document as DocxDocument
+from pptx import Presentation
+from odf.opendocument import load as load_odf
+from odf import text, teletype
+
+
+@dataclass
+class TextChunk:
+    """Un morceau de texte extrait du document avec ses métadonnées."""
+    text: str
+    source_pages: List[int] = field(default_factory=list)
+    token_count: int = 0
+
+
+# Encodeur tiktoken — cl100k_base est compatible avec la plupart des modèles OpenAI
+_encoder = tiktoken.get_encoding("cl100k_base")
+
+
+def count_tokens(text: str) -> int:
+    """Compte le nombre de tokens dans un texte."""
+    return len(_encoder.encode(text))
+
+
+def _extract_from_pdf(file: BinaryIO) -> List[dict]:
+    """Extrait le texte d'un PDF page par page."""
+    pages = []
+    try:
+        with pdfplumber.open(file) as pdf:
+            for i, page in enumerate(pdf.pages):
+                text_content = page.extract_text() or ""
+                # Nettoyage basique
+                text_content = re.sub(r'\s+', ' ', text_content).strip()
+                text_content = re.sub(r'(\n\s*){3,}', '\n\n', text_content)
+                if text_content:
+                    pages.append({"page": i + 1, "text": text_content})
+    except Exception as e:
+        print(f"Erreur lors de l'extraction PDF : {e}")
+    return pages
+
+
+def _extract_from_docx(file: BinaryIO) -> List[dict]:
+    """Extrait le texte d'un fichier DOCX."""
+    pages = []
+    try:
+        doc = DocxDocument(file)
+        full_text = []
+        for para in doc.paragraphs:
+            if para.text.strip():
+                full_text.append(para.text.strip())
+        # DOCX n'a pas de concept strict de "page", on retourne tout en une "page" 1
+        # ou on pourrait essayer de splitter, mais restons simples.
+        text_content = "\n\n".join(full_text)
+        if text_content:
+            pages.append({"page": 1, "text": text_content})
+    except Exception as e:
+        print(f"Erreur lors de l'extraction DOCX : {e}")
+    return pages
+
+
+def _extract_from_pptx(file: BinaryIO) -> List[dict]:
+    """Extrait le texte d'un fichier PPTX (slide par slide)."""
+    pages = []
+    try:
+        prs = Presentation(file)
+        for i, slide in enumerate(prs.slides):
+            slide_text = []
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    slide_text.append(shape.text.strip())
+            text_content = "\n".join(slide_text)
+            if text_content:
+                pages.append({"page": i + 1, "text": text_content})
+    except Exception as e:
+        print(f"Erreur lors de l'extraction PPTX : {e}")
+    return pages
+
+
+def _extract_from_odf(file: BinaryIO) -> List[dict]:
+    """Extrait le texte d'un fichier ODT ou ODP."""
+    pages = []
+    try:
+        # load_odf accepts a file path or a file-like object
+        doc = load_odf(file)
+        all_text = []
+        
+        # On essaie d'extraire tout ce qui ressemble à du texte (P, H, Span)
+        for element in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
+            content = teletype.extractText(element).strip()
+            if content:
+                all_text.append(content)
+        
+        text_content = "\n\n".join(all_text)
+        if text_content:
+            # ODF n'a pas non plus de concept de page simple à extraire pour nous
+            pages.append({"page": 1, "text": text_content})
+    except Exception as e:
+        print(f"Erreur lors de l'extraction ODF : {e}")
+    return pages
+
+
+def _extract_from_txt(file: BinaryIO) -> List[dict]:
+    """Extrait le texte d'un fichier texte simple."""
+    try:
+        content = file.read().decode("utf-8", errors="replace").strip()
+        return [{"page": 1, "text": content}] if content else []
+    except Exception as e:
+        print(f"Erreur lors de l'extraction TXT : {e}")
+        return []
+
+
+def extract_text_from_file(file: BinaryIO) -> List[dict]:
+    """
+    Extrait le texte depuis un fichier selon son extension.
+    Détecte automatiquement le type via file.name.
+    """
+    if not hasattr(file, "name"):
+        # Fallback si pas de nom, essayons PDF par défaut ou erreur
+        return _extract_from_pdf(file)
+
+    filename = file.name.lower()
+    
+    # Reset le pointeur du fichier au début au cas où
+    file.seek(0)
+    
+    if filename.endswith(".pdf"):
+        return _extract_from_pdf(file)
+    elif filename.endswith(".docx"):
+        return _extract_from_docx(file)
+    elif filename.endswith(".pptx"):
+        return _extract_from_pptx(file)
+    elif filename.endswith((".odt", ".odp", ".ods")):
+        return _extract_from_odf(file)
+    elif filename.endswith(".txt"):
+        return _extract_from_txt(file)
+    else:
+        # Tenter PDF par défaut si extension inconnue mais accepté
+        return _extract_from_pdf(file)
+
+
+def split_into_paragraphs(pages: List[dict]) -> List[TextChunk]:
+    """
+    Sépare le texte en paragraphes.
+    """
+    paragraphs = []
+    for page_data in pages:
+        page_num = page_data["page"]
+        text_content = page_data["text"]
+        parts = re.split(r'\n\n+', text_content)
+        for part in parts:
+            part = part.strip()
+            if part and len(part) > 20:
+                paragraphs.append(TextChunk(
+                    text=part,
+                    source_pages=[page_num],
+                    token_count=count_tokens(part)
+                ))
+    return paragraphs
+
+
+def chunk_text(
+    pages: List[dict],
+    max_tokens: int = 2000,
+    overlap_tokens: int = 200
+) -> List[TextChunk]:
+    """
+    Découpe le texte complet en chunks de taille max_tokens avec overlap.
+    """
+    full_text = ""
+    page_spans = []
+    
+    for page_data in pages:
+        header = f"\n\n[Début Page {page_data['page']}]\n"
+        footer = f"\n[Fin Page {page_data['page']}]"
+        
+        page_content = header + page_data["text"] + footer
+        
+        start_idx = len(full_text)
+        full_text += page_content
+        end_idx = len(full_text)
+        
+        page_spans.append((start_idx, end_idx, page_data["page"]))
+
+    tokens = _encoder.encode(full_text)
+    total_tokens = len(tokens)
+    
+    if total_tokens == 0:
+        return []
+
+    chunks = []
+    start_token = 0
+    
+    while start_token < total_tokens:
+        end_token = min(start_token + max_tokens, total_tokens)
+        chunk_tokens_list = tokens[start_token:end_token]
+        chunk_text_str = _encoder.decode(chunk_tokens_list)
+        
+        prefix_text = _encoder.decode(tokens[:start_token])
+        chunk_char_start = len(prefix_text)
+        chunk_char_end = chunk_char_start + len(chunk_text_str)
+        
+        source_pages = []
+        for p_start, p_end, p_num in page_spans:
+            if max(chunk_char_start, p_start) < min(chunk_char_end, p_end):
+                if p_num not in source_pages:
+                    source_pages.append(p_num)
+        
+        chunks.append(TextChunk(
+            text=chunk_text_str.strip(),
+            source_pages=source_pages,
+            token_count=len(chunk_tokens_list)
+        ))
+        
+        if end_token >= total_tokens:
+            break
+        start_token = end_token - overlap_tokens
+
+    return chunks
+
+
+def split_into_pages(pages: List[dict]) -> List[TextChunk]:
+    """
+    Sépare le texte par page (ou section logique selon format).
+    """
+    chunks = []
+    for page_data in pages:
+        text_content = page_data["text"].strip()
+        if text_content:
+            chunks.append(TextChunk(
+                text=text_content,
+                source_pages=[page_data["page"]],
+                token_count=count_tokens(text_content)
+            ))
+    return chunks
+
+
+def extract_and_chunk(
+    file: BinaryIO,
+    mode: Literal["page", "token"] = "page",
+    max_tokens: int = 10000,
+    overlap_tokens: int = 200
+) -> List[TextChunk]:
+    """
+    Pipeline complet : extraction + chunking selon le mode choisi.
+    """
+    pages = extract_text_from_file(file)
+    
+    if not pages:
+        return []
+
+    if mode == "page":
+        return split_into_pages(pages)
+    
+    elif mode == "token":
+        return chunk_text(pages, max_tokens, overlap_tokens)
+    
+    else:
+        raise ValueError(f"Mode inconnu : {mode}")
+
+
+def get_full_text(pages: List[dict]) -> str:
+    """Retourne le texte complet concaténé."""
+    return "\n\n".join(p["text"] for p in pages)
+
+
+def get_text_stats(file: BinaryIO) -> dict:
+    """Retourne des statistiques sur le document."""
+    pages = extract_text_from_file(file)
+    full_text = get_full_text(pages)
+    total_tokens = count_tokens(full_text)
+    return {
+        "num_pages": len(pages),
+        "total_chars": len(full_text),
+        "total_tokens": total_tokens,
+        "avg_tokens_per_page": total_tokens // max(len(pages), 1)
+    }

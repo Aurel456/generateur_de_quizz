@@ -5,7 +5,7 @@ app.py — Interface Streamlit principale pour le générateur de quizz et exerc
 import streamlit as st
 import time
 
-from pdf_processor import extract_and_chunk, get_text_stats, extract_text_from_pdf, count_tokens
+from document_processor import extract_and_chunk, get_text_stats, count_tokens
 from llm_service import get_model_info, list_models
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
 from exercise_generator import generate_exercises
@@ -111,7 +111,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>📝 Générateur de Quizz & Exercices</h1>
-    <p style="color: #a0a0b8;">Uploadez un PDF et générez automatiquement des quizz QCM et exercices avec IA</p>
+    <p style="color: #a0a0b8;">Uploadez un document (PDF, DOCX, ODT...) et générez automatiquement des quizz QCM et exercices avec IA</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -131,11 +131,11 @@ if "difficulty_prompts" not in st.session_state:
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## 📄 Document PDF")
+    st.markdown("## 📄 Document")
     uploaded_file = st.file_uploader(
-        "Choisir un fichier PDF",
-        type=["pdf"],
-        help="Uploadez le PDF à partir duquel générer les questions."
+        "Choisir un fichier",
+        type=["pdf", "docx", "odt", "odp", "pptx", "txt"],
+        help="Uploadez le document à partir duquel générer les questions."
     )
 
     st.divider()
@@ -145,12 +145,12 @@ with st.sidebar:
         "Mode de lecture",
         options=["page", "token"],
         format_func=lambda x: {
-            "page": "📄 Page par page",
+            "page": "📄 Par page / slide / section",
             "token": "🏷️ Par blocs de tokens"
         }[x],
         index=0,
         help=(
-            "**Page par page** : Chaque page du PDF devient un chunk indépendant. Idéal pour des sources précises.\n\n"
+            "**Par page/slide** : Chaque page (PDF) ou slide (PPTX) devient un chunk indépendant.\n\n"
             "**Par blocs de tokens** : Découpe le texte en segments de taille fixe. Idéal pour une vision globale."
         )
     )
@@ -190,7 +190,7 @@ if uploaded_file is not None:
     current_params = f"{uploaded_file.name}_{read_mode}_{max_chunk_tokens}"
     
     if st.session_state.pdf_stats is None or st.session_state.get("_last_params") != current_params:
-        with st.spinner("📄 Analyse et découpage du PDF en cours..."):
+        with st.spinner("📄 Analyse et découpage du document en cours..."):
             # Si c'est un nouveau fichier, on recalcule les stats
             if st.session_state.get("_last_file") != uploaded_file.name:
                 st.session_state.pdf_stats = get_text_stats(uploaded_file)
@@ -218,7 +218,7 @@ if uploaded_file is not None:
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-value">{stats['num_pages']}</div>
-            <div class="stat-label">Pages</div>
+            <div class="stat-label">Pages / Slides</div>
         </div>
         """, unsafe_allow_html=True)
     with col2:
@@ -239,7 +239,7 @@ if uploaded_file is not None:
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-value">{stats['avg_tokens_per_page']}</div>
-            <div class="stat-label">Tokens/page</div>
+            <div class="stat-label">Tokens / page-slide</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -500,9 +500,9 @@ else:
     st.markdown("""
     <div style="text-align: center; padding: 4rem 2rem;">
         <div style="font-size: 4rem; margin-bottom: 1rem;">📄</div>
-        <h2 style="color: #6c63ff; margin-bottom: 0.5rem;">Aucun PDF uploadé</h2>
+        <h2 style="color: #6c63ff; margin-bottom: 0.5rem;">Aucun document uploadé</h2>
         <p style="color: #a0a0b8; max-width: 500px; margin: 0 auto;">
-            Uploadez un fichier PDF dans la barre latérale pour commencer à 
+            Uploadez un fichier (PDF, DOCX, ODT...) dans la barre latérale pour commencer à 
             générer des quizz et exercices automatiquement avec l'IA.
         </p>
     </div>

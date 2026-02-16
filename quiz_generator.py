@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from llm_service import call_llm_json, count_tokens, MODEL_CONTEXT_WINDOW
-from pdf_processor import TextChunk
+from document_processor import TextChunk
 
 
 @dataclass
