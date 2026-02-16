@@ -12,7 +12,7 @@ import tiktoken
 from docx import Document as DocxDocument
 from pptx import Presentation
 from odf.opendocument import load as load_odf
-from odf import text, teletype, draw
+from odf import text, teletype, draw, style as odf_style
 
 
 @dataclass
@@ -155,59 +155,166 @@ def _extract_from_odf(file: BinaryIO) -> List[dict]:
             pages_content = []      # Liste de listes de lignes
             current_page_lines = []
             
-            # Obtenir les qnames pour la comparaison
+            # QNames
             QNAME_P = text.P().qname
             QNAME_H = text.H().qname
             QNAME_BREAK = text.SoftPageBreak().qname
+            QNAME_SECTION = getattr(text, "Section", None)
+            QNAME_SECTION = QNAME_SECTION().qname if QNAME_SECTION else None
             
             def finish_page():
                 if current_page_lines:
                     pages_content.append(current_page_lines[:])
                     current_page_lines.clear()
-            
+
+            def _get_attr_local(elem, local_name: str) -> str:
+                try:
+                    for (ns, ln), val in elem.attributes.items():
+                        if ln == local_name:
+                            return val
+                except Exception:
+                    pass
+                try:
+                    v = elem.getAttribute(local_name)
+                    if v:
+                        return v
+                except Exception:
+                    pass
+                return ""
+
+            def _get_style_name(node) -> str:
+                name = _get_attr_local(node, "style-name")
+                if name:
+                    return name
+                try:
+                    name = node.getAttribute("stylename")
+                    if name:
+                        return name
+                except Exception:
+                    pass
+                try:
+                    name = node.getAttribute("style-name")
+                    if name:
+                        return name
+                except Exception:
+                    pass
+                return ""
+
+            # Index des styles
+            style_index = {}
+            def _index_styles(container):
+                if not container:
+                    return
+                for s in container.childNodes:
+                    name = _get_attr_local(s, "name") or _get_attr_local(s, "style-name")
+                    if name and name not in style_index:
+                        style_index[name] = s
+
+            _index_styles(getattr(doc, "styles", None))
+            _index_styles(getattr(doc, "automaticstyles", None))
+
+            def _is_page_break_value(v: str) -> bool:
+                v = (v or "").strip().lower()
+                return v in ("page", "always", "right", "left")
+
+            def _style_breaks(style_elem) -> tuple[bool, bool]:
+                break_before = False
+                break_after = False
+                try:
+                    for pp in style_elem.getElementsByType(odf_style.ParagraphProperties):
+                        b_before = (
+                            _get_attr_local(pp, "break-before")
+                            or _get_attr_local(pp, "page-break-before")
+                        )
+                        b_after = (
+                            _get_attr_local(pp, "break-after")
+                            or _get_attr_local(pp, "page-break-after")
+                        )
+                        if _is_page_break_value(b_before):
+                            break_before = True
+                        if _is_page_break_value(b_after):
+                            break_after = True
+                except Exception:
+                    pass
+                return break_before, break_after
+
+            def _node_breaks(node) -> tuple[bool, bool]:
+                style_name = _get_style_name(node)
+                if not style_name:
+                    return False, False
+                style_elem = style_index.get(style_name)
+                if not style_elem:
+                    return False, False
+                return _style_breaks(style_elem)
+
+            def _split_by_soft_page_break(node) -> List[str]:
+                segments = [""]
+
+                def rec(n):
+                    qname = getattr(n, "qname", None)
+                    if qname == QNAME_BREAK:
+                        segments.append("")
+                        return
+                    children = getattr(n, "childNodes", None)
+                    if children:
+                        for c in children:
+                            rec(c)
+                    else:
+                        txt = teletype.extractText(n)
+                        if txt:
+                            segments[-1] += txt
+
+                rec(node)
+                cleaned = []
+                for s in segments:
+                    s = re.sub(r'\s+', ' ', s).strip()
+                    if s:
+                        cleaned.append(s)
+                return cleaned
+
             def traverse(node):
-                # Récupérer le qname et type du noeud
                 qname = getattr(node, 'qname', None)
-                
-                # S'il y a un saut de page explicite (hors paragraphe ou détecté ainsi)
+
                 if qname == QNAME_BREAK:
                     finish_page()
                     return
 
-                # Si c'est un paragraphe (P) ou un titre (H)
                 if qname in (QNAME_P, QNAME_H):
-                    child_text_buffer = []
-                    
-                    # On parcourt les enfants pour voir s'il y a un saut de page à l'intérieur
-                    for child in node.childNodes:
-                        if getattr(child, 'qname', None) == QNAME_BREAK:
-                            # Saut détecté au milieu du paragraphe
-                            # On flush ce qui précède
-                            text_before = "".join(child_text_buffer).strip()
-                            if text_before:
-                                current_page_lines.append(text_before)
-                            child_text_buffer = []
-                            
+                    b_before, b_after = _node_breaks(node)
+                    if b_before:
+                        finish_page()
+
+                    segments = _split_by_soft_page_break(node)
+                    for idx, seg in enumerate(segments):
+                        if seg:
+                            current_page_lines.append(seg)
+                        if idx < len(segments) - 1:
                             finish_page()
-                        else:
-                            # Texte normal (span, link, text node...)
-                            # teletype.extractText gère la récursion pour le texte
-                            child_txt = teletype.extractText(child)
-                            if child_txt:
-                                child_text_buffer.append(child_txt)
-                    
-                    # Fin du paragraphe : on ajoute le reste
-                    full_text = "".join(child_text_buffer).strip()
-                    if full_text:
-                        current_page_lines.append(full_text)
+
+                    if b_after:
+                        finish_page()
                     return
 
-                # Pour les autres containers (body, section, table...), on récurse
-                for child in node.childNodes:
+                if QNAME_SECTION and qname == QNAME_SECTION:
+                    b_before, b_after = _node_breaks(node)
+                    if b_before:
+                        finish_page()
+                    for child in node.childNodes:
+                        traverse(child)
+                    if b_after:
+                        finish_page()
+                    return
+
+                for child in getattr(node, "childNodes", []) or []:
                     traverse(child)
 
-            # Traversée depuis la racine du doc
-            traverse(doc)
+            # Traversée depuis office:text si possible
+            if hasattr(doc, "text") and doc.text:
+                for child in doc.text.childNodes:
+                    traverse(child)
+            else:
+                traverse(doc)
+
             finish_page()
             
             # Construction du résultat final
