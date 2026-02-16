@@ -12,8 +12,8 @@ import tiktoken
 from docx import Document as DocxDocument
 from pptx import Presentation
 from odf.opendocument import load as load_odf
-from odf import text, teletype, draw, style as odf_style
-
+from odf import text, draw, table
+from odf.teletype import extractText
 
 @dataclass
 class TextChunk:
@@ -135,209 +135,142 @@ def _extract_from_pptx(file: BinaryIO) -> List[dict]:
 
 
 def _extract_from_odf(file: BinaryIO) -> List[dict]:
-    """Extrait le texte d'un fichier ODT ou ODP en gérant les sauts de page."""
+    """
+    Extrait le texte d'un fichier ODT / ODP / ODS.
+    - ODT : tente de respecter les sauts de page (hard & soft)
+    - ODP : une slide = une "page"
+    - Retour : liste de {"page": int, "text": str}
+    """
     pages = []
     try:
         doc = load_odf(file)
-        
-        # 1. Essayer de détecter des slides (ODP)
-        slides = doc.getElementsByType(draw.Page)
-        
-        if slides:
-            # Cas ODP : on traite chaque slide comme une page
-            for i, slide in enumerate(slides):
-                slide_content = teletype.extractText(slide).strip()
-                slide_content = re.sub(r'\s+', ' ', slide_content).strip()
-                if slide_content:
-                    pages.append({"page": i + 1, "text": slide_content})
-        else:
-            # Cas ODT : on traverse pour trouver les sauts de page
-            pages_content = []      # Liste de listes de lignes
-            current_page_lines = []
-            
-            # QNames
-            QNAME_P = text.P().qname
-            QNAME_H = text.H().qname
-            QNAME_BREAK = text.SoftPageBreak().qname
-            QNAME_SECTION = getattr(text, "Section", None)
-            QNAME_SECTION = QNAME_SECTION().qname if QNAME_SECTION else None
-            
-            def finish_page():
-                if current_page_lines:
-                    pages_content.append(current_page_lines[:])
-                    current_page_lines.clear()
+        file.seek(0)  # au cas où
 
-            def _get_attr_local(elem, local_name: str) -> str:
-                try:
-                    for (ns, ln), val in elem.attributes.items():
-                        if ln == local_name:
-                            return val
-                except Exception:
-                    pass
-                try:
-                    v = elem.getAttribute(local_name)
-                    if v:
-                        return v
-                except Exception:
-                    pass
-                return ""
+        # ───────────────────────────────────────────────
+        # 1. Cas présentation → un slide = une page
+        # ───────────────────────────────────────────────
+        slide_elements = doc.getElementsByType(draw.Page)
+        if slide_elements:
+            for i, slide in enumerate(slide_elements, 1):
+                # On prend tout le texte de la slide (formes, notes, etc.)
+                slide_text = extractText(slide).strip()
+                slide_text = re.sub(r'\s{2,}', ' ', slide_text)
+                slide_text = re.sub(r'\n\s*\n+', '\n\n', slide_text)
+                if slide_text:
+                    pages.append({"page": i, "text": slide_text})
+            if pages:
+                return pages
 
-            def _get_style_name(node) -> str:
-                name = _get_attr_local(node, "style-name")
-                if name:
-                    return name
-                try:
-                    name = node.getAttribute("stylename")
-                    if name:
-                        return name
-                except Exception:
-                    pass
-                try:
-                    name = node.getAttribute("style-name")
-                    if name:
-                        return name
-                except Exception:
-                    pass
-                return ""
+        # ───────────────────────────────────────────────
+        # 2. Cas tableur (ODS) → une feuille = une "page"
+        # ───────────────────────────────────────────────
+        tables = doc.getElementsByType(table.Table)
+        if tables and not slide_elements:
+            for i, tbl in enumerate(tables, 1):
+                table_text = []
+                for row in tbl.getElementsByType(table.TableRow):
+                    row_cells = []
+                    for cell in row.getElementsByType(table.TableCell):
+                        cell_text = extractText(cell).strip()
+                        if cell_text:
+                            row_cells.append(cell_text)
+                    if row_cells:
+                        table_text.append(" | ".join(row_cells))
+                if table_text:
+                    pages.append({
+                        "page": i,
+                        "text": "\n".join(table_text)
+                    })
+            if pages:
+                return pages
 
-            # Index des styles
-            style_index = {}
-            def _index_styles(container):
-                if not container:
-                    return
-                for s in container.childNodes:
-                    name = _get_attr_local(s, "name") or _get_attr_local(s, "style-name")
-                    if name and name not in style_index:
-                        style_index[name] = s
+        # ───────────────────────────────────────────────
+        # 3. Cas texte (ODT) → on essaie de détecter les sauts de page
+        # ───────────────────────────────────────────────
+        current_page = []
+        page_number = 1
 
-            _index_styles(getattr(doc, "styles", None))
-            _index_styles(getattr(doc, "automaticstyles", None))
+        def flush_current_page():
+            nonlocal page_number
+            if current_page:
+                text_block = "\n\n".join(current_page).strip()
+                text_block = re.sub(r'\s{3,}', ' ', text_block)
+                text_block = re.sub(r'\n\s*\n{2,}', '\n\n', text_block)
+                if text_block:
+                    pages.append({"page": page_number, "text": text_block})
+                    page_number += 1
+            current_page.clear()
 
-            def _is_page_break_value(v: str) -> bool:
-                v = (v or "").strip().lower()
-                return v in ("page", "always", "right", "left")
+        # On parcourt tous les éléments text:p et text:h
+        for elem in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
+            # ─── Détection saut de page AVANT ───────────────────────
+            style_name = elem.getAttribute("stylename") or elem.getAttribute("style-name")
+            if style_name:
+                style = doc.getStyleByName(style_name)
+                if style:
+                    pp = style.getElementsByType(text.ParagraphProperties)
+                    if pp:
+                        br_before = pp[0].getAttribute("breakbefore") or pp[0].getAttribute("page-break-before")
+                        if br_before and br_before.lower() in ("page", "always"):
+                            flush_current_page()
 
-            def _style_breaks(style_elem) -> tuple[bool, bool]:
-                break_before = False
-                break_after = False
-                try:
-                    for pp in style_elem.getElementsByType(odf_style.ParagraphProperties):
-                        b_before = (
-                            _get_attr_local(pp, "break-before")
-                            or _get_attr_local(pp, "page-break-before")
-                        )
-                        b_after = (
-                            _get_attr_local(pp, "break-after")
-                            or _get_attr_local(pp, "page-break-after")
-                        )
-                        if _is_page_break_value(b_before):
-                            break_before = True
-                        if _is_page_break_value(b_after):
-                            break_after = True
-                except Exception:
-                    pass
-                return break_before, break_after
+            # ─── Extraction du texte du paragraphe ──────────────────
+            para_text = extractText(elem).strip()
+            if not para_text:
+                continue
 
-            def _node_breaks(node) -> tuple[bool, bool]:
-                style_name = _get_style_name(node)
-                if not style_name:
-                    return False, False
-                style_elem = style_index.get(style_name)
-                if not style_elem:
-                    return False, False
-                return _style_breaks(style_elem)
+            # On regarde s'il y a des soft-page-breaks à l'intérieur
+            # (c'est rare dans les <text:p>, mais possible dans les spans)
+            children = elem.childNodes
+            has_soft_break = any(
+                isinstance(n, text.SoftPageBreak) or
+                (hasattr(n, "tagName") and "soft-page-break" in n.tagName.lower())
+                for n in children if hasattr(n, "tagName")
+            )
 
-            def _split_by_soft_page_break(node) -> List[str]:
-                segments = [""]
-
-                def rec(n):
-                    qname = getattr(n, "qname", None)
-                    if qname == QNAME_BREAK:
-                        segments.append("")
-                        return
-                    children = getattr(n, "childNodes", None)
-                    if children:
-                        for c in children:
-                            rec(c)
-                    else:
-                        txt = teletype.extractText(n)
-                        if txt:
-                            segments[-1] += txt
-
-                rec(node)
-                cleaned = []
-                for s in segments:
-                    s = re.sub(r'\s+', ' ', s).strip()
-                    if s:
-                        cleaned.append(s)
-                return cleaned
-
-            def traverse(node):
-                qname = getattr(node, 'qname', None)
-
-                if qname == QNAME_BREAK:
-                    finish_page()
-                    return
-
-                if qname in (QNAME_P, QNAME_H):
-                    b_before, b_after = _node_breaks(node)
-                    if b_before:
-                        finish_page()
-
-                    segments = _split_by_soft_page_break(node)
-                    for idx, seg in enumerate(segments):
-                        if seg:
-                            current_page_lines.append(seg)
-                        if idx < len(segments) - 1:
-                            finish_page()
-
-                    if b_after:
-                        finish_page()
-                    return
-
-                if QNAME_SECTION and qname == QNAME_SECTION:
-                    b_before, b_after = _node_breaks(node)
-                    if b_before:
-                        finish_page()
-                    for child in node.childNodes:
-                        traverse(child)
-                    if b_after:
-                        finish_page()
-                    return
-
-                for child in getattr(node, "childNodes", []) or []:
-                    traverse(child)
-
-            # Traversée depuis office:text si possible
-            if hasattr(doc, "text") and doc.text:
-                for child in doc.text.childNodes:
-                    traverse(child)
+            if has_soft_break:
+                # Approximation : on flush avant le soft break
+                current_page.append(para_text)
+                flush_current_page()
             else:
-                traverse(doc)
+                current_page.append(para_text)
 
-            finish_page()
-            
-            # Construction du résultat final
-            for i, p_lines in enumerate(pages_content):
-                page_text = "\n\n".join(p_lines)
-                if page_text.strip():
-                    pages.append({"page": i + 1, "text": page_text})
-            
-            # Fallback : si aucun contenu structuré trouvé, essayer globalement
-            if not pages:
-                all_text = []
-                for element in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
-                    content = teletype.extractText(element).strip()
-                    if content:
-                        all_text.append(content)
-                if all_text:
-                    pages.append({"page": 1, "text": "\n\n".join(all_text)})
+            # ─── Détection saut de page APRÈS ───────────────────────
+            if style_name and style:
+                pp = style.getElementsByType(text.ParagraphProperties)
+                if pp:
+                    br_after = pp[0].getAttribute("breakafter") or pp[0].getAttribute("page-break-after")
+                    if br_after and br_after.lower() in ("page", "always"):
+                        flush_current_page()
+
+        # Ne pas oublier la dernière page
+        flush_current_page()
+
+        # Fallback ultra-simple si on n'a rien trouvé
+        if not pages:
+            all_paragraphs = []
+            for elem in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
+                t = extractText(elem).strip()
+                if t:
+                    all_paragraphs.append(t)
+            if all_paragraphs:
+                pages.append({
+                    "page": 1,
+                    "text": "\n\n".join(all_paragraphs)
+                })
 
     except Exception as e:
-        print(f"Erreur lors de l'extraction ODF : {e}")
+        print(f"Erreur extraction ODF/ODT : {e}")
+        # Fallback ultime : texte brut
+        try:
+            raw_text = extractText(doc).strip()
+            if raw_text:
+                pages = [{"page": 1, "text": raw_text}]
+        except:
+            pass
+
     return pages
-
-
+    
 def _extract_from_txt(file: BinaryIO) -> List[dict]:
     """Extrait le texte d'un fichier texte simple."""
     try:
