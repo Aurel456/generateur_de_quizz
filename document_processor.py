@@ -50,19 +50,67 @@ def _extract_from_pdf(file: BinaryIO) -> List[dict]:
 
 
 def _extract_from_docx(file: BinaryIO) -> List[dict]:
-    """Extrait le texte d'un fichier DOCX."""
+    """Extrait le texte d'un fichier DOCX en gérant les sauts de page."""
     pages = []
     try:
         doc = DocxDocument(file)
-        full_text = []
+        
+        current_page_text = []
+        page_num = 1
+        
+        # namespaces pour XPath
+        ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+
+        def flush_page():
+            nonlocal current_page_text, page_num
+            text_content = "\n\n".join(current_page_text).strip()
+            if text_content:
+                pages.append({"page": page_num, "text": text_content})
+                page_num += 1
+            current_page_text = []
+
         for para in doc.paragraphs:
-            if para.text.strip():
-                full_text.append(para.text.strip())
-        # DOCX n'a pas de concept strict de "page", on retourne tout en une "page" 1
-        # ou on pourrait essayer de splitter, mais restons simples.
-        text_content = "\n\n".join(full_text)
-        if text_content:
-            pages.append({"page": 1, "text": text_content})
+            # Vérifier si le paragraphe a un saut de page avant (propriété de style)
+            if para._element.xpath('.//w:pPr/w:pageBreakBefore', namespaces=ns):
+                flush_page()
+
+            para_parts = []
+            
+            for run in para.runs:
+                # Vérifier les sauts de page à l'intérieur des runs
+                # w:br type="page" (saut manuel) ou w:lastRenderedPageBreak (saut automatique Word)
+                breaks = run._element.xpath('.//w:br[@w:type="page"] | .//w:lastRenderedPageBreak', namespaces=ns)
+                
+                if breaks:
+                    # S'il y a un break, on finit ce qui précédait dans le run
+                    # Note: on ne peut pas facilement splitter le texte au milieu d'un run 
+                    # mais en général les breaks sont entre les textes ou dans des runs dédiés
+                    
+                    # On flush le texte accumulé jusque là dans le paragraphe
+                    if run.text:
+                        para_parts.append(run.text)
+                    
+                    if para_parts:
+                        current_page_text.append(" ".join(para_parts))
+                        para_parts = []
+                    
+                    flush_page()
+                else:
+                    if run.text:
+                        para_parts.append(run.text)
+            
+            if para_parts:
+                current_page_text.append(" ".join(para_parts))
+
+        # Ne pas oublier la dernière page
+        flush_page()
+
+        # Fallback si rien n'a été extrait (ex: document vide ou formatage étrange)
+        if not pages and doc.paragraphs:
+            full_text = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+            if full_text:
+                pages.append({"page": 1, "text": "\n\n".join(full_text)})
+
     except Exception as e:
         print(f"Erreur lors de l'extraction DOCX : {e}")
     return pages
@@ -87,7 +135,7 @@ def _extract_from_pptx(file: BinaryIO) -> List[dict]:
 
 
 def _extract_from_odf(file: BinaryIO) -> List[dict]:
-    """Extrait le texte d'un fichier ODT ou ODP."""
+    """Extrait le texte d'un fichier ODT ou ODP en gérant les sauts de page."""
     pages = []
     try:
         doc = load_odf(file)
@@ -98,25 +146,85 @@ def _extract_from_odf(file: BinaryIO) -> List[dict]:
         if slides:
             # Cas ODP : on traite chaque slide comme une page
             for i, slide in enumerate(slides):
-                # extractText fonctionne récursivement sur le slide
                 slide_content = teletype.extractText(slide).strip()
-                # Nettoyage additionnel car l'extraction brute peut être bruyante sur les slides
                 slide_content = re.sub(r'\s+', ' ', slide_content).strip()
                 if slide_content:
                     pages.append({"page": i + 1, "text": slide_content})
         else:
-            # Cas ODT (Document texte) : on prend tout le contenu
-            # On pourrait essayer de splitter par saut de page manuel <text:soft-page-break/> mais c'est complexe
-            all_text = []
-            # On essaie d'extraire tout ce qui ressemble à du texte (P, H)
-            for element in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
-                content = teletype.extractText(element).strip()
-                if content:
-                    all_text.append(content)
+            # Cas ODT : on traverse pour trouver les sauts de page
+            pages_content = []      # Liste de listes de lignes
+            current_page_lines = []
             
-            text_content = "\n\n".join(all_text)
-            if text_content:
-                pages.append({"page": 1, "text": text_content})
+            # Obtenir les qnames pour la comparaison
+            QNAME_P = text.P().qname
+            QNAME_H = text.H().qname
+            QNAME_BREAK = text.SoftPageBreak().qname
+            
+            def finish_page():
+                if current_page_lines:
+                    pages_content.append(current_page_lines[:])
+                    current_page_lines.clear()
+            
+            def traverse(node):
+                # Récupérer le qname et type du noeud
+                qname = getattr(node, 'qname', None)
+                
+                # S'il y a un saut de page explicite (hors paragraphe ou détecté ainsi)
+                if qname == QNAME_BREAK:
+                    finish_page()
+                    return
+
+                # Si c'est un paragraphe (P) ou un titre (H)
+                if qname in (QNAME_P, QNAME_H):
+                    child_text_buffer = []
+                    
+                    # On parcourt les enfants pour voir s'il y a un saut de page à l'intérieur
+                    for child in node.childNodes:
+                        if getattr(child, 'qname', None) == QNAME_BREAK:
+                            # Saut détecté au milieu du paragraphe
+                            # On flush ce qui précède
+                            text_before = "".join(child_text_buffer).strip()
+                            if text_before:
+                                current_page_lines.append(text_before)
+                            child_text_buffer = []
+                            
+                            finish_page()
+                        else:
+                            # Texte normal (span, link, text node...)
+                            # teletype.extractText gère la récursion pour le texte
+                            child_txt = teletype.extractText(child)
+                            if child_txt:
+                                child_text_buffer.append(child_txt)
+                    
+                    # Fin du paragraphe : on ajoute le reste
+                    full_text = "".join(child_text_buffer).strip()
+                    if full_text:
+                        current_page_lines.append(full_text)
+                    return
+
+                # Pour les autres containers (body, section, table...), on récurse
+                for child in node.childNodes:
+                    traverse(child)
+
+            # Traversée depuis la racine du doc
+            traverse(doc)
+            finish_page()
+            
+            # Construction du résultat final
+            for i, p_lines in enumerate(pages_content):
+                page_text = "\n\n".join(p_lines)
+                if page_text.strip():
+                    pages.append({"page": i + 1, "text": page_text})
+            
+            # Fallback : si aucun contenu structuré trouvé, essayer globalement
+            if not pages:
+                all_text = []
+                for element in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
+                    content = teletype.extractText(element).strip()
+                    if content:
+                        all_text.append(content)
+                if all_text:
+                    pages.append({"page": 1, "text": "\n\n".join(all_text)})
 
     except Exception as e:
         print(f"Erreur lors de l'extraction ODF : {e}")
