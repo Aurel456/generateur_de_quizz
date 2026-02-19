@@ -35,6 +35,8 @@ class Exercise:
     verified: bool = False  # La réponse a-t-elle été vérifiée ?
     verification_output: str = ""  # Sortie de la vérification
     source_pages: List[int] = field(default_factory=list)
+    source_document: str = ""
+    citation: str = ""
 
 
 def _get_langchain_llm(model: Optional[str] = None):
@@ -48,8 +50,12 @@ def _get_langchain_llm(model: Optional[str] = None):
     )
 
 
-def _build_exercise_prompt(text: str, num_exercises: int) -> tuple:
+def _build_exercise_prompt(text: str, num_exercises: int, notions_text: str = "", source_document: str = "") -> tuple:
     """Construit le prompt pour la génération d'exercices."""
+    
+    notions_block = ""
+    if notions_text:
+        notions_block = f"""\n\n{notions_text}\nLes exercices doivent tester la maîtrise pratique de ces notions fondamentales."""
     
     system_prompt = f"""Tu es un expert pédagogique qui crée des exercices de niveau moyen à difficile.
 Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.
@@ -61,6 +67,9 @@ RÈGLES STRICTES :
 4. Tu dois fournir un code Python qui calcule et vérifie la réponse
 5. Le code Python doit afficher (print) le résultat final
 6. Les exercices doivent être de niveau moyen à difficile (analyse, calcul, application)
+7. Pour chaque exercice, précise la PAGE EXACTE de la source
+8. Inclus une CITATION exacte du passage du texte qui inspire l'exercice
+{notions_block}
 
 TYPES D'EXERCICES ACCEPTÉS :
 - Calculs basés sur des données du texte (pourcentages, proportions, statistiques)
@@ -80,12 +89,15 @@ FORMAT DE RÉPONSE (JSON strict) :
                 "Étape 3 : Calculer le résultat..."
             ],
             "correction": "Correction détaillée avec explications pédagogiques...",
-            "verification_code": "# Code Python\\nresult = 42.5\\nprint(f'Résultat: {{result}}')"
+            "verification_code": "# Code Python\\nresult = 42.5\\nprint(f'Résultat: {{result}}')",
+            "citation": "Citation exacte du passage du texte qui inspire l'exercice...",
+            "source_page": 1
         }}
     ]
 }}"""
 
-    user_prompt = f"""Voici le texte source :
+    doc_context = f" (document : {source_document})" if source_document else ""
+    user_prompt = f"""Voici le texte source{doc_context} :
 
 ---
 {text}
@@ -221,14 +233,17 @@ def generate_exercises_from_chunk(
     chunk: TextChunk,
     num_exercises: int = 2,
     max_retries: int = 3,
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    notions_text: str = ""
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
     
     Si la vérification échoue, re-génère l'exercice (max max_retries tentatives).
     """
-    system_prompt, user_prompt = _build_exercise_prompt(chunk.text, num_exercises)
+    system_prompt, user_prompt = _build_exercise_prompt(
+        chunk.text, num_exercises, notions_text=notions_text, source_document=chunk.source_document
+    )
     
     exercises = []
     
@@ -238,6 +253,13 @@ def generate_exercises_from_chunk(
             
             for ex_data in result.get("exercises", []):
                 try:
+                    # Récupérer la page source du LLM ou fallback sur le chunk
+                    source_page = ex_data.get("source_page")
+                    if source_page:
+                        source_pages = [source_page] if isinstance(source_page, int) else chunk.source_pages
+                    else:
+                        source_pages = chunk.source_pages
+
                     exercise = Exercise(
                         statement=ex_data["statement"],
                         expected_answer=str(ex_data["expected_answer"]),
@@ -245,7 +267,9 @@ def generate_exercises_from_chunk(
                         num_steps=len(ex_data.get("steps", [])),
                         correction=ex_data.get("correction", ""),
                         verification_code=ex_data.get("verification_code", ""),
-                        source_pages=chunk.source_pages,
+                        source_pages=source_pages,
+                        source_document=chunk.source_document,
+                        citation=ex_data.get("citation", ""),
                     )
                     
                     # Vérifier l'exercice via l'agent
@@ -271,7 +295,8 @@ def generate_exercises(
     chunks: List[TextChunk],
     num_exercises: int = 5,
     model: Optional[str] = None,
-    progress_callback=None
+    progress_callback=None,
+    notions: Optional[list] = None
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks.
@@ -281,12 +306,19 @@ def generate_exercises(
         num_exercises: Nombre total d'exercices souhaités.
         model: Modèle LLM à utiliser.
         progress_callback: Fonction callback(current, total) pour la progression.
+        notions: Liste de Notion fondamentales pour guider la génération.
     
     Returns:
         Liste d'Exercise.
     """
     if not chunks:
         return []
+    
+    # Préparer le texte des notions
+    notions_text = ""
+    if notions:
+        from notion_detector import notions_to_prompt_text
+        notions_text = notions_to_prompt_text(notions)
     
     # Sélectionner des chunks répartis équitablement dans le document
     if len(chunks) <= num_exercises:
@@ -311,7 +343,9 @@ def generate_exercises(
             progress_callback(i, len(selected_chunks))
         
         try:
-            exercises = generate_exercises_from_chunk(chunk, n_exercises, model=model)
+            exercises = generate_exercises_from_chunk(
+                chunk, n_exercises, model=model, notions_text=notions_text
+            )
             all_exercises.extend(exercises)
         except Exception as e:
             print(f"Erreur sur le chunk {chunk.source_pages}: {e}")

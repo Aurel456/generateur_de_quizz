@@ -5,11 +5,12 @@ app.py — Interface Streamlit principale pour le générateur de quizz et exerc
 import streamlit as st
 import time
 
-from document_processor import extract_and_chunk, get_text_stats, count_tokens
+from document_processor import extract_and_chunk_multiple, get_text_stats_multiple, count_tokens
 from llm_service import get_model_info, list_models
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
 from exercise_generator import generate_exercises
 from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv
+from notion_detector import detect_notions, edit_notions_with_llm, Notion
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
 
@@ -127,15 +128,18 @@ if "pdf_stats" not in st.session_state:
     st.session_state.pdf_stats = None
 if "difficulty_prompts" not in st.session_state:
     st.session_state.difficulty_prompts = DIFFICULTY_PROMPTS.copy()
+if "notions" not in st.session_state:
+    st.session_state.notions = None
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## 📄 Document")
-    uploaded_file = st.file_uploader(
-        "Choisir un fichier",
+    st.markdown("## 📄 Documents")
+    uploaded_files = st.file_uploader(
+        "Choisir un ou plusieurs fichiers",
         type=["pdf", "docx", "odt", "odp", "pptx", "txt"],
-        help="Uploadez le document à partir duquel générer les questions."
+        accept_multiple_files=True,
+        help="Uploadez les documents à partir desquels générer les questions."
     )
 
     st.divider()
@@ -184,25 +188,24 @@ with st.sidebar:
 
 # ─── Traitement du PDF ──────────────────────────────────────────────────────────
 
-if uploaded_file is not None:
+if uploaded_files:
     # Extraire les stats et chunks
     # Identifier si les paramètres ont changé
-    current_params = f"{uploaded_file.name}_{read_mode}_{max_chunk_tokens}"
+    files_key = "_".join(sorted(f.name for f in uploaded_files))
+    current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}"
     
     if st.session_state.pdf_stats is None or st.session_state.get("_last_params") != current_params:
-        with st.spinner("📄 Analyse et découpage du document en cours..."):
-            # Si c'est un nouveau fichier, on recalcule les stats
-            if st.session_state.get("_last_file") != uploaded_file.name:
-                st.session_state.pdf_stats = get_text_stats(uploaded_file)
-                uploaded_file.seek(0)
+        with st.spinner("📄 Analyse et découpage des documents en cours..."):
+            # Si les fichiers ont changé, on recalcule les stats
+            if st.session_state.get("_last_files_key") != files_key:
+                st.session_state.pdf_stats = get_text_stats_multiple(uploaded_files)
             
             # Recalculer les chunks (changement de fichier OU de mode)
-            st.session_state.chunks = extract_and_chunk(
-                uploaded_file, mode=read_mode, max_tokens=max_chunk_tokens
+            st.session_state.chunks = extract_and_chunk_multiple(
+                uploaded_files, mode=read_mode, max_tokens=max_chunk_tokens
             )
-            uploaded_file.seek(0)
             
-            st.session_state._last_file = uploaded_file.name
+            st.session_state._last_files_key = files_key
             st.session_state._last_params = current_params
             
             # Reset les résultats précédents
@@ -213,29 +216,36 @@ if uploaded_file is not None:
     chunks = st.session_state.chunks
 
     # Afficher les statistiques
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-value">{stats.get('num_documents', 1)}</div>
+            <div class="stat-label">Documents</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-value">{stats['num_pages']}</div>
             <div class="stat-label">Pages / Slides</div>
         </div>
         """, unsafe_allow_html=True)
-    with col2:
+    with col3:
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-value">{stats['total_tokens']:,}</div>
             <div class="stat-label">Tokens total</div>
         </div>
         """, unsafe_allow_html=True)
-    with col3:
+    with col4:
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-value">{len(chunks)}</div>
             <div class="stat-label">Chunks</div>
         </div>
         """, unsafe_allow_html=True)
-    with col4:
+    with col5:
         st.markdown(f"""
         <div class="stat-card">
             <div class="stat-value">{stats['avg_tokens_per_page']}</div>
@@ -243,11 +253,103 @@ if uploaded_file is not None:
         </div>
         """, unsafe_allow_html=True)
 
+    # Détails par document (repliable)
+    if stats.get('per_document'):
+        with st.expander(f"📊 Détails par document ({stats['num_documents']} documents)"):
+            for doc_stats in stats['per_document']:
+                st.markdown(
+                    f"**📄 {doc_stats['name']}** — "
+                    f"{doc_stats['num_pages']} pages, "
+                    f"{doc_stats['total_tokens']:,} tokens"
+                )
+
     st.divider()
 
     # ─── Onglets Quizz / Exercices ──────────────────────────────────────────────
 
-    tab_quiz, tab_exercises, tab_preview = st.tabs(["🎯 Quizz QCM", "🧮 Exercices", "👁️ Aperçu texte"])
+    tab_notions, tab_quiz, tab_exercises, tab_preview = st.tabs(["📚 Notions Fondamentales", "🎯 Quizz QCM", "🧮 Exercices", "👁️ Aperçu texte"])
+
+    # ═══ ONGLET NOTIONS FONDAMENTALES ════════════════════════════════════════════
+
+    with tab_notions:
+        st.markdown("### 📚 Notions Fondamentales")
+        st.caption("Identifiez les concepts clés des documents. Ces notions guideront la génération des quizz et exercices.")
+
+        # Bouton de détection
+        if st.button("🔍 Détecter les notions fondamentales", type="primary", use_container_width=True):
+            with st.spinner("🧠 Analyse des documents en cours..."):
+                try:
+                    notions = detect_notions(chunks, model=selected_model)
+                    st.session_state.notions = notions
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erreur lors de la détection : {str(e)}")
+
+        # Affichage et édition des notions
+        if st.session_state.notions is not None:
+            notions = st.session_state.notions
+            active_count = sum(1 for n in notions if n.enabled)
+            st.markdown(f"**{len(notions)} notion(s) détectée(s)** — {active_count} active(s)")
+
+            st.divider()
+
+            # Checklist des notions
+            for idx, notion in enumerate(notions):
+                col_check, col_text, col_del = st.columns([0.5, 8, 1])
+                with col_check:
+                    new_enabled = st.checkbox(
+                        "act", value=notion.enabled, key=f"notion_check_{idx}", label_visibility="collapsed"
+                    )
+                    if new_enabled != notion.enabled:
+                        st.session_state.notions[idx].enabled = new_enabled
+                with col_text:
+                    style = "" if notion.enabled else "opacity: 0.5;"
+                    source_info = ""
+                    if notion.source_document:
+                        source_info += f" — 📄 {notion.source_document}"
+                    if notion.source_pages:
+                        source_info += f", p. {', '.join(map(str, notion.source_pages))}"
+                    st.markdown(
+                        f"<div style='{style}'><strong>{notion.title}</strong><br/>"
+                        f"<span style='color: #a0a0b8; font-size: 0.85em;'>{notion.description}{source_info}</span></div>",
+                        unsafe_allow_html=True
+                    )
+                with col_del:
+                    if st.button("🗑️", key=f"notion_del_{idx}", help="Supprimer cette notion"):
+                        st.session_state.notions.pop(idx)
+                        st.rerun()
+
+            st.divider()
+
+            # Ajout manuel
+            with st.expander("➕ Ajouter une notion manuellement"):
+                new_title = st.text_input("Titre de la notion", key="new_notion_title")
+                new_desc = st.text_area("Description", key="new_notion_desc", height=80)
+                if st.button("Ajouter", key="add_notion_btn") and new_title:
+                    st.session_state.notions.append(Notion(
+                        title=new_title, description=new_desc, enabled=True
+                    ))
+                    st.rerun()
+
+            # Chat LLM pour éditer les notions
+            st.divider()
+            st.markdown("#### 💬 Modifier les notions avec l'IA")
+            st.caption("Ex: *'Ajoute une notion sur les dérivées partielles'*, *'Fusionne les notions 2 et 3'*, *'Reformule la notion 1'*")
+            llm_instruction = st.text_input("Votre instruction", key="notion_llm_input", placeholder="Décrivez la modification...")
+            if st.button("💬 Envoyer au LLM", key="notion_llm_btn") and llm_instruction:
+                with st.spinner("🧠 Modification en cours..."):
+                    try:
+                        updated_notions, explanation = edit_notions_with_llm(
+                            st.session_state.notions, llm_instruction, model=selected_model
+                        )
+                        st.session_state.notions = updated_notions
+                        st.success(f"✅ {explanation}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erreur : {str(e)}")
+
+        else:
+            st.info("👆 Cliquez sur le bouton ci-dessus pour détecter automatiquement les notions fondamentales de vos documents.")
 
     # ═══ ONGLET QUIZZ ═══════════════════════════════════════════════════════════
 
@@ -325,6 +427,11 @@ if uploaded_file is not None:
                     )
 
             try:
+                # Récupérer les notions activées
+                active_notions = None
+                if st.session_state.notions:
+                    active_notions = [n for n in st.session_state.notions if n.enabled]
+
                 quiz = generate_quiz(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts,
@@ -332,7 +439,8 @@ if uploaded_file is not None:
                     num_correct=num_correct,
                     difficulty_prompts=st.session_state.difficulty_prompts,
                     model=selected_model,
-                    progress_callback=quiz_progress
+                    progress_callback=quiz_progress,
+                    notions=active_notions
                 )
                 st.session_state.quiz = quiz
                 progress_bar.progress(1.0, text="✅ Quizz généré !")
@@ -352,20 +460,42 @@ if uploaded_file is not None:
             st.markdown(f"### 📋 Résultat : {len(quiz.questions)} questions générées")
 
             for i, q in enumerate(quiz.questions):
-                with st.expander(f"**Q{i+1}.** {q.question}", expanded=(i < 3)):
+                # Badge difficulté
+                diff_label = q.difficulty_level or "moyen"
+                diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
+                expander_title = f"{diff_emoji} **Q{i+1}.** {q.question}"
+
+                with st.expander(expander_title, expanded=(i < 3)):
+                    # Badge difficulté en haut
+                    diff_colors = {"facile": "#00c853", "moyen": "#ffab00", "difficile": "#ff1744"}
+                    diff_color = diff_colors.get(diff_label, "#a0a0b8")
+                    st.markdown(
+                        f'<span style="background: {diff_color}20; color: {diff_color}; '
+                        f'padding: 0.2rem 0.7rem; border-radius: 12px; font-size: 0.8rem; '
+                        f'font-weight: 600; border: 1px solid {diff_color}40;">'
+                        f'{diff_emoji} {diff_label.capitalize()}</span>',
+                        unsafe_allow_html=True
+                    )
+
                     for label, text in q.choices.items():
                         is_correct = label in q.correct_answers
                         icon = "✅" if is_correct else "⬜"
-                        color = "green" if is_correct else "inherit"
-                        st.markdown(
-                            f"**{icon} {label}.** {text}",
-                        )
+                        st.markdown(f"**{icon} {label}.** {text}")
 
                     if q.explanation:
                         st.info(f"💡 **Explication :** {q.explanation}")
 
+                    if q.citation:
+                        st.markdown(f"📝 **Citation :** *\"{q.citation}\"*")
+
+                    # Source enrichie
+                    source_parts = []
+                    if q.source_document:
+                        source_parts.append(f"📄 {q.source_document}")
                     if q.source_pages:
-                        st.caption(f"📄 Source : pages {', '.join(map(str, q.source_pages))}")
+                        source_parts.append(f"p. {', '.join(map(str, q.source_pages))}")
+                    if source_parts:
+                        st.caption(f"Source : {', '.join(source_parts)}")
 
             # Boutons de téléchargement
             st.divider()
@@ -428,11 +558,17 @@ if uploaded_file is not None:
                     )
 
             try:
+                # Récupérer les notions activées
+                active_notions = None
+                if st.session_state.notions:
+                    active_notions = [n for n in st.session_state.notions if n.enabled]
+
                 exercises = generate_exercises(
                     chunks=chunks,
                     num_exercises=num_exercises,
                     model=selected_model,
-                    progress_callback=exercise_progress
+                    progress_callback=exercise_progress,
+                    notions=active_notions
                 )
                 st.session_state.exercises = exercises
                 progress_bar.progress(1.0, text="✅ Exercices générés et vérifiés !")
@@ -489,10 +625,17 @@ if uploaded_file is not None:
                         with st.popover("📋 Détails de la vérification"):
                             st.text(ex.verification_output)
 
-                    # Source
+                    # Source enrichie
+                    source_parts = []
+                    if ex.source_document:
+                        source_parts.append(f"📄 {ex.source_document}")
                     if ex.source_pages:
-                        st.caption(f"📄 Source : pages {', '.join(map(str, ex.source_pages))}")
+                        source_parts.append(f"p. {', '.join(map(str, ex.source_pages))}")
+                    if source_parts:
+                        st.caption(f"Source : {', '.join(source_parts)}")
 
+                    if ex.citation:
+                        st.markdown(f"📝 **Citation :** *\"{ex.citation}\"*")
             # Bouton de téléchargement CSV pour les exercices
             st.divider()
             try:
@@ -515,8 +658,9 @@ if uploaded_file is not None:
         st.caption(f"Mode de lecture : **{read_mode}** — {len(chunks)} chunks créés")
 
         for i, chunk in enumerate(chunks[:20]):  # Limiter à 20 chunks pour l'affichage
+            doc_label = f"📄 {chunk.source_document} — " if chunk.source_document else ""
             with st.expander(
-                f"Chunk {i+1} — {chunk.token_count} tokens — "
+                f"{doc_label}Chunk {i+1} — {chunk.token_count} tokens — "
                 f"Pages {', '.join(map(str, chunk.source_pages))}",
                 expanded=(i == 0)
             ):
@@ -526,13 +670,13 @@ if uploaded_file is not None:
             st.info(f"... et {len(chunks) - 20} chunks supplémentaires non affichés.")
 
 else:
-    # Message quand aucun PDF n'est uploadé
+    # Message quand aucun document n'est uploadé
     st.markdown("""
     <div style="text-align: center; padding: 4rem 2rem;">
         <div style="font-size: 4rem; margin-bottom: 1rem;">📄</div>
         <h2 style="color: #6c63ff; margin-bottom: 0.5rem;">Aucun document uploadé</h2>
         <p style="color: #a0a0b8; max-width: 500px; margin: 0 auto;">
-            Uploadez un fichier (PDF, DOCX, ODT...) dans la barre latérale pour commencer à 
+            Uploadez un ou plusieurs fichiers (PDF, DOCX, ODT...) dans la barre latérale pour commencer à 
             générer des quizz et exercices automatiquement avec l'IA.
         </p>
     </div>

@@ -40,6 +40,10 @@ def export_quiz_html(quiz: Quiz) -> str:
             "explanation": q.explanation,
             "num_correct": len(q.correct_answers),
             "is_multiple": len(q.correct_answers) > 1,
+            "difficulty_level": q.difficulty_level or "moyen",
+            "source_document": q.source_document or "",
+            "citation": q.citation or "",
+            "source_pages": q.source_pages,
         })
     
     html = template.render(
@@ -71,7 +75,7 @@ def export_quiz_csv(quiz: Quiz) -> str:
     header = ["Question"]
     for i in range(max_choices):
         header.append(f"Choix {chr(65 + i)}")
-    header.extend(["Bonnes Réponses", "Explication", "Pages Source"])
+    header.extend(["Bonnes Réponses", "Explication", "Difficulté", "Citation", "Document Source", "Pages Source"])
     writer.writerow(header)
     
     # Données
@@ -87,6 +91,9 @@ def export_quiz_csv(quiz: Quiz) -> str:
         
         row.append(", ".join(q.correct_answers))
         row.append(q.explanation)
+        row.append(getattr(q, 'difficulty_level', '') or '')
+        row.append(getattr(q, 'citation', '') or '')
+        row.append(getattr(q, 'source_document', '') or '')
         row.append(", ".join(map(str, q.source_pages)))
         writer.writerow(row)
     
@@ -103,7 +110,7 @@ def export_exercises_csv(exercises: list) -> str:
     writer = csv.writer(output, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
     
     # En-tête
-    header = ["Énoncé", "Réponse Attendue", "Étapes de Résolution", "Correction IA", "Vérifié", "Pages Source"]
+    header = ["Énoncé", "Réponse Attendue", "Étapes de Résolution", "Correction IA", "Vérifié", "Citation", "Document Source", "Pages Source"]
     writer.writerow(header)
     
     # Données
@@ -114,6 +121,8 @@ def export_exercises_csv(exercises: list) -> str:
             "\n".join(ex.steps),
             ex.correction,
             "Oui" if ex.verified else "Non",
+            getattr(ex, 'citation', '') or '',
+            getattr(ex, 'source_document', '') or '',
             ", ".join(map(str, ex.source_pages))
         ]
         writer.writerow(row)

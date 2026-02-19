@@ -21,6 +21,7 @@ class TextChunk:
     text: str
     source_pages: List[int] = field(default_factory=list)
     token_count: int = 0
+    source_document: str = ""
 
 
 # Encodeur tiktoken — cl100k_base est compatible avec la plupart des modèles OpenAI
@@ -446,3 +447,52 @@ def get_text_stats(file: BinaryIO) -> dict:
         "total_tokens": total_tokens,
         "avg_tokens_per_page": total_tokens // max(len(pages), 1)
     }
+
+
+def get_text_stats_multiple(files: List[BinaryIO]) -> dict:
+    """Retourne des statistiques globales et par document pour plusieurs fichiers."""
+    per_doc = []
+    total_pages = 0
+    total_chars = 0
+    total_tokens = 0
+
+    for file in files:
+        file.seek(0)
+        stats = get_text_stats(file)
+        file.seek(0)
+        stats["name"] = getattr(file, "name", "inconnu")
+        per_doc.append(stats)
+        total_pages += stats["num_pages"]
+        total_chars += stats["total_chars"]
+        total_tokens += stats["total_tokens"]
+
+    return {
+        "num_pages": total_pages,
+        "total_chars": total_chars,
+        "total_tokens": total_tokens,
+        "avg_tokens_per_page": total_tokens // max(total_pages, 1),
+        "num_documents": len(files),
+        "per_document": per_doc,
+    }
+
+
+def extract_and_chunk_multiple(
+    files: List[BinaryIO],
+    mode: Literal["page", "token"] = "page",
+    max_tokens: int = 10000,
+    overlap_tokens: int = 200
+) -> List[TextChunk]:
+    """
+    Pipeline complet multi-documents : extraction + chunking pour chaque fichier.
+    Chaque TextChunk conserve le nom du document source.
+    """
+    all_chunks = []
+    for file in files:
+        file.seek(0)
+        doc_name = getattr(file, "name", "inconnu")
+        chunks = extract_and_chunk(file, mode=mode, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        for chunk in chunks:
+            chunk.source_document = doc_name
+        all_chunks.extend(chunks)
+        file.seek(0)
+    return all_chunks

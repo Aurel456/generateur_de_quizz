@@ -8,6 +8,9 @@ from typing import Dict, List, Optional
 
 from llm_service import call_llm_json, count_tokens, MODEL_CONTEXT_WINDOW
 from document_processor import TextChunk
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from notion_detector import Notion
 
 
 @dataclass
@@ -18,6 +21,9 @@ class QuizQuestion:
     correct_answers: List[str]  # ["A", "C"]
     explanation: str = ""
     source_pages: List[int] = field(default_factory=list)
+    difficulty_level: str = ""
+    source_document: str = ""
+    citation: str = ""
 
 
 @dataclass
@@ -60,13 +66,19 @@ def _build_quiz_prompt(
     num_choices: int,
     num_correct: int,
     choice_labels: List[str],
-    difficulty_prompts: Optional[Dict[str, str]] = None
+    difficulty_prompts: Optional[Dict[str, str]] = None,
+    notions_text: str = "",
+    source_document: str = ""
 ) -> tuple:
     """Construit le prompt système et utilisateur pour la génération de quizz."""
     
     labels_str = ", ".join(choice_labels[:num_choices])
     prompts = difficulty_prompts or DIFFICULTY_PROMPTS
     diff_instruction = prompts.get(difficulty, DIFFICULTY_PROMPTS.get(difficulty, ""))
+    
+    notions_block = ""
+    if notions_text:
+        notions_block = f"""\n\n{notions_text}\nLes questions doivent prioritairement couvrir ces notions fondamentales."""
     
     system_prompt = f"""Tu es un expert en pédagogie et en création de quizz éducatifs.
 Tu dois générer exactement {num_questions} questions QCM (Questions à Choix Multiples).
@@ -75,9 +87,12 @@ RÈGLES STRICTES :
 1. Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})
 2. Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)
 3. {diff_instruction}
-4. Chaque question doit inclure une explication de la réponse
+4. Chaque question doit inclure une explication de la réponse avec une CITATION exacte du texte source
 5. Les questions doivent être variées et couvrir différentes parties du texte
 6. Les choix de réponse doivent être du même type et de longueur similaire
+7. Pour chaque question, précise la PAGE EXACTE de la source
+8. Le niveau de difficulté est : {difficulty}
+{notions_block}
 
 FORMAT DE RÉPONSE (JSON strict) :
 {{
@@ -86,12 +101,16 @@ FORMAT DE RÉPONSE (JSON strict) :
             "question": "La question posée ?",
             "choices": {{{", ".join(f'"{l}": "Choix {l}"' for l in choice_labels[:num_choices])}}},
             "correct_answers": {list(choice_labels[:num_correct])},
-            "explanation": "Explication détaillée de la bonne réponse..."
+            "explanation": "Explication détaillée de la bonne réponse...",
+            "citation": "Citation exacte du passage du texte qui justifie la réponse...",
+            "source_page": 1,
+            "difficulty_level": "{difficulty}"
         }}
     ]
 }}"""
 
-    user_prompt = f"""Voici le texte source pour générer les questions :
+    doc_context = f" (document : {source_document})" if source_document else ""
+    user_prompt = f"""Voici le texte source{doc_context} pour générer les questions :
 
 ---
 {text}
@@ -109,7 +128,8 @@ def generate_quiz_from_chunk(
     num_choices: int = 4,
     num_correct: int = 1,
     difficulty_prompts: Optional[Dict[str, str]] = None,
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    notions_text: str = ""
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -118,7 +138,8 @@ def generate_quiz_from_chunk(
     choice_labels = list(string.ascii_uppercase[:num_choices])
     
     system_prompt, user_prompt = _build_quiz_prompt(
-        chunk.text, difficulty, num_questions, num_choices, num_correct, choice_labels, difficulty_prompts
+        chunk.text, difficulty, num_questions, num_choices, num_correct, choice_labels,
+        difficulty_prompts, notions_text=notions_text, source_document=chunk.source_document
     )
     
     # Appel au LLM
@@ -128,12 +149,22 @@ def generate_quiz_from_chunk(
     questions = []
     for q_data in result.get("questions", []):
         try:
+            # Récupérer la page source du LLM ou fallback sur le chunk
+            source_page = q_data.get("source_page")
+            if source_page:
+                source_pages = [source_page] if isinstance(source_page, int) else chunk.source_pages
+            else:
+                source_pages = chunk.source_pages
+
             question = QuizQuestion(
                 question=q_data["question"],
                 choices=q_data["choices"],
                 correct_answers=q_data["correct_answers"],
                 explanation=q_data.get("explanation", ""),
-                source_pages=chunk.source_pages
+                source_pages=source_pages,
+                difficulty_level=q_data.get("difficulty_level", difficulty),
+                source_document=chunk.source_document,
+                citation=q_data.get("citation", ""),
             )
             # Validation : vérifier que les bonnes réponses sont dans les choix
             if all(ans in question.choices for ans in question.correct_answers):
@@ -153,7 +184,8 @@ def generate_quiz(
     num_correct: int = 1,
     difficulty_prompts: Optional[Dict[str, str]] = None,
     model: Optional[str] = None,
-    progress_callback=None
+    progress_callback=None,
+    notions: Optional[list] = None
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -189,6 +221,12 @@ def generate_quiz(
     diff_keys = [k for k, v in difficulty_counts.items() if v > 0]
     total_steps = len(diff_keys) * len(chunks)
     current_step = 0
+
+    # Préparer le texte des notions
+    notions_text = ""
+    if notions:
+        from notion_detector import notions_to_prompt_text
+        notions_text = notions_to_prompt_text(notions)
 
     for diff_name, diff_count in difficulty_counts.items():
         if diff_count <= 0:
@@ -230,7 +268,8 @@ def generate_quiz(
                     num_choices=num_choices,
                     num_correct=num_correct,
                     difficulty_prompts=difficulty_prompts,
-                    model=model
+                    model=model,
+                    notions_text=notions_text
                 )
                 all_questions.extend(questions)
             except Exception as e:

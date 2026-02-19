@@ -324,6 +324,50 @@
             color: var(--accent);
         }
 
+        /* Difficulty badge */
+        .difficulty-badge {
+            display: inline-block;
+            padding: 0.2rem 0.8rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 0.8rem;
+        }
+        .difficulty-badge.facile {
+            background: rgba(0, 200, 83, 0.15);
+            color: var(--success);
+            border: 1px solid rgba(0, 200, 83, 0.3);
+        }
+        .difficulty-badge.moyen {
+            background: rgba(255, 171, 0, 0.15);
+            color: var(--warning);
+            border: 1px solid rgba(255, 171, 0, 0.3);
+        }
+        .difficulty-badge.difficile {
+            background: rgba(255, 23, 68, 0.15);
+            color: var(--error);
+            border: 1px solid rgba(255, 23, 68, 0.3);
+        }
+
+        /* Citation */
+        .question-citation {
+            margin-top: 0.8rem;
+            padding: 0.8rem 1rem;
+            background: rgba(108, 99, 255, 0.05);
+            border-left: 3px solid var(--text-muted);
+            border-radius: 0 8px 8px 0;
+            font-style: italic;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Source info */
+        .question-source {
+            margin-top: 0.6rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
         /* Final score */
         .final-score {
             text-align: center;
@@ -412,7 +456,10 @@
         <!-- Questions -->
         {% for q in questions %}
         <div class="question-card" id="question-{{ q.index }}" data-correct='{{ q.correct_answers | tojson }}'>
-            <div class="question-number">{{ q.index }}</div>
+            <div style="display: flex; align-items: center; gap: 0.8rem; margin-bottom: 1rem;">
+                <div class="question-number">{{ q.index }}</div>
+                <span class="difficulty-badge {{ q.difficulty_level }}">{{ q.difficulty_level | capitalize }}</span>
+            </div>
             <div class="question-text">{{ q.question }}</div>
             {% if q.is_multiple %}
             <div class="question-hint">⚡ Sélectionnez {{ q.num_correct }} réponse(s)</div>
@@ -430,7 +477,17 @@
             </button>
             <div class="explanation" id="explanation-{{ q.index }}">
                 <strong>💡 Explication :</strong> {{ q.explanation }}
+                {% if q.citation %}
+                <div class="question-citation">📝 « {{ q.citation }} »</div>
+                {% endif %}
             </div>
+            {% if q.source_document or q.source_pages %}
+            <div class="question-source">
+                📄 Source :
+                {% if q.source_document %}{{ q.source_document }}{% endif %}
+                {% if q.source_pages %} — p. {{ q.source_pages | join(', ') }}{% endif %}
+            </div>
+            {% endif %}
         </div>
         {% endfor %}
 

@@ -1,10 +1,11 @@
 # 📝 Générateur de Quizz & Exercices IA (Streamlit + LangGraph)
 
-Application Streamlit permettant de générer automatiquement des **Quizz QCM** et des **Exercices mathématiques/logiques** à partir de documents PDF, DOCX, ODT, PPTX et TXT, en utilisant des modèles LLM via l'API OpenAI (ou compatible).
+Application Streamlit permettant de générer automatiquement des **Quizz QCM** et des **Exercices mathématiques/logiques** à partir de **multiples documents** PDF, DOCX, ODT, PPTX et TXT, en utilisant des modèles LLM via l'API OpenAI (ou compatible).
 
 ## ✨ Fonctionnalités
 
 ### 🎯 Quizz QCM
+- **Support multi-documents** : Uploadez **plusieurs fichiers simultanément** et générez des questions couvrant l'ensemble des documents.
 - **Extraction multi-format** : Support des fichiers **PDF, DOCX, ODT, ODP, PPTX et TXT**.
 - **Extraction flexible** du texte :
   - **Mode "Page par page / Slide par slide"** : Idéal pour conserver la référence précise des sources.
@@ -17,11 +18,21 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
   - Nombre de choix de réponses (A, B, C, D... jusqu'à G).
   - Nombre de bonnes réponses (choix multiple possible).
 - **Export HTML interactif** : Téléchargez un fichier HTML autonome avec design sombre, score en temps réel et explications détaillées.
+- **Badges de difficulté** : Chaque question affiche son niveau de difficulté avec un badge coloré (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
+- **Citations précises** : Les explications incluent une citation exacte du texte source.
+- **Attribution des sources** : Document source et numéro de page précis pour chaque question.
 
 ### 🧮 Exercices & Problèmes (Maths / Logique / Science)
 - **Génération d'exercices complexes** nécessitant calcul et raisonnement.
 - **Vérification automatique par Agent IA** : Un agent LangGraph exécute du code Python pour vérifier la validité de la réponse et de la correction proposée par le LLM.
 - **Affichage complet** : Énoncé, Réponse attendue, Étapes de résolution détaillées, Code de vérification Python.
+- **Citations et sources** : Chaque exercice indique la citation du texte source et le document/page d'origine.
+
+### 📚 Notions Fondamentales
+- **Détection automatique** : L'IA identifie les concepts clés, définitions, théorèmes et principes des documents.
+- **Édition interactive** : Activez/désactivez, supprimez ou ajoutez manuellement des notions.
+- **Chat LLM** : Modifiez les notions en langage naturel (ex: *« Ajoute une notion sur les dérivées partielles »*).
+- **Guidage de la génération** : Les notions activées orientent les quizz et exercices vers les concepts essentiels.
 
 ---
 
@@ -93,16 +104,20 @@ streamlit run app.py
 
 L'application s'ouvrira dans votre navigateur par défaut (généralement `http://localhost:8501`).
 
-1.  **Upload** : Chargez votre fichier (PDF, DOCX, ODT...) dans la barre latérale.
+1.  **Upload** : Chargez un ou **plusieurs fichiers** (PDF, DOCX, ODT...) dans la barre latérale.
 2.  **Configuration** : 
-    * Ajustez le mode de lecture (recommandé : "Hybride") et la taille des chunks.
+    * Ajustez le mode de lecture et la taille des chunks.
     * Sélectionnez le **Modèle LLM** souhaité dans la liste déroulante.
-3.  **Onglet Quizz** :
+3.  **Onglet Notions** :
+    *   Cliquez sur **"🔍 Détecter les notions fondamentales"** pour identifier les concepts clés.
+    *   Activez/désactivez les notions pour guider la génération.
+    *   Utilisez le chat LLM pour modifier les notions en langage naturel.
+4.  **Onglet Quizz** :
     *   Saisissez le nombre de questions pour chaque niveau (Facile, Moyen, Difficile).
     *   (Optionnel) Modifiez les instructions spécifiques envoyées à l'IA dans l'expandeur **"Personnaliser les Prompts"**.
     *   Cliquez sur **"Générer le Quizz"**.
-    *   Visualisez les questions et téléchargez le fichier HTML.
-4.  **Onglet Exercices** :
+    *   Visualisez les questions avec leurs badges de difficulté, citations et sources. Téléchargez en HTML ou CSV.
+5.  **Onglet Exercices** :
     *   Choisissez le nombre d'exercices.
     *   Cliquez sur **"Générer les Exercices"**.
     *   L'agent IA va générer et *vérifier* chaque exercice via l'exécution de code Python.
@@ -135,12 +150,13 @@ Contrairement aux quizz classiques, les exercices mathématiques ou logiques pas
 ## 🏗️ Architecture du projet
 
 - `app.py` : Interface utilisateur principale (Streamlit).
-- `document_processor.py` : Extraction de texte (pdfplumber, python-docx, odfpy, python-pptx) et découpage intelligent (tiktoken).
+- `document_processor.py` : Extraction de texte multi-format et découpage intelligent (support multi-documents).
+- `notion_detector.py` : Détection et édition des notions fondamentales via LLM.
 - `llm_service.py` : Client API OpenAI, gestion des tokens et retry logic.
-- `quiz_generator.py` : Logique de création des QCM (prompts, parsing JSON).
+- `quiz_generator.py` : Logique de création des QCM avec citations, difficulté et sources précises.
 - `exercise_generator.py` : Création d'exercices et **Vérification Agentique** (LangGraph + PythonREPLTool).
-- `quiz_exporter.py` : Moteur de rendu HTML (Jinja2).
-- `templates/quiz_template.html` : Template HTML/CSS/JS pour l'export des quizz.
+- `quiz_exporter.py` : Export HTML interactif (Jinja2) et CSV enrichis.
+- `templates/quiz_template.html` : Template HTML/CSS/JS pour l'export des quizz (badges difficulté, citations, sources).
 
 ## 📦 Dépendances principales
 
