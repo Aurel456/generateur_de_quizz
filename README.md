@@ -126,8 +126,8 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 
 ### 📏 Stratégies de Chunking
 Le logiciel découpe le PDF en "chunks" (segments) avant de les envoyer au LLM pour éviter de dépasser la fenêtre de contexte et pour permettre une analyse ciblée :
-- **Page par page (Défaut)** : Chaque page est traitée comme une unité isolée. C'est la méthode la plus précise pour l'attribution des sources.
-- **Par blocs de tokens** : Le texte est découpé en segments de taille fixe (ex: 10 000 tokens) avec chevauchement. 
+- **Page par page** : Chaque page est traitée comme une unité isolée. C'est la méthode la plus précise pour l'attribution des sources.
+- **Par blocs de tokens (Défaut)** : Le texte est découpé en segments de taille fixe (ex: 10 000 tokens) avec chevauchement. 
   - Idéal pour analyser des contextes longs.
   - **Précision** : Des marqueurs `[Début Page X] ... [Fin Page X]` sont insérés automatiquement dans le texte pour que l'IA puisse citer précisément ses sources, même au milieu d'un bloc de 50 pages.
 
@@ -144,6 +144,61 @@ Contrairement aux quizz classiques, les exercices mathématiques ou logiques pas
 3. **Validation** : L'agent compare le résultat de l'exécution avec la réponse annoncée par le premier LLM. 
    - Si les résultats concordent, l'exercice est marqué comme **Vérifié ✅**.
    - En cas d'erreur, le système peut tenter de re-générer l'exercice (auto-correction).
+
+---
+
+## 🏛️ Diagramme Structurel
+
+```mermaid
+graph TD
+    User((Utilisateur))
+    
+    subgraph UI [Interface Streamlit]
+        Upload[Upload Fichiers]
+        Params[Configuration]
+        Tabs[Onglets: Notions / Quizz / Exercices]
+    end
+
+    subgraph Core [Traitement Documentaire]
+        DocProc[document_processor.py]
+        Stats[Calcul Stats]
+        Chunking[Chunking Intelligent]
+    end
+
+    subgraph Logic [Modules IA]
+        NotionDet[notion_detector.py]
+        QuizGen[quiz_generator.py]
+        ExGen[exercise_generator.py]
+        Agent[Agent LangGraph + Python REPL]
+    end
+
+    subgraph Output [Exports]
+        HTML[Export HTML interactif]
+        CSV[Export CSV]
+    end
+
+    User --> Upload
+    User --> Params
+    Upload --> DocProc
+    DocProc --> Stats
+    DocProc --> Chunking
+    
+    Chunking --> NotionDet
+    NotionDet -- "Détection itérative" --> NotionDet
+    NotionDet --> Tabs
+    
+    Tabs -- "Notions activées" --> QuizGen
+    Tabs -- "Notions activées" --> ExGen
+    
+    Chunking --> QuizGen
+    Chunking --> ExGen
+    
+    QuizGen -- "Génération via LLM" --> HTML
+    ExGen -- "Génération + Code" --> Agent
+    Agent -- "Vérification" --> ExGen
+    ExGen --> CSV
+    HTML --> User
+```
 
 ---
 
