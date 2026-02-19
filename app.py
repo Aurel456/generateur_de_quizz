@@ -152,7 +152,7 @@ with st.sidebar:
             "page": "📄 Par page / slide / section",
             "token": "🏷️ Par blocs de tokens"
         }[x],
-        index=0,
+        index=1,
         help=(
             "**Par page/slide** : Chaque page (PDF) ou slide (PPTX) devient un chunk indépendant.\n\n"
             "**Par blocs de tokens** : Découpe le texte en segments de taille fixe. Idéal pour une vision globale."
@@ -277,13 +277,24 @@ if uploaded_files:
 
         # Bouton de détection
         if st.button("🔍 Détecter les notions fondamentales", type="primary", use_container_width=True):
-            with st.spinner("🧠 Analyse des documents en cours..."):
-                try:
-                    notions = detect_notions(chunks, model=selected_model)
-                    st.session_state.notions = notions
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la détection : {str(e)}")
+            progress_bar = st.progress(0, text="🧠 Analyse chunk par chunk...")
+            try:
+                def notion_progress(current, total):
+                    if total > 0:
+                        progress_bar.progress(
+                            current / total,
+                            text=f"🧠 Analyse chunk {current + 1}/{total}..."
+                        )
+
+                notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress)
+                st.session_state.notions = notions
+                progress_bar.progress(1.0, text="✅ Notions détectées !")
+                import time; time.sleep(0.5)
+                progress_bar.empty()
+                st.rerun()
+            except Exception as e:
+                progress_bar.empty()
+                st.error(f"❌ Erreur lors de la détection : {str(e)}")
 
         # Affichage et édition des notions
         if st.session_state.notions is not None:

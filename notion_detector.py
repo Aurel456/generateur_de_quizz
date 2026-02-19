@@ -22,19 +22,30 @@ class Notion:
     enabled: bool = True
 
 
-def _build_detection_prompt(chunks: List[TextChunk]) -> tuple:
-    """Construit le prompt pour détecter les notions fondamentales."""
+def _build_detection_prompt_incremental(
+    chunk: TextChunk,
+    existing_notions: List[Notion]
+) -> tuple:
+    """Construit le prompt pour détecter les notions d'un chunk, en tenant compte des notions déjà trouvées."""
 
-    # Construire le contexte avec les chunks (limiter pour ne pas dépasser le contexte)
-    context_parts = []
-    for chunk in chunks:
-        doc_label = f"[Document: {chunk.source_document}]" if chunk.source_document else ""
-        pages_label = f"[Pages: {', '.join(map(str, chunk.source_pages))}]"
-        context_parts.append(f"{doc_label} {pages_label}\n{chunk.text}")
+    doc_label = f"[Document: {chunk.source_document}]" if chunk.source_document else ""
+    pages_label = f"[Pages: {', '.join(map(str, chunk.source_pages))}]"
+    chunk_context = f"{doc_label} {pages_label}\n{chunk.text}"
 
-    context = "\n\n---\n\n".join(context_parts)
+    # Sérialiser les notions existantes
+    existing_text = ""
+    if existing_notions:
+        existing_text = "\n\nNOTIONS FONDAMENTALES DÉJÀ IDENTIFIÉES :\n"
+        for i, n in enumerate(existing_notions, 1):
+            src = ""
+            if n.source_document:
+                src += f" (Source: {n.source_document}"
+                if n.source_pages:
+                    src += f", p. {', '.join(map(str, n.source_pages))}"
+                src += ")"
+            existing_text += f"{i}. {n.title} : {n.description}{src}\n"
 
-    system_prompt = """Tu es un expert pédagogique. Tu dois identifier les NOTIONS FONDAMENTALES présentes dans les documents fournis.
+    system_prompt = f"""Tu es un expert pédagogique. Tu dois analyser un nouveau passage de texte et mettre à jour la liste des NOTIONS FONDAMENTALES.
 
 Les notions fondamentales sont :
 - Les concepts clés et définitions essentielles
@@ -43,55 +54,38 @@ Les notions fondamentales sont :
 - Les idées directrices et concepts structurants du document
 
 RÈGLES :
-1. Identifie entre 5 et 20 notions selon la richesse du contenu
-2. Chaque notion doit avoir un titre concis et une description claire
-3. Cite le document source et les pages où la notion apparaît
-4. Ordonne les notions par importance pédagogique
+1. CONSERVE toutes les notions existantes (tu peux enrichir leur description si le nouveau texte apporte des précisions)
+2. AJOUTE les nouvelles notions identifiées dans ce passage
+3. FUSIONNE les notions redondantes ou similaires
+4. Chaque notion doit avoir un titre concis et une description claire
+5. Cite le document source et les pages où la notion apparaît
+6. Ordonne les notions par importance pédagogique
 
 FORMAT DE RÉPONSE (JSON strict) :
-{
+{{
     "notions": [
-        {
+        {{
             "title": "Titre concis de la notion",
             "description": "Description claire de la notion en 1-3 phrases",
             "source_document": "nom_du_fichier.pdf",
             "source_pages": [1, 2, 3]
-        }
+        }}
     ]
-}"""
+}}"""
 
-    user_prompt = f"""Voici le contenu des documents :
+    user_prompt = f"""Voici le nouveau passage à analyser :
 
 ---
-{context}
+{chunk_context}
 ---
-
-Identifie les notions fondamentales de ces documents."""
+{existing_text}
+Retourne la liste COMPLÈTE et mise à jour des notions fondamentales (existantes + nouvelles de ce passage)."""
 
     return system_prompt, user_prompt
 
 
-def detect_notions(
-    chunks: List[TextChunk],
-    model: Optional[str] = None
-) -> List[Notion]:
-    """
-    Détecte les notions fondamentales à partir des chunks de texte.
-
-    Args:
-        chunks: Liste de TextChunk à analyser.
-        model: Modèle LLM à utiliser.
-
-    Returns:
-        Liste de Notion détectées.
-    """
-    if not chunks:
-        return []
-
-    system_prompt, user_prompt = _build_detection_prompt(chunks)
-
-    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
-
+def _parse_notions_response(result: dict) -> List[Notion]:
+    """Parse la réponse JSON du LLM en liste de Notion."""
     notions = []
     for n_data in result.get("notions", []):
         try:
@@ -105,6 +99,48 @@ def detect_notions(
             notions.append(notion)
         except (KeyError, TypeError):
             continue
+    return notions
+
+
+def detect_notions(
+    chunks: List[TextChunk],
+    model: Optional[str] = None,
+    progress_callback=None
+) -> List[Notion]:
+    """
+    Détecte les notions fondamentales de manière itérative, chunk par chunk.
+
+    À chaque chunk, le LLM reçoit les notions déjà trouvées et le nouveau texte,
+    puis retourne la liste mise à jour (notions existantes enrichies + nouvelles notions).
+
+    Args:
+        chunks: Liste de TextChunk à analyser.
+        model: Modèle LLM à utiliser.
+        progress_callback: Fonction callback(current, total) pour la progression.
+
+    Returns:
+        Liste de Notion détectées et consolidées.
+    """
+    if not chunks:
+        return []
+
+    notions: List[Notion] = []
+
+    for i, chunk in enumerate(chunks):
+        if progress_callback:
+            progress_callback(i, len(chunks))
+
+        system_prompt, user_prompt = _build_detection_prompt_incremental(chunk, notions)
+
+        try:
+            result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
+            notions = _parse_notions_response(result)
+        except Exception as e:
+            print(f"Erreur détection notions chunk {i}: {e}")
+            continue
+
+    if progress_callback:
+        progress_callback(len(chunks), len(chunks))
 
     return notions
 
