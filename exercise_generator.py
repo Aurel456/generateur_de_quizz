@@ -5,6 +5,10 @@ Les exercices ont des réponses numériques vérifiables par exécution de code 
 """
 
 import re
+import subprocess
+import sys
+import tempfile
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -21,6 +25,9 @@ from llm_service import (
     MODEL_CONTEXT_WINDOW,
 )
 from document_processor import TextChunk
+
+# Timeout pour l'exécution sandbox (en secondes)
+SANDBOX_TIMEOUT = 30
 
 
 @dataclass
@@ -173,59 +180,116 @@ def _verify_exercise_with_agent(exercise: Exercise, model: Optional[str] = None)
 
 def _verify_exercise_direct(exercise: Exercise) -> Exercise:
     """
-    Vérification directe en exécutant le code Python (fallback si l'agent échoue).
+    Vérification directe en exécutant le code Python dans un sous-processus isolé
+    (fallback si l'agent échoue).
+    
+    Le code est exécuté dans un processus séparé avec un timeout pour éviter
+    l'exécution de code malveillant dans le processus principal.
     """
+    if not exercise.verification_code:
+        exercise.verified = False
+        exercise.verification_output = "Pas de code de vérification fourni."
+        return exercise
+
     try:
-        # Exécuter le code dans un namespace isolé
-        namespace = {}
-        exec(exercise.verification_code, namespace)
-        
-        # Chercher les variables de résultat dans le namespace
-        result_value = None
-        for var_name in ['result', 'resultat', 'answer', 'reponse', 'res']:
-            if var_name in namespace:
-                result_value = namespace[var_name]
-                break
-        
-        if result_value is not None:
-            # Comparer avec la réponse attendue
-            try:
-                expected = float(exercise.expected_answer.replace(',', '.'))
-                actual = float(result_value)
-                # Tolérance de 0.1% pour les arrondis
-                if abs(expected - actual) < abs(expected) * 0.001 + 0.01:
-                    exercise.verified = True
-                    exercise.verification_output = (
-                        f"✅ Vérifié par exécution directe. "
-                        f"Résultat obtenu : {actual}, attendu : {expected}"
-                    )
-                else:
-                    exercise.verified = False
-                    exercise.verification_output = (
-                        f"❌ Résultat incorrect. "
-                        f"Obtenu : {actual}, attendu : {expected}"
-                    )
-            except ValueError:
-                # Comparaison en string
-                if str(result_value).strip() == exercise.expected_answer.strip():
-                    exercise.verified = True
-                    exercise.verification_output = f"✅ Vérifié (comparaison texte)."
-                else:
-                    exercise.verified = False
-                    exercise.verification_output = (
-                        f"❌ Résultat différent. "
-                        f"Obtenu : {result_value}, attendu : {exercise.expected_answer}"
-                    )
-        else:
-            exercise.verified = False
-            exercise.verification_output = (
-                "⚠️ Le code de vérification n'a pas produit de variable résultat "
-                "(result, answer, res, etc.)"
+        # Construire un script wrapper qui exécute le code et imprime le résultat
+        wrapper_code = exercise.verification_code + "\n\n"
+        wrapper_code += (
+            "# --- Extraction du résultat ---\n"
+            "import json as _json\n"
+            "_result_vars = ['result', 'resultat', 'answer', 'reponse', 'res']\n"
+            "for _var in _result_vars:\n"
+            "    if _var in dir() or _var in globals():\n"
+            "        _val = globals().get(_var) or locals().get(_var)\n"
+            "        if _val is not None:\n"
+            "            print(f'__RESULT__={_val}')\n"
+            "            break\n"
+        )
+
+        # Écrire le code dans un fichier temporaire
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.py', delete=False, encoding='utf-8'
+        ) as tmp_file:
+            tmp_file.write(wrapper_code)
+            tmp_path = tmp_file.name
+
+        try:
+            # Exécuter dans un sous-processus avec timeout
+            proc = subprocess.run(
+                [sys.executable, tmp_path],
+                capture_output=True,
+                text=True,
+                timeout=SANDBOX_TIMEOUT,
+                cwd=tempfile.gettempdir(),  # Répertoire de travail neutre
             )
+
+            stdout = proc.stdout
+            stderr = proc.stderr
+
+            if proc.returncode != 0:
+                exercise.verified = False
+                exercise.verification_output = (
+                    f"❌ Erreur lors de l'exécution (code retour {proc.returncode}) :\n"
+                    f"{stderr[:500] if stderr else 'Pas de détails.'}"
+                )
+                return exercise
+
+            # Chercher le résultat dans la sortie
+            result_match = re.search(r'__RESULT__=(.+)', stdout)
+            if result_match:
+                result_value = result_match.group(1).strip()
+
+                # Comparer avec la réponse attendue
+                try:
+                    expected = float(exercise.expected_answer.replace(',', '.'))
+                    actual = float(result_value)
+                    # Tolérance de 0.1% pour les arrondis
+                    if abs(expected - actual) < abs(expected) * 0.001 + 0.01:
+                        exercise.verified = True
+                        exercise.verification_output = (
+                            f"✅ Vérifié par exécution sandbox. "
+                            f"Résultat obtenu : {actual}, attendu : {expected}"
+                        )
+                    else:
+                        exercise.verified = False
+                        exercise.verification_output = (
+                            f"❌ Résultat incorrect. "
+                            f"Obtenu : {actual}, attendu : {expected}"
+                        )
+                except ValueError:
+                    # Comparaison en string
+                    if result_value.strip() == exercise.expected_answer.strip():
+                        exercise.verified = True
+                        exercise.verification_output = "✅ Vérifié (comparaison texte)."
+                    else:
+                        exercise.verified = False
+                        exercise.verification_output = (
+                            f"❌ Résultat différent. "
+                            f"Obtenu : {result_value}, attendu : {exercise.expected_answer}"
+                        )
+            else:
+                exercise.verified = False
+                exercise.verification_output = (
+                    "⚠️ Le code de vérification n'a pas produit de variable résultat "
+                    "(result, answer, res, etc.)\n"
+                    f"Sortie standard : {stdout[:300] if stdout else '(vide)'}"
+                )
+        finally:
+            # Nettoyage du fichier temporaire
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    except subprocess.TimeoutExpired:
+        exercise.verified = False
+        exercise.verification_output = (
+            f"⏱️ Timeout : le code de vérification a dépassé {SANDBOX_TIMEOUT}s."
+        )
     except Exception as e:
         exercise.verified = False
-        exercise.verification_output = f"❌ Erreur lors de l'exécution : {str(e)}"
-    
+        exercise.verification_output = f"❌ Erreur lors de l'exécution sandbox : {str(e)}"
+
     return exercise
 
 

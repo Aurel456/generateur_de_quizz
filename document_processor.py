@@ -8,12 +8,14 @@ from dataclasses import dataclass, field
 from typing import List, Literal, BinaryIO, Any
 
 import pdfplumber
-import tiktoken
 from docx import Document as DocxDocument
 from pptx import Presentation
 from odf.opendocument import load as load_odf
 from odf import text, draw, table
 from odf.teletype import extractText
+
+from llm_service import count_tokens, _encoder
+
 
 @dataclass
 class TextChunk:
@@ -22,15 +24,6 @@ class TextChunk:
     source_pages: List[int] = field(default_factory=list)
     token_count: int = 0
     source_document: str = ""
-
-
-# Encodeur tiktoken — cl100k_base est compatible avec la plupart des modèles OpenAI
-_encoder = tiktoken.get_encoding("cl100k_base")
-
-
-def count_tokens(text: str) -> int:
-    """Compte le nombre de tokens dans un texte."""
-    return len(_encoder.encode(text))
 
 
 def _extract_from_pdf(file: BinaryIO) -> List[dict]:

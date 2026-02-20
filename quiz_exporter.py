@@ -128,3 +128,113 @@ def export_exercises_csv(exercises: list) -> str:
         writer.writerow(row)
     
     return output.getvalue()
+
+
+def export_exercises_html(exercises: list) -> str:
+    """
+    Génère un fichier HTML interactif standalone pour les exercices.
+    
+    Args:
+        exercises: Liste d'objets Exercise.
+    
+    Returns:
+        Contenu HTML sous forme de string.
+    """
+    exercises_html_parts = []
+    for i, ex in enumerate(exercises, 1):
+        verified_badge = (
+            '<span class="badge verified">✅ Vérifié</span>'
+            if ex.verified else
+            '<span class="badge not-verified">⚠️ Non vérifié</span>'
+        )
+        
+        steps_html = ""
+        if ex.steps:
+            steps_items = "".join(f"<li>{step}</li>" for step in ex.steps)
+            steps_html = f'<h4>📊 Résolution ({len(ex.steps)} étapes)</h4><ol>{steps_items}</ol>'
+        
+        correction_html = ""
+        if ex.correction:
+            correction_html = f'<h4>🤖 Correction IA</h4><p>{ex.correction}</p>'
+        
+        code_html = ""
+        if ex.verification_code:
+            escaped_code = ex.verification_code.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            code_html = (
+                f'<details><summary>🔍 Code de vérification</summary>'
+                f'<pre><code>{escaped_code}</code></pre></details>'
+            )
+        
+        source_html = ""
+        source_parts = []
+        if ex.source_document:
+            source_parts.append(f"📄 {ex.source_document}")
+        if ex.source_pages:
+            source_parts.append(f"p. {', '.join(map(str, ex.source_pages))}")
+        if source_parts:
+            source_html = f'<p class="source">Source : {", ".join(source_parts)}</p>'
+        
+        citation_html = ""
+        if ex.citation:
+            citation_html = f'<blockquote>📝 {ex.citation}</blockquote>'
+        
+        exercises_html_parts.append(f"""
+        <div class="exercise-card">
+            <div class="exercise-header">
+                <h3>Exercice {i}</h3>
+                {verified_badge}
+            </div>
+            <h4>📝 Énoncé</h4>
+            <p>{ex.statement}</p>
+            <h4>🎯 Réponse attendue : <code>{ex.expected_answer}</code></h4>
+            {steps_html}
+            {correction_html}
+            {code_html}
+            {citation_html}
+            {source_html}
+        </div>
+        """)
+    
+    html = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exercices générés</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{ font-family: 'Inter', sans-serif; background: #0f0f1a; color: #e0e0e0; padding: 2rem; }}
+    h1 {{ text-align: center; color: #6c63ff; margin-bottom: 2rem; }}
+    .exercise-card {{
+        background: #16213e; border: 1px solid #2a2a40; border-radius: 12px;
+        padding: 1.5rem; margin-bottom: 1.5rem;
+    }}
+    .exercise-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }}
+    .exercise-header h3 {{ color: #6c63ff; }}
+    .badge {{
+        padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600;
+    }}
+    .verified {{ background: rgba(0,200,83,0.15); color: #00c853; border: 1px solid rgba(0,200,83,0.3); }}
+    .not-verified {{ background: rgba(255,171,0,0.15); color: #ffab00; border: 1px solid rgba(255,171,0,0.3); }}
+    h4 {{ color: #a0a0ff; margin: 1rem 0 0.5rem 0; }}
+    code {{ background: #1a1a2e; padding: 0.2rem 0.5rem; border-radius: 4px; color: #ff9800; }}
+    pre {{ background: #1a1a2e; padding: 1rem; border-radius: 8px; overflow-x: auto; margin: 0.5rem 0; }}
+    pre code {{ background: none; padding: 0; }}
+    ol {{ padding-left: 1.5rem; }}
+    li {{ margin: 0.3rem 0; }}
+    blockquote {{ border-left: 3px solid #6c63ff; padding-left: 1rem; margin: 0.5rem 0; font-style: italic; color: #a0a0b8; }}
+    .source {{ color: #a0a0b8; font-size: 0.85rem; margin-top: 0.5rem; }}
+    details {{ margin: 0.5rem 0; }}
+    summary {{ cursor: pointer; color: #6c63ff; font-weight: 500; }}
+</style>
+</head>
+<body>
+<h1>🧮 Exercices générés</h1>
+<p style="text-align: center; color: #a0a0b8; margin-bottom: 2rem;">
+    {len(exercises)} exercice(s) — {sum(1 for e in exercises if e.verified)} vérifié(s)
+</p>
+{"".join(exercises_html_parts)}
+</body>
+</html>"""
+    return html

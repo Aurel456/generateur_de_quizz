@@ -2,6 +2,7 @@
 app.py — Interface Streamlit principale pour le générateur de quizz et exercices.
 """
 
+import json
 import streamlit as st
 import time
 
@@ -9,8 +10,9 @@ from document_processor import extract_and_chunk_multiple, get_text_stats_multip
 from llm_service import get_model_info, list_models
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
 from exercise_generator import generate_exercises
-from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv
+from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
 from notion_detector import detect_notions, edit_notions_with_llm, Notion
+from ui_components import render_stat_card, render_source_info, render_difficulty_badge
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
 
@@ -159,14 +161,16 @@ with st.sidebar:
         )
     )
 
-    max_chunk_tokens = st.slider(
-        "Taille max des chunks (tokens)",
-        min_value=1000,
-        max_value=15000,
-        value=10000,
-        step=500,
-        help="Nombre de tokens par segment (uniquement pour le mode 'Par blocs de tokens')."
-    )
+    max_chunk_tokens = 10000  # Valeur par défaut
+    if read_mode == "token":
+        max_chunk_tokens = st.slider(
+            "Taille max des chunks (tokens)",
+            min_value=1000,
+            max_value=15000,
+            value=10000,
+            step=500,
+            help="Nombre de tokens par segment (uniquement pour le mode 'Par blocs de tokens')."
+        )
 
     st.divider()
 
@@ -185,6 +189,85 @@ with st.sidebar:
     model_info = get_model_info(selected_model)
     st.caption(f"**Contexte** : {model_info['context_window']:,} tokens")
     st.caption(f"**API** : `{model_info['api_base']}`")
+
+    # ─── Sauvegarde / Chargement de session ─────────────────────────────────
+    st.divider()
+    st.markdown("## 💾 Session")
+
+    # Sauvegarder
+    session_data = {}
+    has_data = False
+    if st.session_state.quiz is not None:
+        quiz = st.session_state.quiz
+        session_data["quiz"] = {
+            "title": quiz.title,
+            "difficulty": quiz.difficulty,
+            "questions": [
+                {
+                    "question": q.question, "choices": q.choices,
+                    "correct_answers": q.correct_answers, "explanation": q.explanation,
+                    "source_pages": q.source_pages, "difficulty_level": q.difficulty_level,
+                    "source_document": q.source_document, "citation": q.citation,
+                } for q in quiz.questions
+            ],
+        }
+        has_data = True
+    if st.session_state.exercises is not None:
+        session_data["exercises"] = [
+            {
+                "statement": ex.statement, "expected_answer": ex.expected_answer,
+                "steps": ex.steps, "num_steps": ex.num_steps, "correction": ex.correction,
+                "verification_code": ex.verification_code, "verified": ex.verified,
+                "verification_output": ex.verification_output,
+                "source_pages": ex.source_pages, "source_document": ex.source_document,
+                "citation": ex.citation,
+            } for ex in st.session_state.exercises
+        ]
+        has_data = True
+    if st.session_state.notions is not None:
+        session_data["notions"] = [
+            {
+                "title": n.title, "description": n.description,
+                "source_document": n.source_document, "source_pages": n.source_pages,
+                "enabled": n.enabled,
+            } for n in st.session_state.notions
+        ]
+        has_data = True
+
+    if has_data:
+        st.download_button(
+            label="💾 Sauvegarder la session",
+            data=json.dumps(session_data, ensure_ascii=False, indent=2),
+            file_name="session_quizz.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+    # Charger
+    uploaded_session = st.file_uploader(
+        "📂 Charger une session", type=["json"], key="session_loader",
+        help="Restaurez une session précédemment sauvegardée."
+    )
+    if uploaded_session is not None:
+        try:
+            data = json.loads(uploaded_session.read().decode("utf-8"))
+            if "quiz" in data:
+                from quiz_generator import QuizQuestion
+                questions = [QuizQuestion(**q) for q in data["quiz"]["questions"]]
+                st.session_state.quiz = Quiz(
+                    title=data["quiz"].get("title", "Quizz restauré"),
+                    difficulty=data["quiz"].get("difficulty", "moyen"),
+                    questions=questions,
+                )
+            if "exercises" in data:
+                from exercise_generator import Exercise
+                st.session_state.exercises = [Exercise(**ex) for ex in data["exercises"]]
+            if "notions" in data:
+                st.session_state.notions = [Notion(**n) for n in data["notions"]]
+            st.success("✅ Session restaurée !")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erreur : {e}")
 
 # ─── Traitement du PDF ──────────────────────────────────────────────────────────
 
@@ -218,40 +301,15 @@ if uploaded_files:
     # Afficher les statistiques
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-value">{stats.get('num_documents', 1)}</div>
-            <div class="stat-label">Documents</div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_stat_card(stats.get('num_documents', 1), "Documents")
     with col2:
-        st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-value">{stats['num_pages']}</div>
-            <div class="stat-label">Pages / Slides</div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_stat_card(stats['num_pages'], "Pages / Slides")
     with col3:
-        st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-value">{stats['total_tokens']:,}</div>
-            <div class="stat-label">Tokens total</div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_stat_card(f"{stats['total_tokens']:,}", "Tokens total")
     with col4:
-        st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-value">{len(chunks)}</div>
-            <div class="stat-label">Chunks</div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_stat_card(len(chunks), "Chunks")
     with col5:
-        st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-value">{stats['avg_tokens_per_page']}</div>
-            <div class="stat-label">Tokens / page-slide</div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_stat_card(stats['avg_tokens_per_page'], "Tokens / page-slide")
 
     # Détails par document (repliable)
     if stats.get('per_document'):
@@ -289,7 +347,7 @@ if uploaded_files:
                 notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress)
                 st.session_state.notions = notions
                 progress_bar.progress(1.0, text="✅ Notions détectées !")
-                import time; time.sleep(0.5)
+                time.sleep(0.5)
                 progress_bar.empty()
                 st.rerun()
             except Exception as e:
@@ -478,15 +536,7 @@ if uploaded_files:
 
                 with st.expander(expander_title, expanded=(i < 3)):
                     # Badge difficulté en haut
-                    diff_colors = {"facile": "#00c853", "moyen": "#ffab00", "difficile": "#ff1744"}
-                    diff_color = diff_colors.get(diff_label, "#a0a0b8")
-                    st.markdown(
-                        f'<span style="background: {diff_color}20; color: {diff_color}; '
-                        f'padding: 0.2rem 0.7rem; border-radius: 12px; font-size: 0.8rem; '
-                        f'font-weight: 600; border: 1px solid {diff_color}40;">'
-                        f'{diff_emoji} {diff_label.capitalize()}</span>',
-                        unsafe_allow_html=True
-                    )
+                    render_difficulty_badge(diff_label)
 
                     for label, text in q.choices.items():
                         is_correct = label in q.correct_answers
@@ -500,13 +550,7 @@ if uploaded_files:
                         st.markdown(f"📝 **Citation :** *\"{q.citation}\"*")
 
                     # Source enrichie
-                    source_parts = []
-                    if q.source_document:
-                        source_parts.append(f"📄 {q.source_document}")
-                    if q.source_pages:
-                        source_parts.append(f"p. {', '.join(map(str, q.source_pages))}")
-                    if source_parts:
-                        st.caption(f"Source : {', '.join(source_parts)}")
+                    render_source_info(q.source_document, q.source_pages)
 
             # Boutons de téléchargement
             st.divider()
@@ -637,30 +681,37 @@ if uploaded_files:
                             st.text(ex.verification_output)
 
                     # Source enrichie
-                    source_parts = []
-                    if ex.source_document:
-                        source_parts.append(f"📄 {ex.source_document}")
-                    if ex.source_pages:
-                        source_parts.append(f"p. {', '.join(map(str, ex.source_pages))}")
-                    if source_parts:
-                        st.caption(f"Source : {', '.join(source_parts)}")
+                    render_source_info(ex.source_document, ex.source_pages)
 
                     if ex.citation:
                         st.markdown(f"📝 **Citation :** *\"{ex.citation}\"*")
-            # Bouton de téléchargement CSV pour les exercices
+            # Boutons de téléchargement pour les exercices
             st.divider()
+            col_ex1, col_ex2 = st.columns(2)
             try:
-                csv_exercises = export_exercises_csv(exercises)
-                st.download_button(
-                    label="📊 Télécharger les Exercices (CSV)",
-                    data=csv_exercises,
-                    file_name="exercices.csv",
-                    mime="text/csv",
-                    type="primary",
-                    use_container_width=True
-                )
+                with col_ex1:
+                    html_exercises = export_exercises_html(exercises)
+                    st.download_button(
+                        label="📥 Télécharger les Exercices (HTML)",
+                        data=html_exercises,
+                        file_name="exercices.html",
+                        mime="text/html",
+                        type="primary",
+                        use_container_width=True
+                    )
+                with col_ex2:
+                    csv_exercises = export_exercises_csv(exercises)
+                    st.download_button(
+                        label="📊 Télécharger les Exercices (CSV)",
+                        data=csv_exercises,
+                        file_name="exercices.csv",
+                        mime="text/csv",
+                        type="secondary",
+                        use_container_width=True
+                    )
+                st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur. Le fichier CSV est idéal pour Excel.")
             except Exception as e:
-                st.error(f"Erreur lors de l'export CSV : {e}")
+                st.error(f"Erreur lors de l'export : {e}")
 
     # ═══ ONGLET APERÇU TEXTE ════════════════════════════════════════════════════
 
@@ -668,17 +719,34 @@ if uploaded_files:
         st.markdown("### 👁️ Aperçu du texte extrait")
         st.caption(f"Mode de lecture : **{read_mode}** — {len(chunks)} chunks créés")
 
-        for i, chunk in enumerate(chunks[:20]):  # Limiter à 20 chunks pour l'affichage
+        # Pagination de l'aperçu
+        CHUNKS_PER_PAGE = 20
+        total_pages_preview = max(1, (len(chunks) + CHUNKS_PER_PAGE - 1) // CHUNKS_PER_PAGE)
+        
+        if total_pages_preview > 1:
+            preview_page = st.number_input(
+                "Page", min_value=1, max_value=total_pages_preview, value=1,
+                key="preview_page",
+                help=f"{total_pages_preview} page(s) de {CHUNKS_PER_PAGE} chunks"
+            )
+        else:
+            preview_page = 1
+        
+        start_idx = (preview_page - 1) * CHUNKS_PER_PAGE
+        end_idx = min(start_idx + CHUNKS_PER_PAGE, len(chunks))
+        
+        for i in range(start_idx, end_idx):
+            chunk = chunks[i]
             doc_label = f"📄 {chunk.source_document} — " if chunk.source_document else ""
             with st.expander(
                 f"{doc_label}Chunk {i+1} — {chunk.token_count} tokens — "
                 f"Pages {', '.join(map(str, chunk.source_pages))}",
-                expanded=(i == 0)
+                expanded=(i == start_idx)
             ):
-                st.text(chunk.text[:1000] + ("..." if len(chunk.text) > 1000 else ""))
-
-        if len(chunks) > 20:
-            st.info(f"... et {len(chunks) - 20} chunks supplémentaires non affichés.")
+                st.text(chunk.text[:2000] + ("..." if len(chunk.text) > 2000 else ""))
+        
+        if total_pages_preview > 1:
+            st.caption(f"Affichage des chunks {start_idx + 1} à {end_idx} sur {len(chunks)}")
 
 else:
     # Message quand aucun document n'est uploadé

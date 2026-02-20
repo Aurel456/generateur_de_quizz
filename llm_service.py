@@ -4,6 +4,7 @@ llm_service.py — Client OpenAI pour gtp-oss-120b avec gestion des tokens et re
 
 import json
 import os
+import re
 import time
 from typing import Optional
 
@@ -18,14 +19,15 @@ OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "http://OPENAI_API_BASE:8080/v1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "OPENAI_API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME", "gtp-oss-120b")
 MODEL_CONTEXT_WINDOW = int(os.getenv("MODEL_CONTEXT_WINDOW", "32000"))
+TIKTOKEN_ENCODING = os.getenv("TIKTOKEN_ENCODING", "cl100k_base")
 
 # Marge de sécurité pour les tokens (prompt system + overhead)
 SYSTEM_PROMPT_MARGIN = 500
 # Ratio de tokens réservé pour la réponse
 RESPONSE_TOKEN_RATIO = 0.3
 
-# Encodeur tiktoken
-_encoder = tiktoken.get_encoding("cl100k_base")
+# Encodeur tiktoken (configurable via TIKTOKEN_ENCODING dans .env)
+_encoder = tiktoken.get_encoding(TIKTOKEN_ENCODING)
 
 # Client OpenAI
 _client = None
@@ -178,7 +180,6 @@ def call_llm_json(
         pass
     
     # Tentative 2 : extraire JSON d'un bloc markdown ```json ... ```
-    import re
     json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, re.DOTALL)
     if json_match:
         try:

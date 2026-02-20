@@ -90,6 +90,9 @@ MODEL_NAME=gtp-oss-120b
 
 # Fenêtre de contexte du modèle (en tokens)
 MODEL_CONTEXT_WINDOW=32000
+
+# Encodeur tiktoken (cl100k_base pour GPT-4, o200k_base pour GPT-4o)
+TIKTOKEN_ENCODING=cl100k_base
 ```
 
 ---
@@ -205,11 +208,12 @@ graph TD
 ## 🏗️ Architecture du projet
 
 - `app.py` : Interface utilisateur principale (Streamlit).
+- `ui_components.py` : Composants UI réutilisables (stat cards, badges difficulté, sources).
 - `document_processor.py` : Extraction de texte multi-format et découpage intelligent (support multi-documents).
 - `notion_detector.py` : Détection et édition des notions fondamentales via LLM.
 - `llm_service.py` : Client API OpenAI, gestion des tokens et retry logic.
 - `quiz_generator.py` : Logique de création des QCM avec citations, difficulté et sources précises.
-- `exercise_generator.py` : Création d'exercices et **Vérification Agentique** (LangGraph + PythonREPLTool).
+- `exercise_generator.py` : Création d'exercices et **Vérification Agentique** (LangGraph + sous-processus sandbox).
 - `quiz_exporter.py` : Export HTML interactif (Jinja2) et CSV enrichis.
 - `templates/quiz_template.html` : Template HTML/CSS/JS pour l'export des quizz (badges difficulté, citations, sources).
 
@@ -226,10 +230,11 @@ graph TD
 
 ## ⚠️ Notes importantes
 
-- **Sécurité** : L'agent de vérification des exercices exécute du code Python généré par le LLM **localement**. Bien que `PythonREPLTool` soit utilisé, il n'y a pas de sandbox Docker par défaut. Utilisez ce logiciel dans un environnement de confiance ou configurez un environnement d'exécution isolé si nécessaire pour la production.
+- **Sécurité** : L'agent de vérification des exercices exécute du code Python généré par le LLM dans un **sous-processus isolé** avec un timeout de 30 secondes. Cela offre une isolation de base (le code ne peut pas affecter le processus principal), mais n'est pas équivalent à un sandbox Docker. Utilisez ce logiciel dans un environnement de confiance pour la production.
 - **Modèles** : L'interface permet de choisir n'importe quel modèle disponible sur votre API. Testé principalement avec `gtp-oss-120b`.
 - **Chunking** : Deux modes sont disponibles : **Page par page** (recommandé pour la précision des sources) et **Par blocs de tokens** (pour une analyse large, jusqu'à 15 000 tokens).
+- **Tiktoken** : L'encodeur tiktoken est configurable via `TIKTOKEN_ENCODING` dans `.env`. Utilisez `cl100k_base` pour GPT-4 ou `o200k_base` pour GPT-4o.
 
 ## 📄 Licence
 
-Projet personnel / interne.
+MIT License — Voir le fichier [LICENSE](LICENSE) pour plus de détails.
