@@ -182,7 +182,7 @@ with st.sidebar:
     selected_model = st.selectbox(
         "Modèle LLM à sélectionner",
         options=model_options,
-        index=0,
+        index=5,
         help="Choisissez le modèle IA à utiliser pour la génération."
     )
     
