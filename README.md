@@ -17,14 +17,19 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Paramétrage précis** :
   - Nombre de choix de réponses (A, B, C, D... jusqu'à G).
   - Nombre de bonnes réponses (choix multiple possible).
+- **Questions autonomes** : Les questions sont conçues pour être répondables **sans le document source**, uniquement avec les connaissances acquises en formation. Aucune référence de type "selon le texte" n'est utilisée.
+- **Mélange des réponses** : Option de shuffle aléatoire des choix (activée par défaut) pour éviter que la bonne réponse soit toujours en A ou B.
 - **Export HTML interactif** : Téléchargez un fichier HTML autonome avec design sombre, score en temps réel et explications détaillées.
 - **Badges de difficulté** : Chaque question affiche son niveau de difficulté avec un badge coloré (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
 - **Citations précises** : Les explications incluent une citation exacte du texte source.
 - **Attribution des sources** : Document source et numéro de page précis pour chaque question.
 
 ### 🧮 Exercices & Problèmes (Maths / Logique / Science)
-- **Génération d'exercices complexes** nécessitant calcul et raisonnement.
+- **Génération d'exercices complexes** nécessitant calcul et raisonnement multi-étapes.
+- **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source.
 - **Vérification automatique par Agent IA** : Un agent LangGraph exécute du code Python pour vérifier la validité de la réponse et de la correction proposée par le LLM.
+- **Code de vérification complet** : Le code Python reproduit intégralement le raisonnement pas à pas (pas de simple `result = valeur`).
+- **Prompt personnalisable** : Modifiez directement les instructions envoyées à l'IA pour la génération d'exercices via un éditeur dans l'interface, avec bouton de réinitialisation.
 - **Affichage complet** : Énoncé, Réponse attendue, Étapes de résolution détaillées, Code de vérification Python.
 - **Citations et sources** : Chaque exercice indique la citation du texte source et le document/page d'origine.
 
@@ -117,13 +122,15 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
     *   Utilisez le chat LLM pour modifier les notions en langage naturel.
 4.  **Onglet Quizz** :
     *   Saisissez le nombre de questions pour chaque niveau (Facile, Moyen, Difficile).
+    *   Activez/désactivez le **mélange des réponses** (🔀) pour randomiser la position des bonnes réponses.
     *   (Optionnel) Modifiez les instructions spécifiques envoyées à l'IA dans l'expandeur **"Personnaliser les Prompts"**.
     *   Cliquez sur **"Générer le Quizz"**.
     *   Visualisez les questions avec leurs badges de difficulté, citations et sources. Téléchargez en HTML ou CSV.
 5.  **Onglet Exercices** :
     *   Choisissez le nombre d'exercices.
+    *   (Optionnel) Modifiez le **prompt d'exercice** dans l'expandeur **"Personnaliser le Prompt d'Exercice"**.
     *   Cliquez sur **"Générer les Exercices"**.
-    *   L'agent IA va générer et *vérifier* chaque exercice via l'exécution de code Python.
+    *   L'agent IA va générer et *vérifier* chaque exercice via l'exécution de code Python complet.
 
 ## 🧠 Fonctionnement détaillé
 

@@ -2,6 +2,7 @@
 quiz_generator.py — Génération de quizz QCM à partir de chunks de texte.
 """
 
+import random
 import string
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -38,13 +39,13 @@ class Quiz:
 # Mapping difficulté → instructions pour le LLM
 DIFFICULTY_PROMPTS = {
     "facile": (
-        "Génère des questions FACILES basées sur des faits explicites du texte. "
-        "Les questions doivent porter sur des informations directement mentionnées, "
-        "des définitions, des dates, ou des faits simples. "
+        "Génère des questions FACILES portant sur des faits fondamentaux du domaine. "
+        "Les questions doivent porter sur des définitions, des dates, ou des faits simples "
+        "qu'un étudiant ayant suivi la formation devrait connaître. "
         "Les mauvaises réponses doivent être clairement fausses."
     ),
     "moyen": (
-        "Génère des questions de difficulté MOYENNE qui testent la compréhension du texte. "
+        "Génère des questions de difficulté MOYENNE qui testent la compréhension des concepts. "
         "Les questions peuvent nécessiter de relier plusieurs informations, "
         "comprendre des concepts, ou interpréter des données. "
         "Les mauvaises réponses doivent être plausibles mais incorrectes."
@@ -52,9 +53,9 @@ DIFFICULTY_PROMPTS = {
     "difficile": (
         "Génère des questions DIFFICILES qui testent l'analyse et la synthèse. "
         "Les questions doivent nécessiter une réflexion approfondie, "
-        "la capacité à faire des inférences, ou à appliquer des concepts. "
+        "la capacité à faire des inférences, ou à appliquer des concepts à des situations nouvelles. "
         "Les mauvaises réponses doivent être très plausibles et subtiles. "
-        "Inclure des questions qui combinent plusieurs parties du texte."
+        "Inclure des questions qui combinent plusieurs concepts."
     ),
 }
 
@@ -83,6 +84,11 @@ def _build_quiz_prompt(
     system_prompt = f"""Tu es un expert en pédagogie et en création de quizz éducatifs.
 Tu dois générer exactement {num_questions} questions QCM (Questions à Choix Multiples).
 
+CONTEXTE IMPORTANT :
+Les étudiants suivent une formation (souvent en présentiel ou avec des supports) mais ils ne possèdent
+PAS le document source au moment du quizz. Les questions doivent donc être AUTONOMES et répondables
+uniquement grâce aux connaissances acquises pendant la formation, SANS avoir le document sous les yeux.
+
 RÈGLES STRICTES :
 1. Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})
 2. Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)
@@ -92,6 +98,9 @@ RÈGLES STRICTES :
 6. Les choix de réponse doivent être du même type et de longueur similaire
 7. Pour chaque question, précise la PAGE EXACTE de la source
 8. Le niveau de difficulté est : {difficulty}
+9. INTERDIT : N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document",
+   "dans le passage", "le texte mentionne", "l'auteur affirme", etc.
+   Chaque question doit être auto-suffisante et fournir tout le contexte nécessaire dans son énoncé.
 {notions_block}
 
 FORMAT DE RÉPONSE (JSON strict) :
@@ -121,6 +130,39 @@ Génère exactement {num_questions} questions QCM de niveau {difficulty}."""
     return system_prompt, user_prompt
 
 
+def _shuffle_choices(
+    choices: Dict[str, str],
+    correct_answers: List[str],
+    choice_labels: List[str]
+) -> tuple:
+    """
+    Mélange aléatoirement l'ordre des choix et remet à jour correct_answers.
+    Garantit que la bonne réponse n'est pas toujours en A ou B.
+    
+    Returns:
+        (new_choices, new_correct_answers)
+    """
+    # Extraire les textes des choix dans l'ordre original
+    items = [(label, choices[label]) for label in choice_labels if label in choices]
+    
+    # Identifier les indices des bonnes réponses (par leur texte)
+    correct_texts = {choices[ans] for ans in correct_answers if ans in choices}
+    
+    # Mélanger
+    random.shuffle(items)
+    
+    # Reconstruire le dict avec les nouveaux labels
+    new_choices = {}
+    new_correct = []
+    for i, (_, text) in enumerate(items):
+        new_label = choice_labels[i]
+        new_choices[new_label] = text
+        if text in correct_texts:
+            new_correct.append(new_label)
+    
+    return new_choices, new_correct
+
+
 def generate_quiz_from_chunk(
     chunk: TextChunk,
     difficulty: str = "moyen",
@@ -129,7 +171,8 @@ def generate_quiz_from_chunk(
     num_correct: int = 1,
     difficulty_prompts: Optional[Dict[str, str]] = None,
     model: Optional[str] = None,
-    notions_text: str = ""
+    notions_text: str = "",
+    shuffle_choices: bool = True
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -156,10 +199,17 @@ def generate_quiz_from_chunk(
             else:
                 source_pages = chunk.source_pages
 
+            choices = q_data["choices"]
+            correct_answers = q_data["correct_answers"]
+
+            # Shuffle des choix si activé
+            if shuffle_choices:
+                choices, correct_answers = _shuffle_choices(choices, correct_answers, choice_labels)
+
             question = QuizQuestion(
                 question=q_data["question"],
-                choices=q_data["choices"],
-                correct_answers=q_data["correct_answers"],
+                choices=choices,
+                correct_answers=correct_answers,
                 explanation=q_data.get("explanation", ""),
                 source_pages=source_pages,
                 difficulty_level=q_data.get("difficulty_level", difficulty),
@@ -185,7 +235,8 @@ def generate_quiz(
     difficulty_prompts: Optional[Dict[str, str]] = None,
     model: Optional[str] = None,
     progress_callback=None,
-    notions: Optional[list] = None
+    notions: Optional[list] = None,
+    shuffle_choices: bool = True
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -269,7 +320,8 @@ def generate_quiz(
                     num_correct=num_correct,
                     difficulty_prompts=difficulty_prompts,
                     model=model,
-                    notions_text=notions_text
+                    notions_text=notions_text,
+                    shuffle_choices=shuffle_choices
                 )
                 all_questions.extend(questions)
             except Exception as e:

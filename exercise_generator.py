@@ -29,6 +29,57 @@ from document_processor import TextChunk
 # Timeout pour l'exécution sandbox (en secondes)
 SANDBOX_TIMEOUT = 30
 
+# Prompt par défaut pour la génération d'exercices (modifiable dans l'UI)
+DEFAULT_EXERCISE_PROMPT = """Tu es un expert pédagogique qui crée des exercices de niveau moyen à difficile.
+Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.
+
+CONTEXTE IMPORTANT :
+Les étudiants suivent une formation (souvent en présentiel ou avec des supports) mais ils ne possèdent
+PAS le document source au moment de l'exercice. Chaque exercice doit donc être AUTONOME, fournir
+toutes les données nécessaires dans son énoncé, et être résolvable sans le document.
+N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document", etc.
+
+RÈGLES STRICTES :
+1. Chaque exercice doit avoir une réponse numérique claire et vérifiable
+2. L'énoncé doit être clair et complet, sans ambiguïté
+3. La résolution doit être décomposée en étapes claires et numérotées
+4. Tu dois fournir un code Python COMPLET qui reproduit INTÉGRALEMENT le raisonnement
+   et les calculs de l'exercice ÉTAPE PAR ÉTAPE, depuis les données de départ
+5. Le code NE DOIT PAS se contenter de poser result = <valeur_finale>.
+   Il doit CALCULER le résultat en reproduisant chaque étape du raisonnement.
+   Exemple INTERDIT : result = 42.5 ; print(result)
+   Exemple CORRECT : donnee_1 = 100 ; donnee_2 = 0.425 ; result = donnee_1 * donnee_2 ; print(result)
+6. Le code doit stocker le résultat final dans une variable nommée 'result'
+7. Les exercices doivent être de niveau moyen à difficile (analyse, calcul, application)
+8. Pour chaque exercice, précise la PAGE EXACTE de la source
+9. Inclus une CITATION exacte du passage du texte qui inspire l'exercice
+{notions_block}
+
+TYPES D'EXERCICES ACCEPTÉS :
+- Calculs basés sur des données du texte (pourcentages, proportions, statistiques)
+- Problèmes d'application de formules mentionnées dans le texte
+- Exercices de conversion ou de transformation de données
+- Questions quantitatives nécessitant plusieurs étapes de raisonnement
+
+FORMAT DE RÉPONSE (JSON strict) :
+{{
+    "exercises": [
+        {{
+            "statement": "Énoncé complet de l'exercice (auto-suffisant, toutes les données incluses)...",
+            "expected_answer": "42.5",
+            "steps": [
+                "Étape 1 : Identifier les données...",
+                "Étape 2 : Appliquer la formule...",
+                "Étape 3 : Calculer le résultat..."
+            ],
+            "correction": "Correction détaillée avec explications pédagogiques...",
+            "verification_code": "# Code Python COMPLET\\n# Étape 1 : Données\\ndonnee_1 = 100\\ndonnee_2 = 0.425\\n# Étape 2 : Calcul\\nresult = donnee_1 * donnee_2\\nprint(f'Résultat: {{result}}')",
+            "citation": "Citation exacte du passage du texte qui inspire l'exercice...",
+            "source_page": 1
+        }}
+    ]
+}}"""
+
 
 @dataclass
 class Exercise:
@@ -57,51 +108,22 @@ def _get_langchain_llm(model: Optional[str] = None):
     )
 
 
-def _build_exercise_prompt(text: str, num_exercises: int, notions_text: str = "", source_document: str = "") -> tuple:
+def _build_exercise_prompt(text: str, num_exercises: int, notions_text: str = "", source_document: str = "", custom_exercise_prompt: str = "") -> tuple:
     """Construit le prompt pour la génération d'exercices."""
     
     notions_block = ""
     if notions_text:
         notions_block = f"""\n\n{notions_text}\nLes exercices doivent tester la maîtrise pratique de ces notions fondamentales."""
     
-    system_prompt = f"""Tu es un expert pédagogique qui crée des exercices de niveau moyen à difficile.
-Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.
-
-RÈGLES STRICTES :
-1. Chaque exercice doit avoir une réponse numérique claire et vérifiable
-2. L'énoncé doit être clair et complet, sans ambiguïté
-3. La résolution doit être décomposée en étapes claires et numérotées
-4. Tu dois fournir un code Python qui calcule et vérifie la réponse
-5. Le code Python doit afficher (print) le résultat final
-6. Les exercices doivent être de niveau moyen à difficile (analyse, calcul, application)
-7. Pour chaque exercice, précise la PAGE EXACTE de la source
-8. Inclus une CITATION exacte du passage du texte qui inspire l'exercice
-{notions_block}
-
-TYPES D'EXERCICES ACCEPTÉS :
-- Calculs basés sur des données du texte (pourcentages, proportions, statistiques)
-- Problèmes d'application de formules mentionnées dans le texte
-- Exercices de conversion ou de transformation de données
-- Questions quantitatives nécessitant plusieurs étapes de raisonnement
-
-FORMAT DE RÉPONSE (JSON strict) :
-{{
-    "exercises": [
-        {{
-            "statement": "Énoncé complet de l'exercice...",
-            "expected_answer": "42.5",
-            "steps": [
-                "Étape 1 : Identifier les données...",
-                "Étape 2 : Appliquer la formule...",
-                "Étape 3 : Calculer le résultat..."
-            ],
-            "correction": "Correction détaillée avec explications pédagogiques...",
-            "verification_code": "# Code Python\\nresult = 42.5\\nprint(f'Résultat: {{result}}')",
-            "citation": "Citation exacte du passage du texte qui inspire l'exercice...",
-            "source_page": 1
-        }}
-    ]
-}}"""
+    # Utiliser le prompt personnalisé s'il est fourni, sinon le prompt par défaut
+    if custom_exercise_prompt and custom_exercise_prompt.strip():
+        system_prompt = custom_exercise_prompt.strip()
+    else:
+        system_prompt = DEFAULT_EXERCISE_PROMPT
+    
+    # Injecter les variables dynamiques
+    system_prompt = system_prompt.replace("{num_exercises}", str(num_exercises))
+    system_prompt = system_prompt.replace("{notions_block}", notions_block)
 
     doc_context = f" (document : {source_document})" if source_document else ""
     user_prompt = f"""Voici le texte source{doc_context} :
@@ -110,7 +132,8 @@ FORMAT DE RÉPONSE (JSON strict) :
 {text}
 ---
 
-Crée exactement {num_exercises} exercice(s) de niveau moyen à difficile avec des réponses numériques vérifiables."""
+Crée exactement {num_exercises} exercice(s) de niveau moyen à difficile avec des réponses numériques vérifiables.
+Rappel : l'énoncé doit être auto-suffisant et le code de vérification doit reproduire INTÉGRALEMENT les calculs."""
     
     return system_prompt, user_prompt
 
@@ -298,7 +321,8 @@ def generate_exercises_from_chunk(
     num_exercises: int = 2,
     max_retries: int = 3,
     model: Optional[str] = None,
-    notions_text: str = ""
+    notions_text: str = "",
+    custom_exercise_prompt: str = ""
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
@@ -306,7 +330,9 @@ def generate_exercises_from_chunk(
     Si la vérification échoue, re-génère l'exercice (max max_retries tentatives).
     """
     system_prompt, user_prompt = _build_exercise_prompt(
-        chunk.text, num_exercises, notions_text=notions_text, source_document=chunk.source_document
+        chunk.text, num_exercises, notions_text=notions_text,
+        source_document=chunk.source_document,
+        custom_exercise_prompt=custom_exercise_prompt
     )
     
     exercises = []
@@ -360,7 +386,8 @@ def generate_exercises(
     num_exercises: int = 5,
     model: Optional[str] = None,
     progress_callback=None,
-    notions: Optional[list] = None
+    notions: Optional[list] = None,
+    custom_exercise_prompt: str = ""
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks.
@@ -408,7 +435,8 @@ def generate_exercises(
         
         try:
             exercises = generate_exercises_from_chunk(
-                chunk, n_exercises, model=model, notions_text=notions_text
+                chunk, n_exercises, model=model, notions_text=notions_text,
+                custom_exercise_prompt=custom_exercise_prompt
             )
             all_exercises.extend(exercises)
         except Exception as e:

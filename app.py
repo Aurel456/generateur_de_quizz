@@ -9,7 +9,7 @@ import time
 from document_processor import extract_and_chunk_multiple, get_text_stats_multiple, count_tokens
 from llm_service import get_model_info, list_models
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
-from exercise_generator import generate_exercises
+from exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPT
 from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
 from notion_detector import detect_notions, edit_notions_with_llm, Notion
 from ui_components import render_stat_card, render_source_info, render_difficulty_badge
@@ -132,6 +132,8 @@ if "difficulty_prompts" not in st.session_state:
     st.session_state.difficulty_prompts = DIFFICULTY_PROMPTS.copy()
 if "notions" not in st.session_state:
     st.session_state.notions = None
+if "exercise_prompt" not in st.session_state:
+    st.session_state.exercise_prompt = DEFAULT_EXERCISE_PROMPT
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
@@ -464,6 +466,12 @@ if uploaded_files:
                 help="Combien de réponses correctes parmi les choix."
             )
 
+            shuffle_choices = st.checkbox(
+                "🔀 Mélanger la position des réponses",
+                value=True,
+                help="Mélange aléatoirement l'ordre des choix après génération pour éviter que la bonne réponse soit toujours en A ou B."
+            )
+
         # 📝 Édition des prompts
         with st.expander("📝 Personnaliser les Prompts de Difficulté"):
             st.info("Modifiez les instructions envoyées à l'IA pour chaque niveau de difficulté.")
@@ -509,7 +517,8 @@ if uploaded_files:
                     difficulty_prompts=st.session_state.difficulty_prompts,
                     model=selected_model,
                     progress_callback=quiz_progress,
-                    notions=active_notions
+                    notions=active_notions,
+                    shuffle_choices=shuffle_choices
                 )
                 st.session_state.quiz = quiz
                 progress_bar.progress(1.0, text="✅ Quizz généré !")
@@ -602,6 +611,22 @@ if uploaded_files:
             "confirmer que la réponse est correcte."
         )
 
+        # 📝 Édition du prompt d'exercice
+        with st.expander("📝 Personnaliser le Prompt d'Exercice"):
+            st.info(
+                "Modifiez les instructions envoyées à l'IA pour générer les exercices. "
+                "Utilisez `{num_exercises}` pour le nombre d'exercices et `{notions_block}` pour les notions détectées."
+            )
+            st.session_state.exercise_prompt = st.text_area(
+                "Prompt Exercice",
+                value=st.session_state.exercise_prompt,
+                height=400,
+                key="exercise_prompt_editor"
+            )
+            if st.button("🔄 Réinitialiser le prompt par défaut", key="reset_exercise_prompt"):
+                st.session_state.exercise_prompt = DEFAULT_EXERCISE_PROMPT
+                st.rerun()
+
         if st.button("🧮 Générer les Exercices", type="primary", use_container_width=True):
             progress_bar = st.progress(0, text="Génération et vérification en cours...")
 
@@ -623,7 +648,8 @@ if uploaded_files:
                     num_exercises=num_exercises,
                     model=selected_model,
                     progress_callback=exercise_progress,
-                    notions=active_notions
+                    notions=active_notions,
+                    custom_exercise_prompt=st.session_state.exercise_prompt
                 )
                 st.session_state.exercises = exercises
                 progress_bar.progress(1.0, text="✅ Exercices générés et vérifiés !")
