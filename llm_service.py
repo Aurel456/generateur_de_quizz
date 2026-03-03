@@ -134,6 +134,14 @@ def call_llm(
             
             response = client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content
+            
+            try:
+                if hasattr(response, 'usage') and response.usage:
+                    from stats_manager import increment_stats
+                    increment_stats(tokens=response.usage.completion_tokens or 0)
+            except Exception:
+                pass
+            
             return content.strip() if content else ""
         
         except Exception as e:
