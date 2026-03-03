@@ -13,6 +13,7 @@ from exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPT
 from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
 from notion_detector import detect_notions, edit_notions_with_llm, Notion
 from ui_components import render_stat_card, render_source_info, render_difficulty_badge
+from stats_manager import load_stats, increment_stats
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
 
@@ -271,6 +272,13 @@ with st.sidebar:
         except Exception as e:
             st.error(f"❌ Erreur : {e}")
 
+    st.divider()
+    st.markdown("## 🌍 Statistiques Globales")
+    global_stats = load_stats()
+    st.metric("Questions & Ex. générés", global_stats["total_questions"])
+    st.metric("Documents traités", global_stats["total_documents"])
+    st.metric("Tokens générés (IA)", f"{global_stats['total_tokens']:,}")
+
 # ─── Traitement du PDF ──────────────────────────────────────────────────────────
 
 if uploaded_files:
@@ -284,7 +292,8 @@ if uploaded_files:
             # Si les fichiers ont changé, on recalcule les stats
             if st.session_state.get("_last_files_key") != files_key:
                 st.session_state.pdf_stats = get_text_stats_multiple(uploaded_files)
-            
+                increment_stats(documents=st.session_state.pdf_stats.get('num_documents', 1))
+
             # Recalculer les chunks (changement de fichier OU de mode)
             st.session_state.chunks = extract_and_chunk_multiple(
                 uploaded_files, mode=read_mode, max_tokens=max_chunk_tokens
@@ -521,6 +530,7 @@ if uploaded_files:
                     shuffle_choices=shuffle_choices
                 )
                 st.session_state.quiz = quiz
+                increment_stats(questions=len(quiz.questions))
                 progress_bar.progress(1.0, text="✅ Quizz généré !")
                 time.sleep(0.5)
                 progress_bar.empty()
@@ -652,6 +662,7 @@ if uploaded_files:
                     custom_exercise_prompt=st.session_state.exercise_prompt
                 )
                 st.session_state.exercises = exercises
+                increment_stats(questions=len(exercises))
                 progress_bar.progress(1.0, text="✅ Exercices générés et vérifiés !")
                 time.sleep(0.5)
                 progress_bar.empty()
