@@ -32,7 +32,8 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
   - 🟡 **Moyen** : Raisonnement multi-étapes combinant plusieurs formules ou concepts.
   - 🔴 **Difficile** : Résolution complexe de niveau études supérieures (modélisation, optimisation, démonstration).
 - **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source.
-- **Vérification automatique par Agent IA** : Un agent LangGraph exécute du code Python pour vérifier la validité de la réponse et de la correction proposée par le LLM.
+- **Vérification pas à pas** : Le code Python de vérification affiche chaque étape intermédiaire avec `print()`, permettant un suivi détaillé des calculs.
+- **Auto-correction par l'IA** : Si la vérification échoue, le système renvoie automatiquement le résultat du code Python au LLM pour corriger la solution, puis re-vérifie.
 - **Code de vérification complet** : Le code Python reproduit intégralement le raisonnement pas à pas (pas de simple `result = valeur`).
 - **Prompts personnalisables par niveau** : Modifiez les instructions envoyées à l'IA pour chaque niveau de difficulté. Le bloc FORMAT DE RÉPONSE (JSON strict) est fixe et non modifiable, garantissant la stabilité du parsing.
 - **Retry automatique JSON** : Si le LLM produit un JSON invalide, le système relance automatiquement l'appel jusqu'à 3 fois.
@@ -42,7 +43,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 ### 📚 Notions Fondamentales
 
 - **Détection automatique** : L'IA identifie les concepts clés, définitions, théorèmes et principes des documents.
-- **Regroupement par catégories** : Bouton **"🗂️ Regrouper par catégories"** — le LLM assigne automatiquement une thématique à chaque notion et les affiche groupées par catégorie.
+- **Fusion des notions similaires** : Bouton **"🔗 Regrouper les notions"** — le LLM fusionne automatiquement les notions redondantes ou similaires pour obtenir une liste plus concise et claire.
 - **Édition interactive** : Activez/désactivez, supprimez ou ajoutez manuellement des notions.
 - **Chat LLM** : Modifiez les notions en langage naturel (ex: *« Ajoute une notion sur les dérivées partielles »*).
 - **Guidage de la génération** : Les notions activées orientent les quizz et exercices vers les concepts essentiels.
@@ -137,7 +138,7 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
     - Sélectionnez le **Modèle LLM** souhaité dans la liste déroulante.
 3. **Onglet Notions** :
     - Cliquez sur **"🔍 Détecter les notions fondamentales"** pour identifier les concepts clés (barre de progression avec temps restant estimé).
-    - Cliquez sur **"🗂️ Regrouper par catégories"** pour organiser les notions par thématique.
+    - Cliquez sur **"🔗 Regrouper les notions"** pour fusionner les notions similaires ou redondantes.
     - Activez/désactivez les notions pour guider la génération.
     - Utilisez le chat LLM pour modifier les notions en langage naturel.
 4. **Onglet Quizz** :
@@ -150,7 +151,7 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
     - Saisissez le nombre d'exercices pour chaque niveau (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
     - (Optionnel) Modifiez les **prompts par niveau** dans l'expandeur **"Personnaliser les Prompts d'Exercice"** (le bloc JSON est fixe et non modifiable).
     - Cliquez sur **"Générer les Exercices"**.
-    - L'agent IA va générer et *vérifier* chaque exercice via l'exécution de code Python complet.
+    - L'IA va générer, *vérifier pas à pas* et *auto-corriger* chaque exercice via l'exécution de code Python complet.
 
 ## 🧠 Fonctionnement détaillé
 
@@ -175,15 +176,17 @@ Le système ne se contente pas d'envoyer tout le texte au hasard. Pour un quizz 
 
 Pour chaque niveau de difficulté demandé, le système sélectionne des chunks répartis uniformément dans le document, garantissant une couverture équilibrée du contenu. Les exercices de niveaux différents peuvent provenir de chunks différents.
 
-### 🤖 Vérification Agentique (Exercices)
+### 🤖 Vérification & Auto-correction (Exercices)
 
-Contrairement aux quizz classiques, les exercices mathématiques ou logiques passent par un cycle de **vérification en boucle fermée** :
+Contrairement aux quizz classiques, les exercices mathématiques ou logiques passent par un cycle de **vérification et correction en boucle fermée** :
 
-1. **Génération** : Un premier LLM crée l'énoncé, la solution et un script Python de vérification.
-2. **Exécution** : Un **Agent ReAct** (via LangGraph) prend le script, l'exécute dans un environnement Python (REPL).
-3. **Validation** : L'agent compare le résultat de l'exécution avec la réponse annoncée par le premier LLM.
+1. **Génération** : Le LLM crée l'énoncé, la solution et un script Python de vérification avec affichage pas à pas (`print()` à chaque étape).
+2. **Exécution** : Le script est exécuté dans un **sous-processus isolé** (sandbox avec timeout).
+3. **Validation** : Le système compare le résultat de l'exécution avec la réponse annoncée par le LLM.
    - Si les résultats concordent, l'exercice est marqué comme **Vérifié ✅**.
+   - Si la vérification échoue : le résultat du code Python est renvoyé au LLM pour **correction automatique** de la solution et des étapes, puis une **re-vérification** est effectuée.
    - En cas d'erreur ou de JSON invalide, le système relance automatiquement la génération (jusqu'à 3 tentatives).
+4. **Détails de vérification** : L'affichage montre les calculs intermédiaires, le résultat obtenu vs attendu, et le statut final (Vérifié ✅ / Erreur ❌).
 
 ---
 
@@ -209,7 +212,7 @@ graph TD
         NotionDet[notion_detector.py]
         QuizGen[quiz_generator.py]
         ExGen[exercise_generator.py]
-        Agent[Agent LangGraph + Python REPL]
+        Agent[Vérification Python + Auto-correction LLM]
     end
 
     subgraph Output [Exports]
@@ -248,10 +251,10 @@ graph TD
 - `ui_components.py` : Composants UI réutilisables (stat cards, badges difficulté, sources).
 - `stats_manager.py` : Gestionnaire de sauvegarde persistante (JSON) pour le suivi des statistiques globales.
 - `document_processor.py` : Extraction de texte multi-format et découpage intelligent (support multi-documents).
-- `notion_detector.py` : Détection, édition et regroupement par catégorie des notions fondamentales via LLM.
+- `notion_detector.py` : Détection, édition et fusion des notions fondamentales similaires via LLM.
 - `llm_service.py` : Client API OpenAI, gestion des tokens, retry réseau et retry JSON.
 - `quiz_generator.py` : Logique de création des QCM avec citations, difficulté et sources précises.
-- `exercise_generator.py` : Création d'exercices par niveau de difficulté et **Vérification Agentique** (LangGraph + sous-processus sandbox).
+- `exercise_generator.py` : Création d'exercices par niveau de difficulté, **vérification pas à pas** et **auto-correction** via LLM (sous-processus sandbox).
 - `quiz_exporter.py` : Export HTML interactif (Jinja2) et CSV enrichis.
 - `templates/quiz_template.html` : Template HTML/CSS/JS pour l'export des quizz (badges difficulté, citations, sources).
 

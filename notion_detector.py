@@ -218,51 +218,70 @@ Applique cette instruction et retourne la liste complète mise à jour."""
     return notions, explanation
 
 
-def group_notions_by_category(
+def merge_similar_notions(
     notions: List[Notion],
     model: Optional[str] = None
-) -> List[Notion]:
+) -> tuple:
     """
-    Assigne une catégorie thématique à chaque notion via le LLM.
+    Fusionne les notions similaires ou redondantes entre elles via le LLM.
 
     Returns:
-        Liste de Notion avec le champ `category` rempli.
+        (liste_fusionnée, résumé_des_fusions)
     """
-    if not notions:
-        return notions
+    if not notions or len(notions) <= 1:
+        return notions, "Aucune fusion nécessaire."
 
     notions_text = "\n".join(
-        f"{i}. {n.title} : {n.description}" for i, n in enumerate(notions)
+        f"{i}. [{n.title}] : {n.description}"
+        + (f" (Source: {n.source_document}, p. {', '.join(map(str, n.source_pages))})" if n.source_document else "")
+        for i, n in enumerate(notions)
     )
 
-    system_prompt = """Tu es un expert pédagogique. Regroupe les notions fondamentales par catégories thématiques cohérentes.
+    system_prompt = """Tu es un expert pédagogique. Tu dois regrouper et fusionner les notions fondamentales qui sont similaires, redondantes ou étroitement liées.
 
-Analyse la liste et assigne une catégorie courte (2-4 mots) à chacune.
-Les catégories doivent refléter les grands thèmes du document.
+RÈGLES :
+1. Fusionne les notions qui traitent du même concept sous des angles différents
+2. Combine les descriptions pour ne rien perdre d'important
+3. Conserve toutes les pages sources des notions fusionnées
+4. Garde les notions véritablement distinctes séparées
+5. Le résultat doit être une liste PLUS COURTE et plus claire
 
 FORMAT DE RÉPONSE (JSON strict) :
 {
-    "categories_assigned": [
-        {"index": 0, "category": "Nom de la catégorie"},
-        {"index": 1, "category": "Nom de la catégorie"}
-    ]
+    "merged_notions": [
+        {
+            "title": "Titre de la notion fusionnée ou conservée",
+            "description": "Description complète combinant les infos pertinentes",
+            "source_document": "nom_du_fichier.pdf",
+            "source_pages": [1, 2, 3]
+        }
+    ],
+    "merge_summary": "Résumé court des fusions effectuées (ex: 'Fusionné 3 notions sur les dérivées en 1')"
 }"""
 
     user_prompt = (
-        f"Voici les {len(notions)} notions à regrouper :\n\n{notions_text}\n\n"
-        "Assigne une catégorie thématique à chacune."
+        f"Voici les {len(notions)} notions à analyser et regrouper :\n\n"
+        f"{notions_text}\n\n"
+        "Fusionne les notions similaires ou redondantes. Retourne une liste consolidée."
     )
 
     result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
 
-    updated = list(notions)
-    for item in result.get("categories_assigned", []):
-        idx = item.get("index")
-        cat = item.get("category", "")
-        if idx is not None and 0 <= idx < len(updated):
-            updated[idx].category = cat
+    merged = []
+    for n_data in result.get("merged_notions", []):
+        try:
+            merged.append(Notion(
+                title=n_data["title"],
+                description=n_data.get("description", ""),
+                source_document=n_data.get("source_document", ""),
+                source_pages=n_data.get("source_pages", []),
+                enabled=True,
+            ))
+        except (KeyError, TypeError):
+            continue
 
-    return updated
+    summary = result.get("merge_summary", f"{len(notions)} → {len(merged)} notions")
+    return merged, summary
 
 
 def notions_to_prompt_text(notions: List[Notion]) -> str:

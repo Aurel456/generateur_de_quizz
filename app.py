@@ -11,7 +11,7 @@ from llm_service import list_models
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
 from exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
 from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
-from notion_detector import detect_notions, edit_notions_with_llm, group_notions_by_category, Notion
+from notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
 from ui_components import render_stat_card, render_source_info, render_difficulty_badge
 from stats_manager import load_stats, increment_stats
 
@@ -406,32 +406,23 @@ if uploaded_files:
             with col_meta:
                 st.markdown(f"**{len(notions)} notion(s) détectée(s)** — {active_count} active(s)")
             with col_group:
-                if st.button("🗂️ Regrouper par catégories", use_container_width=True):
-                    with st.spinner("🧠 Regroupement en cours..."):
+                if st.button("🔗 Regrouper les notions", use_container_width=True,
+                             help="Fusionne les notions similaires ou redondantes entre elles"):
+                    with st.spinner("🧠 Fusion des notions en cours..."):
                         try:
-                            st.session_state.notions = group_notions_by_category(
+                            merged, summary = merge_similar_notions(
                                 st.session_state.notions, model=selected_model
                             )
+                            st.session_state.notions = merged
+                            st.success(f"✅ {summary}")
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ Erreur : {str(e)}")
 
             st.divider()
 
-            # Grouper par catégorie si disponible
-            has_categories = any(n.category for n in notions)
-            if has_categories:
-                from collections import defaultdict
-                cat_groups = defaultdict(list)
-                for idx, notion in enumerate(notions):
-                    cat_groups[notion.category or "Sans catégorie"].append((idx, notion))
-                for cat_name in sorted(cat_groups.keys()):
-                    st.markdown(f"**📂 {cat_name}**")
-                    for idx, notion in cat_groups[cat_name]:
-                        _render_notion_row(idx, notion)
-            else:
-                for idx, notion in enumerate(notions):
-                    _render_notion_row(idx, notion)
+            for idx, notion in enumerate(notions):
+                _render_notion_row(idx, notion)
 
             st.divider()
 
@@ -793,15 +784,15 @@ if uploaded_files:
                         st.markdown("#### 🤖 Correction IA")
                         st.markdown(ex.correction)
 
+                    # Détails de la vérification (expand auto si erreur)
+                    if ex.verification_output:
+                        with st.expander("📋 Détails de la vérification", expanded=not ex.verified):
+                            st.text(ex.verification_output)
+
                     # Code de vérification
                     if ex.verification_code:
-                        with st.popover("🔍 Code de vérification"):
+                        with st.expander("🔍 Code de vérification"):
                             st.code(ex.verification_code, language="python")
-
-                    # Output de vérification
-                    if ex.verification_output:
-                        with st.popover("📋 Détails de la vérification"):
-                            st.text(ex.verification_output)
 
                     # Source enrichie
                     render_source_info(ex.source_document, ex.source_pages)
