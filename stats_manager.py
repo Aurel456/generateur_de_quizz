@@ -2,7 +2,7 @@ import json
 import os
 from threading import Lock
 
-STATS_FILE = "global_stats.json"
+STATS_FILE = "/app/shared_data/global_stats.json"
 _lock = Lock()
 
 def load_stats():
