@@ -6,8 +6,12 @@ import re
 import io
 from dataclasses import dataclass, field
 from typing import List, Literal, BinaryIO, Any
+import logging
 
 import pdfplumber
+
+# Ignorer les avertissements de polices de pdfminer (utilisé par pdfplumber)
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
 from docx import Document as DocxDocument
 from pptx import Presentation
 from odf.opendocument import load as load_odf

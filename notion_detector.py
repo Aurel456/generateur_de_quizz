@@ -20,6 +20,7 @@ class Notion:
     source_document: str = ""
     source_pages: List[int] = field(default_factory=list)
     enabled: bool = True
+    category: str = ""
 
 
 def _build_detection_prompt_incremental(
@@ -215,6 +216,53 @@ Applique cette instruction et retourne la liste complète mise à jour."""
 
     explanation = result.get("explanation", "")
     return notions, explanation
+
+
+def group_notions_by_category(
+    notions: List[Notion],
+    model: Optional[str] = None
+) -> List[Notion]:
+    """
+    Assigne une catégorie thématique à chaque notion via le LLM.
+
+    Returns:
+        Liste de Notion avec le champ `category` rempli.
+    """
+    if not notions:
+        return notions
+
+    notions_text = "\n".join(
+        f"{i}. {n.title} : {n.description}" for i, n in enumerate(notions)
+    )
+
+    system_prompt = """Tu es un expert pédagogique. Regroupe les notions fondamentales par catégories thématiques cohérentes.
+
+Analyse la liste et assigne une catégorie courte (2-4 mots) à chacune.
+Les catégories doivent refléter les grands thèmes du document.
+
+FORMAT DE RÉPONSE (JSON strict) :
+{
+    "categories_assigned": [
+        {"index": 0, "category": "Nom de la catégorie"},
+        {"index": 1, "category": "Nom de la catégorie"}
+    ]
+}"""
+
+    user_prompt = (
+        f"Voici les {len(notions)} notions à regrouper :\n\n{notions_text}\n\n"
+        "Assigne une catégorie thématique à chacune."
+    )
+
+    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
+
+    updated = list(notions)
+    for item in result.get("categories_assigned", []):
+        idx = item.get("index")
+        cat = item.get("category", "")
+        if idx is not None and 0 <= idx < len(updated):
+            updated[idx].category = cat
+
+    return updated
 
 
 def notions_to_prompt_text(notions: List[Notion]) -> str:

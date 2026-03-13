@@ -29,39 +29,8 @@ from document_processor import TextChunk
 # Timeout pour l'exécution sandbox (en secondes)
 SANDBOX_TIMEOUT = 30
 
-# Prompt par défaut pour la génération d'exercices (modifiable dans l'UI)
-DEFAULT_EXERCISE_PROMPT = """Tu es un expert pédagogique qui crée des exercices de niveau moyen à difficile.
-Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.
-
-CONTEXTE IMPORTANT :
-Les étudiants suivent une formation (souvent en présentiel ou avec des supports) mais ils ne possèdent
-PAS le document source au moment de l'exercice. Chaque exercice doit donc être AUTONOME, fournir
-toutes les données nécessaires dans son énoncé, et être résolvable sans le document.
-N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document", etc.
-
-RÈGLES STRICTES :
-1. Chaque exercice doit avoir une réponse numérique claire et vérifiable
-2. L'énoncé doit être clair et complet, sans ambiguïté
-3. La résolution doit être décomposée en étapes claires et numérotées
-4. Tu dois fournir un code Python COMPLET qui reproduit INTÉGRALEMENT le raisonnement
-   et les calculs de l'exercice ÉTAPE PAR ÉTAPE, depuis les données de départ
-5. Le code NE DOIT PAS se contenter de poser result = <valeur_finale>.
-   Il doit CALCULER le résultat en reproduisant chaque étape du raisonnement.
-   Exemple INTERDIT : result = 42.5 ; print(result)
-   Exemple CORRECT : donnee_1 = 100 ; donnee_2 = 0.425 ; result = donnee_1 * donnee_2 ; print(result)
-6. Le code doit stocker le résultat final dans une variable nommée 'result'
-7. Les exercices doivent être de niveau moyen à difficile (analyse, calcul, application)
-8. Pour chaque exercice, précise la PAGE EXACTE de la source
-9. Inclus une CITATION exacte du passage du texte qui inspire l'exercice
-{notions_block}
-
-TYPES D'EXERCICES ACCEPTÉS :
-- Calculs basés sur des données du texte (pourcentages, proportions, statistiques)
-- Problèmes d'application de formules mentionnées dans le texte
-- Exercices de conversion ou de transformation de données
-- Questions quantitatives nécessitant plusieurs étapes de raisonnement
-
-FORMAT DE RÉPONSE (JSON strict) :
+# Bloc JSON fixe (non éditable dans l'UI)
+EXERCISE_JSON_FORMAT = """FORMAT DE RÉPONSE (JSON strict) :
 {{
     "exercises": [
         {{
@@ -80,6 +49,64 @@ FORMAT DE RÉPONSE (JSON strict) :
     ]
 }}"""
 
+_COMMON_RULES = """
+CONTEXTE IMPORTANT :
+Les étudiants suivent une formation mais ne possèdent PAS le document source au moment de l'exercice.
+Chaque exercice doit être AUTONOME, fournir toutes les données nécessaires dans son énoncé,
+et être résolvable sans le document.
+N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document", etc.
+
+RÈGLES :
+1. Chaque exercice doit avoir une réponse numérique claire et vérifiable
+2. L'énoncé doit être clair, complet et auto-suffisant
+3. La résolution doit être décomposée en étapes claires et numérotées
+4. Le code Python doit reproduire INTÉGRALEMENT les calculs étape par étape depuis les données de départ
+5. Le code NE DOIT PAS se contenter de poser result = <valeur_finale>
+   Exemple INTERDIT : result = 42.5
+   Exemple CORRECT : donnee_1 = 100 ; donnee_2 = 0.425 ; result = donnee_1 * donnee_2
+6. Le code doit stocker le résultat final dans une variable nommée 'result'
+7. Pour chaque exercice, précise la PAGE EXACTE de la source
+8. Inclus une CITATION exacte du passage du texte qui inspire l'exercice
+{{notions_block}}"""
+
+# Prompts éditables par difficulté (sans le bloc JSON fixe)
+DEFAULT_EXERCISE_PROMPTS = {
+    "facile": (
+        "Tu es un expert pédagogique qui crée des exercices FACILES d'application numérique directe.\n"
+        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
+        + _COMMON_RULES.replace("{{notions_block}}", "{notions_block}") + "\n"
+        "NIVEAU FACILE — Application numérique directe :\n"
+        "- Application DIRECTE d'une formule ou d'un concept en une étape principale\n"
+        "- Toutes les données numériques sont explicitement fournies dans l'énoncé\n"
+        "- Calcul simple, sans raisonnement multi-étapes complexe\n"
+        "- Idéal pour vérifier la maîtrise d'une formule ou d'une définition\n"
+    ),
+    "moyen": (
+        "Tu es un expert pédagogique qui crée des exercices de niveau MOYEN nécessitant plusieurs étapes de raisonnement.\n"
+        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
+        + _COMMON_RULES.replace("{{notions_block}}", "{notions_block}") + "\n"
+        "NIVEAU MOYEN — Raisonnement multi-étapes :\n"
+        "- Nécessite plusieurs étapes de calcul ou de raisonnement enchaînées\n"
+        "- Peut combiner plusieurs formules ou concepts\n"
+        "- Les données sont fournies mais leur traitement demande de la réflexion\n"
+        "- Application de connaissances à une situation concrète\n"
+    ),
+    "difficile": (
+        "Tu es un expert pédagogique qui crée des exercices DIFFICILES de niveau études supérieures.\n"
+        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
+        + _COMMON_RULES.replace("{{notions_block}}", "{notions_block}") + "\n"
+        "NIVEAU DIFFICILE — Résolution complexe, niveau études supérieures :\n"
+        "- Nécessite un raisonnement complexe et multi-niveaux\n"
+        "- Combine plusieurs domaines ou concepts avancés\n"
+        "- Résolution non triviale avec des subtilités ou pièges\n"
+        "- Demande une analyse approfondie et une maîtrise solide des concepts\n"
+        "- Peut inclure des modélisations, optimisations ou démonstrations\n"
+    ),
+}
+
+# Alias pour compatibilité avec l'ancien code
+DEFAULT_EXERCISE_PROMPT = DEFAULT_EXERCISE_PROMPTS["moyen"]
+
 
 @dataclass
 class Exercise:
@@ -95,6 +122,7 @@ class Exercise:
     source_pages: List[int] = field(default_factory=list)
     source_document: str = ""
     citation: str = ""
+    difficulty_level: str = "moyen"  # facile / moyen / difficile
 
 
 def _get_langchain_llm(model: Optional[str] = None):
@@ -104,37 +132,40 @@ def _get_langchain_llm(model: Optional[str] = None):
         openai_api_base=OPENAI_API_BASE,
         openai_api_key=OPENAI_API_KEY,
         temperature=0.3,
-        max_tokens=4000,
     )
 
 
-def _build_exercise_prompt(text: str, num_exercises: int, notions_text: str = "", source_document: str = "", custom_exercise_prompt: str = "") -> tuple:
+def _build_exercise_prompt(
+    text: str,
+    num_exercises: int,
+    notions_text: str = "",
+    source_document: str = "",
+    difficulty: str = "moyen",
+    custom_exercise_prompts: Optional[dict] = None,
+) -> tuple:
     """Construit le prompt pour la génération d'exercices."""
-    
+
     notions_block = ""
     if notions_text:
-        notions_block = f"""\n\n{notions_text}\nLes exercices doivent tester la maîtrise pratique de ces notions fondamentales."""
-    
-    # Utiliser le prompt personnalisé s'il est fourni, sinon le prompt par défaut
-    if custom_exercise_prompt and custom_exercise_prompt.strip():
-        system_prompt = custom_exercise_prompt.strip()
-    else:
-        system_prompt = DEFAULT_EXERCISE_PROMPT
-    
-    # Injecter les variables dynamiques
-    system_prompt = system_prompt.replace("{num_exercises}", str(num_exercises))
-    system_prompt = system_prompt.replace("{notions_block}", notions_block)
+        notions_block = f"\n\n{notions_text}\nLes exercices doivent tester la maîtrise pratique de ces notions fondamentales."
+
+    prompts = custom_exercise_prompts or DEFAULT_EXERCISE_PROMPTS
+    instructions = prompts.get(difficulty, prompts.get("moyen", ""))
+
+    # Injecter les variables dynamiques dans la partie éditable
+    instructions = instructions.replace("{num_exercises}", str(num_exercises))
+    instructions = instructions.replace("{notions_block}", notions_block)
+
+    # Assembler avec le bloc JSON fixe
+    system_prompt = instructions.rstrip() + "\n\n" + EXERCISE_JSON_FORMAT
 
     doc_context = f" (document : {source_document})" if source_document else ""
-    user_prompt = f"""Voici le texte source{doc_context} :
+    user_prompt = (
+        f"Voici le texte source{doc_context} :\n\n---\n{text}\n---\n\n"
+        f"Crée exactement {num_exercises} exercice(s) de niveau {difficulty} avec des réponses numériques vérifiables.\n"
+        f"Rappel : l'énoncé doit être auto-suffisant et le code de vérification doit reproduire INTÉGRALEMENT les calculs."
+    )
 
----
-{text}
----
-
-Crée exactement {num_exercises} exercice(s) de niveau moyen à difficile avec des réponses numériques vérifiables.
-Rappel : l'énoncé doit être auto-suffisant et le code de vérification doit reproduire INTÉGRALEMENT les calculs."""
-    
     return system_prompt, user_prompt
 
 
@@ -318,32 +349,32 @@ def _verify_exercise_direct(exercise: Exercise) -> Exercise:
 
 def generate_exercises_from_chunk(
     chunk: TextChunk,
-    num_exercises: int = 2,
+    num_exercises: int = 1,
     max_retries: int = 3,
     model: Optional[str] = None,
     notions_text: str = "",
-    custom_exercise_prompt: str = ""
+    custom_exercise_prompts: Optional[dict] = None,
+    difficulty: str = "moyen",
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
-    
     Si la vérification échoue, re-génère l'exercice (max max_retries tentatives).
     """
     system_prompt, user_prompt = _build_exercise_prompt(
         chunk.text, num_exercises, notions_text=notions_text,
         source_document=chunk.source_document,
-        custom_exercise_prompt=custom_exercise_prompt
+        difficulty=difficulty,
+        custom_exercise_prompts=custom_exercise_prompts,
     )
-    
+
     exercises = []
-    
+
     for attempt in range(max_retries):
         try:
             result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.5)
-            
+
             for ex_data in result.get("exercises", []):
                 try:
-                    # Récupérer la page source du LLM ou fallback sur le chunk
                     source_page = ex_data.get("source_page")
                     if source_page:
                         source_pages = [source_page] if isinstance(source_page, int) else chunk.source_pages
@@ -360,91 +391,102 @@ def generate_exercises_from_chunk(
                         source_pages=source_pages,
                         source_document=chunk.source_document,
                         citation=ex_data.get("citation", ""),
+                        difficulty_level=difficulty,
                     )
-                    
-                    # Vérifier l'exercice via l'agent
+
                     exercise = _verify_exercise_with_agent(exercise, model=model)
                     exercises.append(exercise)
-                    
-                except (KeyError, TypeError) as e:
+
+                except (KeyError, TypeError):
                     continue
-            
-            # Si on a assez d'exercices vérifiés, on arrête
+
             verified_count = sum(1 for ex in exercises if ex.verified)
             if verified_count >= num_exercises:
                 break
-                
+
         except Exception as e:
             print(f"Tentative {attempt + 1}/{max_retries} échouée : {e}")
             continue
-    
+
     return exercises[:num_exercises]
 
 
 def generate_exercises(
     chunks: List[TextChunk],
-    num_exercises: int = 5,
+    num_exercises: Optional[int] = None,
+    difficulty_counts: Optional[dict] = None,
     model: Optional[str] = None,
     progress_callback=None,
     notions: Optional[list] = None,
-    custom_exercise_prompt: str = ""
+    custom_exercise_prompts: Optional[dict] = None,
 ) -> List[Exercise]:
     """
-    Génère des exercices à partir de plusieurs chunks.
-    
+    Génère des exercices à partir de plusieurs chunks, avec support des niveaux de difficulté.
+
     Args:
         chunks: Liste de TextChunk.
-        num_exercises: Nombre total d'exercices souhaités.
+        num_exercises: Nombre total (backward compat, traité comme {"moyen": n}).
+        difficulty_counts: Dict {difficulté: nombre}. Ex: {"facile": 2, "moyen": 3}.
         model: Modèle LLM à utiliser.
         progress_callback: Fonction callback(current, total) pour la progression.
         notions: Liste de Notion fondamentales pour guider la génération.
-    
+        custom_exercise_prompts: Dict {difficulté: prompt_editable}.
+
     Returns:
         Liste d'Exercise.
     """
     if not chunks:
         return []
-    
+
+    # Backward compat
+    if difficulty_counts is None:
+        difficulty_counts = {"moyen": num_exercises or 3}
+
+    diff_keys = [k for k, v in difficulty_counts.items() if v > 0]
+
     # Préparer le texte des notions
     notions_text = ""
     if notions:
         from notion_detector import notions_to_prompt_text
         notions_text = notions_to_prompt_text(notions)
-    
-    # Sélectionner des chunks répartis équitablement dans le document
-    if len(chunks) <= num_exercises:
-        selected_chunks = chunks
-        exercises_per_chunk_list = [1] * len(chunks)
-        # Distribue le reste
-        remaining = num_exercises - len(chunks)
-        for i in range(remaining):
-            exercises_per_chunk_list[i % len(chunks)] += 1
-    else:
-        # On a plus de chunks que d'exercices demandés
-        # On sélectionne N chunks répartis uniformément
-        step = len(chunks) / num_exercises
-        indices = [int(i * step) for i in range(num_exercises)]
-        selected_chunks = [chunks[i] for i in indices]
-        exercises_per_chunk_list = [1] * len(selected_chunks)
 
+    # Pré-calculer toutes les tâches (difficulté, chunk, n_exercices)
+    all_tasks = []
+    for diff_name in diff_keys:
+        diff_count = difficulty_counts[diff_name]
+        if len(chunks) <= diff_count:
+            selected = list(chunks)
+            per_chunk = [1] * len(chunks)
+            remaining = diff_count - len(chunks)
+            for i in range(remaining):
+                per_chunk[i % len(chunks)] += 1
+        else:
+            step = len(chunks) / diff_count
+            indices = [int(i * step) for i in range(diff_count)]
+            selected = [chunks[i] for i in indices]
+            per_chunk = [1] * len(selected)
+        for chunk, n_ex in zip(selected, per_chunk):
+            all_tasks.append((diff_name, chunk, n_ex))
+
+    total_steps = len(all_tasks)
     all_exercises = []
-    
-    for i, (chunk, n_exercises) in enumerate(zip(selected_chunks, exercises_per_chunk_list)):
+
+    for i, (diff_name, chunk, n_ex) in enumerate(all_tasks):
         if progress_callback:
-            progress_callback(i, len(selected_chunks))
-        
+            progress_callback(i, total_steps)
         try:
             exercises = generate_exercises_from_chunk(
-                chunk, n_exercises, model=model, notions_text=notions_text,
-                custom_exercise_prompt=custom_exercise_prompt
+                chunk, n_ex, model=model, notions_text=notions_text,
+                custom_exercise_prompts=custom_exercise_prompts,
+                difficulty=diff_name,
             )
             all_exercises.extend(exercises)
         except Exception as e:
-            print(f"Erreur sur le chunk {chunk.source_pages}: {e}")
+            print(f"Erreur sur le chunk {chunk.source_pages} ({diff_name}): {e}")
             continue
-    
+
     if progress_callback:
-        progress_callback(len(selected_chunks), len(selected_chunks))
-    
-    return all_exercises[:num_exercises]
+        progress_callback(total_steps, total_steps)
+
+    return all_exercises
 
