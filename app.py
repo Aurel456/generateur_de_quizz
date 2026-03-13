@@ -7,11 +7,11 @@ import streamlit as st
 import time
 
 from document_processor import extract_and_chunk_multiple, get_text_stats_multiple, count_tokens
-from llm_service import get_model_info, list_models
+from llm_service import list_models
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
-from exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPT
+from exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
 from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
-from notion_detector import detect_notions, edit_notions_with_llm, Notion
+from notion_detector import detect_notions, edit_notions_with_llm, group_notions_by_category, Notion
 from ui_components import render_stat_card, render_source_info, render_difficulty_badge
 from stats_manager import load_stats, increment_stats
 
@@ -133,8 +133,8 @@ if "difficulty_prompts" not in st.session_state:
     st.session_state.difficulty_prompts = DIFFICULTY_PROMPTS.copy()
 if "notions" not in st.session_state:
     st.session_state.notions = None
-if "exercise_prompt" not in st.session_state:
-    st.session_state.exercise_prompt = DEFAULT_EXERCISE_PROMPT
+if "exercise_prompts" not in st.session_state:
+    st.session_state.exercise_prompts = {k: v for k, v in DEFAULT_EXERCISE_PROMPTS.items()}
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
@@ -168,10 +168,10 @@ with st.sidebar:
     if read_mode == "token":
         max_chunk_tokens = st.slider(
             "Taille max des chunks (tokens)",
-            min_value=1000,
-            max_value=15000,
+            min_value=5000,
+            max_value=25000,
             value=10000,
-            step=500,
+            step=1000,
             help="Nombre de tokens par segment (uniquement pour le mode 'Par blocs de tokens')."
         )
 
@@ -189,9 +189,6 @@ with st.sidebar:
         help="Choisissez le modèle IA à utiliser pour la génération."
     )
     
-    model_info = get_model_info(selected_model)
-    st.caption(f"**Contexte** : {model_info['context_window']:,} tokens")
-    st.caption(f"**API** : `{model_info['api_base']}`")
 
     # ─── Sauvegarde / Chargement de session ─────────────────────────────────
     st.divider()
@@ -223,7 +220,7 @@ with st.sidebar:
                 "verification_code": ex.verification_code, "verified": ex.verified,
                 "verification_output": ex.verification_output,
                 "source_pages": ex.source_pages, "source_document": ex.source_document,
-                "citation": ex.citation,
+                "citation": ex.citation, "difficulty_level": ex.difficulty_level,
             } for ex in st.session_state.exercises
         ]
         has_data = True
@@ -232,7 +229,7 @@ with st.sidebar:
             {
                 "title": n.title, "description": n.description,
                 "source_document": n.source_document, "source_pages": n.source_pages,
-                "enabled": n.enabled,
+                "enabled": n.enabled, "category": n.category,
             } for n in st.session_state.notions
         ]
         has_data = True
@@ -334,6 +331,33 @@ if uploaded_files:
 
     st.divider()
 
+    # ─── Helper pour afficher une ligne de notion ───────────────────────────────
+
+    def _render_notion_row(idx, notion):
+        col_check, col_text, col_del = st.columns([0.5, 8, 1])
+        with col_check:
+            new_enabled = st.checkbox(
+                "act", value=notion.enabled, key=f"notion_check_{idx}", label_visibility="collapsed"
+            )
+            if new_enabled != notion.enabled:
+                st.session_state.notions[idx].enabled = new_enabled
+        with col_text:
+            style = "" if notion.enabled else "opacity: 0.5;"
+            source_info = ""
+            if notion.source_document:
+                source_info += f" — 📄 {notion.source_document}"
+            if notion.source_pages:
+                source_info += f", p. {', '.join(map(str, notion.source_pages))}"
+            st.markdown(
+                f"<div style='{style}'><strong>{notion.title}</strong><br/>"
+                f"<span style='color: #a0a0b8; font-size: 0.85em;'>{notion.description}{source_info}</span></div>",
+                unsafe_allow_html=True
+            )
+        with col_del:
+            if st.button("🗑️", key=f"notion_del_{idx}", help="Supprimer cette notion"):
+                st.session_state.notions.pop(idx)
+                st.rerun()
+
     # ─── Onglets Quizz / Exercices ──────────────────────────────────────────────
 
     tab_notions, tab_quiz, tab_exercises, tab_preview = st.tabs(["📚 Notions Fondamentales", "🎯 Quizz QCM", "🧮 Exercices", "👁️ Aperçu texte"])
@@ -346,13 +370,22 @@ if uploaded_files:
 
         # Bouton de détection
         if st.button("🔍 Détecter les notions fondamentales", type="primary", use_container_width=True):
-            progress_bar = st.progress(0, text="🧠 Analyse chunk par chunk...")
+            progress_bar = st.progress(0, text="🧠 Démarrage...")
             try:
+                _notion_start = time.time()
+
                 def notion_progress(current, total):
                     if total > 0:
+                        pct = current / total
+                        elapsed = time.time() - _notion_start
+                        if pct > 0.01:
+                            eta = int(elapsed / pct - elapsed)
+                            eta_str = f" — ~{eta}s restantes"
+                        else:
+                            eta_str = ""
                         progress_bar.progress(
-                            current / total,
-                            text=f"🧠 Analyse chunk {current + 1}/{total}..."
+                            pct,
+                            text=f"🧠 Chunk {min(current + 1, total)}/{total}{eta_str}"
                         )
 
                 notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress)
@@ -369,35 +402,36 @@ if uploaded_files:
         if st.session_state.notions is not None:
             notions = st.session_state.notions
             active_count = sum(1 for n in notions if n.enabled)
-            st.markdown(f"**{len(notions)} notion(s) détectée(s)** — {active_count} active(s)")
+            col_meta, col_group = st.columns([4, 1])
+            with col_meta:
+                st.markdown(f"**{len(notions)} notion(s) détectée(s)** — {active_count} active(s)")
+            with col_group:
+                if st.button("🗂️ Regrouper par catégories", use_container_width=True):
+                    with st.spinner("🧠 Regroupement en cours..."):
+                        try:
+                            st.session_state.notions = group_notions_by_category(
+                                st.session_state.notions, model=selected_model
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Erreur : {str(e)}")
 
             st.divider()
 
-            # Checklist des notions
-            for idx, notion in enumerate(notions):
-                col_check, col_text, col_del = st.columns([0.5, 8, 1])
-                with col_check:
-                    new_enabled = st.checkbox(
-                        "act", value=notion.enabled, key=f"notion_check_{idx}", label_visibility="collapsed"
-                    )
-                    if new_enabled != notion.enabled:
-                        st.session_state.notions[idx].enabled = new_enabled
-                with col_text:
-                    style = "" if notion.enabled else "opacity: 0.5;"
-                    source_info = ""
-                    if notion.source_document:
-                        source_info += f" — 📄 {notion.source_document}"
-                    if notion.source_pages:
-                        source_info += f", p. {', '.join(map(str, notion.source_pages))}"
-                    st.markdown(
-                        f"<div style='{style}'><strong>{notion.title}</strong><br/>"
-                        f"<span style='color: #a0a0b8; font-size: 0.85em;'>{notion.description}{source_info}</span></div>",
-                        unsafe_allow_html=True
-                    )
-                with col_del:
-                    if st.button("🗑️", key=f"notion_del_{idx}", help="Supprimer cette notion"):
-                        st.session_state.notions.pop(idx)
-                        st.rerun()
+            # Grouper par catégorie si disponible
+            has_categories = any(n.category for n in notions)
+            if has_categories:
+                from collections import defaultdict
+                cat_groups = defaultdict(list)
+                for idx, notion in enumerate(notions):
+                    cat_groups[notion.category or "Sans catégorie"].append((idx, notion))
+                for cat_name in sorted(cat_groups.keys()):
+                    st.markdown(f"**📂 {cat_name}**")
+                    for idx, notion in cat_groups[cat_name]:
+                        _render_notion_row(idx, notion)
+            else:
+                for idx, notion in enumerate(notions):
+                    _render_notion_row(idx, notion)
 
             st.divider()
 
@@ -502,14 +536,22 @@ if uploaded_files:
 
         # Bouton de génération
         if st.button("🚀 Générer le Quizz", type="primary", use_container_width=True):
-            progress_bar = st.progress(0, text="Génération en cours...")
+            progress_bar = st.progress(0, text="Démarrage...")
             status_text = st.empty()
+            _quiz_start = time.time()
 
             def quiz_progress(current, total):
                 if total > 0:
+                    pct = current / total
+                    elapsed = time.time() - _quiz_start
+                    if pct > 0.01:
+                        eta = int(elapsed / pct - elapsed)
+                        eta_str = f" — ~{eta}s restantes"
+                    else:
+                        eta_str = ""
                     progress_bar.progress(
-                        current / total,
-                        text=f"Traitement du chunk {current + 1}/{total}..."
+                        pct,
+                        text=f"Chunk {min(current, total)}/{total}{eta_str}"
                     )
 
             try:
@@ -607,59 +649,97 @@ if uploaded_files:
     with tab_exercises:
         st.markdown("### ⚙️ Configuration des Exercices")
 
-        num_exercises = st.slider(
-            "Nombre d'exercices",
-            min_value=1,
-            max_value=10,
-            value=3,
-            help="Nombre d'exercices à générer (niveau moyen-difficile)."
-        )
+        st.markdown("#### 📊 Nombre d'exercices par niveau")
+        ex_c1, ex_c2, ex_c3 = st.columns(3)
+        with ex_c1:
+            num_ex_facile = st.number_input("🟢 Facile", min_value=0, max_value=20, value=0,
+                help="Application numérique directe, une étape.")
+        with ex_c2:
+            num_ex_moyen = st.number_input("🟡 Moyen", min_value=0, max_value=20, value=3,
+                help="Raisonnement multi-étapes.")
+        with ex_c3:
+            num_ex_difficile = st.number_input("🔴 Difficile", min_value=0, max_value=20, value=0,
+                help="Résolution complexe, niveau études supérieures.")
+
+        difficulty_counts_ex = {
+            "facile": num_ex_facile,
+            "moyen": num_ex_moyen,
+            "difficile": num_ex_difficile,
+        }
+        total_ex = sum(difficulty_counts_ex.values())
+        if total_ex == 0:
+            st.warning("⚠️ Sélectionnez au moins un exercice.")
 
         st.info(
-            "🔬 Les exercices sont de niveau **moyen à difficile** avec des réponses numériques. "
-            "Chaque exercice est **vérifié par un agent IA** qui exécute du code Python pour "
-            "confirmer que la réponse est correcte."
+            "🔬 Chaque exercice a une **réponse numérique vérifiable**. "
+            "Un agent IA exécute du code Python pour confirmer la correction."
         )
 
-        # 📝 Édition du prompt d'exercice
-        with st.expander("📝 Personnaliser le Prompt d'Exercice"):
+        # 📝 Édition des prompts d'exercice (partie éditable uniquement)
+        with st.expander("📝 Personnaliser les Prompts d'Exercice"):
             st.info(
-                "Modifiez les instructions envoyées à l'IA pour générer les exercices. "
-                "Utilisez `{num_exercises}` pour le nombre d'exercices et `{notions_block}` pour les notions détectées."
+                "Modifiez les instructions pour chaque niveau. "
+                "Utilisez `{num_exercises}` et `{notions_block}` comme variables. "
+                "Le bloc **FORMAT DE RÉPONSE (JSON strict)** est fixe et ajouté automatiquement."
             )
-            st.session_state.exercise_prompt = st.text_area(
-                "Prompt Exercice",
-                value=st.session_state.exercise_prompt,
-                height=400,
-                key="exercise_prompt_editor"
-            )
-            if st.button("🔄 Réinitialiser le prompt par défaut", key="reset_exercise_prompt"):
-                st.session_state.exercise_prompt = DEFAULT_EXERCISE_PROMPT
-                st.rerun()
+            ex_tab_f, ex_tab_m, ex_tab_d = st.tabs(["🟢 Facile", "🟡 Moyen", "🔴 Difficile"])
+            with ex_tab_f:
+                st.session_state.exercise_prompts["facile"] = st.text_area(
+                    "Prompt Facile", value=st.session_state.exercise_prompts["facile"],
+                    height=300, key="ex_prompt_facile"
+                )
+                if st.button("🔄 Réinitialiser", key="reset_ex_facile"):
+                    st.session_state.exercise_prompts["facile"] = DEFAULT_EXERCISE_PROMPTS["facile"]
+                    st.rerun()
+            with ex_tab_m:
+                st.session_state.exercise_prompts["moyen"] = st.text_area(
+                    "Prompt Moyen", value=st.session_state.exercise_prompts["moyen"],
+                    height=300, key="ex_prompt_moyen"
+                )
+                if st.button("🔄 Réinitialiser", key="reset_ex_moyen"):
+                    st.session_state.exercise_prompts["moyen"] = DEFAULT_EXERCISE_PROMPTS["moyen"]
+                    st.rerun()
+            with ex_tab_d:
+                st.session_state.exercise_prompts["difficile"] = st.text_area(
+                    "Prompt Difficile", value=st.session_state.exercise_prompts["difficile"],
+                    height=300, key="ex_prompt_difficile"
+                )
+                if st.button("🔄 Réinitialiser", key="reset_ex_difficile"):
+                    st.session_state.exercise_prompts["difficile"] = DEFAULT_EXERCISE_PROMPTS["difficile"]
+                    st.rerun()
+            with st.expander("📌 Bloc JSON fixe (non modifiable)", expanded=False):
+                st.code(EXERCISE_JSON_FORMAT, language="json")
 
-        if st.button("🧮 Générer les Exercices", type="primary", use_container_width=True):
-            progress_bar = st.progress(0, text="Génération et vérification en cours...")
+        if st.button("🧮 Générer les Exercices", type="primary", use_container_width=True, disabled=(total_ex == 0)):
+            progress_bar = st.progress(0, text="Démarrage...")
+            _ex_start = time.time()
 
             def exercise_progress(current, total):
                 if total > 0:
+                    pct = current / total
+                    elapsed = time.time() - _ex_start
+                    if pct > 0.01:
+                        eta = int(elapsed / pct - elapsed)
+                        eta_str = f" — ~{eta}s restantes"
+                    else:
+                        eta_str = ""
                     progress_bar.progress(
-                        current / total,
-                        text=f"Chunk {current + 1}/{total} — Génération + vérification..."
+                        pct,
+                        text=f"Exercice {min(current, total)}/{total}{eta_str}"
                     )
 
             try:
-                # Récupérer les notions activées
                 active_notions = None
                 if st.session_state.notions:
                     active_notions = [n for n in st.session_state.notions if n.enabled]
 
                 exercises = generate_exercises(
                     chunks=chunks,
-                    num_exercises=num_exercises,
+                    difficulty_counts=difficulty_counts_ex,
                     model=selected_model,
                     progress_callback=exercise_progress,
                     notions=active_notions,
-                    custom_exercise_prompt=st.session_state.exercise_prompt
+                    custom_exercise_prompts=st.session_state.exercise_prompts,
                 )
                 st.session_state.exercises = exercises
                 increment_stats(questions=len(exercises))
@@ -679,8 +759,11 @@ if uploaded_files:
             st.markdown(f"### 📋 {len(exercises)} exercice(s) généré(s)")
 
             for i, ex in enumerate(exercises):
+                diff_label = ex.difficulty_level or "moyen"
+                diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
+                verified_label = "✅ Vérifié" if ex.verified else "⚠️ Non vérifié"
                 with st.expander(
-                    f"**Exercice {i+1}** — {'✅ Vérifié' if ex.verified else '⚠️ Non vérifié'}",
+                    f"{diff_emoji} **Exercice {i+1}** — {verified_label}",
                     expanded=True
                 ):
                     # Statut de vérification
@@ -688,6 +771,9 @@ if uploaded_files:
                         st.success("✅ Réponse vérifiée par exécution de code")
                     else:
                         st.warning("⚠️ La vérification automatique n'a pas pu confirmer la réponse")
+
+                    # Badge difficulté
+                    render_difficulty_badge(diff_label)
 
                     # Énoncé
                     st.markdown("#### 📝 Énoncé")

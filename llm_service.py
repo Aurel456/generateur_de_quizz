@@ -111,11 +111,8 @@ def call_llm(
             f"Tokens disponibles pour la réponse : {available}"
         )
     
-    if max_tokens is None:
-        # Utiliser un maximum raisonnable basé sur le contexte disponible
-        max_tokens = min(available, int(MODEL_CONTEXT_WINDOW * RESPONSE_TOKEN_RATIO))
-    
-    max_tokens = min(max_tokens, available)
+    if max_tokens is not None:
+        max_tokens = min(max_tokens, available)
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -128,9 +125,10 @@ def call_llm(
             kwargs = {
                 "model": target_model,
                 "messages": messages,
-                "max_tokens": max_tokens,
                 "temperature": temperature,
             }
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
             
             response = client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content
@@ -165,47 +163,53 @@ def call_llm_json(
     retries: int = 3
 ) -> dict:
     """
-    Appel au LLM avec parsing JSON automatique.
-    
-    Tente d'extraire un objet JSON de la réponse. Si le parsing échoue,
-    essaie d'extraire le JSON d'un bloc de code markdown.
-    
+    Appel au LLM avec parsing JSON automatique et retry si le JSON est invalide.
+
     Returns:
         Dict parsé depuis la réponse JSON du LLM.
     """
-    # Ajouter une instruction JSON au system prompt
     json_system = system_prompt + (
         "\n\nIMPORTANT: Tu DOIS répondre UNIQUEMENT avec un objet JSON valide. "
         "Pas de texte avant ou après le JSON. Pas de bloc markdown."
     )
-    
-    raw = call_llm(json_system, user_prompt, model, max_tokens, temperature, retries)
-    
-    # Tentative 1 : parsing direct
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    
-    # Tentative 2 : extraire JSON d'un bloc markdown ```json ... ```
-    json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, re.DOTALL)
-    if json_match:
+
+    last_raw = None
+    for attempt in range(retries):
         try:
-            return json.loads(json_match.group(1))
+            raw = call_llm(json_system, user_prompt, model, max_tokens, temperature, retries=2)
+        except Exception as e:
+            print(f"LLM call failed (attempt {attempt + 1}/{retries}): {e}")
+            continue
+
+        last_raw = raw
+
+        # Tentative 1 : parsing direct
+        try:
+            return json.loads(raw)
         except json.JSONDecodeError:
             pass
-    
-    # Tentative 3 : trouver le premier { ... } ou [ ... ]
-    brace_match = re.search(r'(\{.*\}|\[.*\])', raw, re.DOTALL)
-    if brace_match:
-        try:
-            return json.loads(brace_match.group(1))
-        except json.JSONDecodeError:
-            pass
-    
+
+        # Tentative 2 : extraire JSON d'un bloc markdown ```json ... ```
+        json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Tentative 3 : trouver le premier { ... } ou [ ... ]
+        brace_match = re.search(r'(\{.*\}|\[.*\])', raw, re.DOTALL)
+        if brace_match:
+            try:
+                return json.loads(brace_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        print(f"JSON parse failed (attempt {attempt + 1}/{retries}), retrying LLM call...")
+
     raise ValueError(
-        f"Impossible de parser la réponse JSON du LLM.\n"
-        f"Réponse brute :\n{raw[:500]}"
+        f"Impossible de parser la réponse JSON après {retries} tentatives.\n"
+        f"Dernière réponse brute :\n{(last_raw or '')[:500]}"
     )
 
 

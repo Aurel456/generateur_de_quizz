@@ -27,20 +27,26 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 ### 🧮 Exercices & Problèmes (Maths / Logique / Science)
 
-- **Génération d'exercices complexes** nécessitant calcul et raisonnement multi-étapes.
+- **Trois niveaux de difficulté distincts** :
+  - 🟢 **Facile** : Application numérique directe d'une formule ou d'un concept en une étape.
+  - 🟡 **Moyen** : Raisonnement multi-étapes combinant plusieurs formules ou concepts.
+  - 🔴 **Difficile** : Résolution complexe de niveau études supérieures (modélisation, optimisation, démonstration).
 - **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source.
 - **Vérification automatique par Agent IA** : Un agent LangGraph exécute du code Python pour vérifier la validité de la réponse et de la correction proposée par le LLM.
 - **Code de vérification complet** : Le code Python reproduit intégralement le raisonnement pas à pas (pas de simple `result = valeur`).
-- **Prompt personnalisable** : Modifiez directement les instructions envoyées à l'IA pour la génération d'exercices via un éditeur dans l'interface, avec bouton de réinitialisation.
+- **Prompts personnalisables par niveau** : Modifiez les instructions envoyées à l'IA pour chaque niveau de difficulté. Le bloc FORMAT DE RÉPONSE (JSON strict) est fixe et non modifiable, garantissant la stabilité du parsing.
+- **Retry automatique JSON** : Si le LLM produit un JSON invalide, le système relance automatiquement l'appel jusqu'à 3 fois.
 - **Affichage complet** : Énoncé, Réponse attendue, Étapes de résolution détaillées, Code de vérification Python.
 - **Citations et sources** : Chaque exercice indique la citation du texte source et le document/page d'origine.
 
 ### 📚 Notions Fondamentales
 
 - **Détection automatique** : L'IA identifie les concepts clés, définitions, théorèmes et principes des documents.
+- **Regroupement par catégories** : Bouton **"🗂️ Regrouper par catégories"** — le LLM assigne automatiquement une thématique à chaque notion et les affiche groupées par catégorie.
 - **Édition interactive** : Activez/désactivez, supprimez ou ajoutez manuellement des notions.
 - **Chat LLM** : Modifiez les notions en langage naturel (ex: *« Ajoute une notion sur les dérivées partielles »*).
 - **Guidage de la génération** : Les notions activées orientent les quizz et exercices vers les concepts essentiels.
+- **Barre de progression avec ETA** : Affichage du temps restant estimé pendant la détection (style tqdm).
 
 ### 📊 Statistiques & Suivi Global
 
@@ -130,18 +136,19 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
     - Ajustez le mode de lecture et la taille des chunks.
     - Sélectionnez le **Modèle LLM** souhaité dans la liste déroulante.
 3. **Onglet Notions** :
-    - Cliquez sur **"🔍 Détecter les notions fondamentales"** pour identifier les concepts clés.
+    - Cliquez sur **"🔍 Détecter les notions fondamentales"** pour identifier les concepts clés (barre de progression avec temps restant estimé).
+    - Cliquez sur **"🗂️ Regrouper par catégories"** pour organiser les notions par thématique.
     - Activez/désactivez les notions pour guider la génération.
     - Utilisez le chat LLM pour modifier les notions en langage naturel.
 4. **Onglet Quizz** :
-    - Saisissez le nombre de questions pour chaque niveau (Facile, Moyen, Difficile).
+    - Saisissez le nombre de questions pour chaque niveau (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
     - Activez/désactivez le **mélange des réponses** (🔀) pour randomiser la position des bonnes réponses.
     - (Optionnel) Modifiez les instructions spécifiques envoyées à l'IA dans l'expandeur **"Personnaliser les Prompts"**.
     - Cliquez sur **"Générer le Quizz"**.
     - Visualisez les questions avec leurs badges de difficulté, citations et sources. Téléchargez en HTML ou CSV.
 5. **Onglet Exercices** :
-    - Choisissez le nombre d'exercices.
-    - (Optionnel) Modifiez le **prompt d'exercice** dans l'expandeur **"Personnaliser le Prompt d'Exercice"**.
+    - Saisissez le nombre d'exercices pour chaque niveau (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
+    - (Optionnel) Modifiez les **prompts par niveau** dans l'expandeur **"Personnaliser les Prompts d'Exercice"** (le bloc JSON est fixe et non modifiable).
     - Cliquez sur **"Générer les Exercices"**.
     - L'agent IA va générer et *vérifier* chaque exercice via l'exécution de code Python complet.
 
@@ -164,6 +171,10 @@ Le système ne se contente pas d'envoyer tout le texte au hasard. Pour un quizz 
 2. Il répartit les $N$ questions proportionnellement à la taille des chunks.
 3. Seuls les chunks "utiles" sont envoyés à l'IA, optimisant ainsi la consommation de tokens et la pertinence pédagogique.
 
+### 🧮 Distribution des Exercices
+
+Pour chaque niveau de difficulté demandé, le système sélectionne des chunks répartis uniformément dans le document, garantissant une couverture équilibrée du contenu. Les exercices de niveaux différents peuvent provenir de chunks différents.
+
 ### 🤖 Vérification Agentique (Exercices)
 
 Contrairement aux quizz classiques, les exercices mathématiques ou logiques passent par un cycle de **vérification en boucle fermée** :
@@ -172,7 +183,7 @@ Contrairement aux quizz classiques, les exercices mathématiques ou logiques pas
 2. **Exécution** : Un **Agent ReAct** (via LangGraph) prend le script, l'exécute dans un environnement Python (REPL).
 3. **Validation** : L'agent compare le résultat de l'exécution avec la réponse annoncée par le premier LLM.
    - Si les résultats concordent, l'exercice est marqué comme **Vérifié ✅**.
-   - En cas d'erreur, le système peut tenter de re-générer l'exercice (auto-correction).
+   - En cas d'erreur ou de JSON invalide, le système relance automatiquement la génération (jusqu'à 3 tentatives).
 
 ---
 
@@ -181,7 +192,7 @@ Contrairement aux quizz classiques, les exercices mathématiques ou logiques pas
 ```mermaid
 graph TD
     User((Utilisateur))
-    
+
     subgraph UI [Interface Streamlit]
         Upload[Upload Fichiers]
         Params[Configuration]
@@ -211,17 +222,17 @@ graph TD
     Upload --> DocProc
     DocProc --> Stats
     DocProc --> Chunking
-    
+
     Chunking --> NotionDet
     NotionDet -- "Détection itérative" --> NotionDet
     NotionDet --> Tabs
-    
+
     Tabs -- "Notions activées" --> QuizGen
     Tabs -- "Notions activées" --> ExGen
-    
+
     Chunking --> QuizGen
     Chunking --> ExGen
-    
+
     QuizGen -- "Génération via LLM" --> HTML
     ExGen -- "Génération + Code" --> Agent
     Agent -- "Vérification" --> ExGen
@@ -237,10 +248,10 @@ graph TD
 - `ui_components.py` : Composants UI réutilisables (stat cards, badges difficulté, sources).
 - `stats_manager.py` : Gestionnaire de sauvegarde persistante (JSON) pour le suivi des statistiques globales.
 - `document_processor.py` : Extraction de texte multi-format et découpage intelligent (support multi-documents).
-- `notion_detector.py` : Détection et édition des notions fondamentales via LLM.
-- `llm_service.py` : Client API OpenAI, gestion des tokens et retry logic.
+- `notion_detector.py` : Détection, édition et regroupement par catégorie des notions fondamentales via LLM.
+- `llm_service.py` : Client API OpenAI, gestion des tokens, retry réseau et retry JSON.
 - `quiz_generator.py` : Logique de création des QCM avec citations, difficulté et sources précises.
-- `exercise_generator.py` : Création d'exercices et **Vérification Agentique** (LangGraph + sous-processus sandbox).
+- `exercise_generator.py` : Création d'exercices par niveau de difficulté et **Vérification Agentique** (LangGraph + sous-processus sandbox).
 - `quiz_exporter.py` : Export HTML interactif (Jinja2) et CSV enrichis.
 - `templates/quiz_template.html` : Template HTML/CSS/JS pour l'export des quizz (badges difficulté, citations, sources).
 
@@ -259,6 +270,7 @@ graph TD
 
 - **Sécurité** : L'agent de vérification des exercices exécute du code Python généré par le LLM dans un **sous-processus isolé** avec un timeout de 30 secondes. Cela offre une isolation de base (le code ne peut pas affecter le processus principal), mais n'est pas équivalent à un sandbox Docker. Utilisez ce logiciel dans un environnement de confiance pour la production.
 - **Modèles** : L'interface permet de choisir n'importe quel modèle disponible sur votre API. Testé principalement avec `gtp-oss-120b`.
+- **max_tokens** : Aucune limite de tokens de réponse n'est envoyée à l'API par défaut, permettant des réponses longues sans troncature.
 - **Chunking** : Deux modes sont disponibles : **Page par page** (recommandé pour la précision des sources) et **Par blocs de tokens** (pour une analyse large, jusqu'à 15 000 tokens).
 - **Tiktoken** : L'encodeur tiktoken est configurable via `TIKTOKEN_ENCODING` dans `.env`. Utilisez `cl100k_base` pour GPT-4 ou `o200k_base` pour GPT-4o.
 
