@@ -67,6 +67,8 @@ RÈGLES :
 6. Le code doit stocker le résultat final dans une variable nommée 'result'
 7. Pour chaque exercice, précise la PAGE EXACTE de la source
 8. Inclus une CITATION exacte du passage du texte qui inspire l'exercice
+9. Le code doit afficher chaque étape intermédiaire avec print() pour permettre la vérification pas à pas
+   Exemple : print(f'Étape 1 — donnee_1 = {donnee_1}') ; print(f'Étape 2 — calcul = {calcul}')
 {{notions_block}}"""
 
 # Prompts éditables par difficulté (sans le bloc JSON fixe)
@@ -234,11 +236,8 @@ def _verify_exercise_with_agent(exercise: Exercise, model: Optional[str] = None)
 
 def _verify_exercise_direct(exercise: Exercise) -> Exercise:
     """
-    Vérification directe en exécutant le code Python dans un sous-processus isolé
-    (fallback si l'agent échoue).
-    
-    Le code est exécuté dans un processus séparé avec un timeout pour éviter
-    l'exécution de code malveillant dans le processus principal.
+    Vérification directe en exécutant le code Python dans un sous-processus isolé.
+    Capture tous les résultats intermédiaires (print) et le résultat final.
     """
     if not exercise.verification_code:
         exercise.verified = False
@@ -246,7 +245,6 @@ def _verify_exercise_direct(exercise: Exercise) -> Exercise:
         return exercise
 
     try:
-        # Construire un script wrapper qui exécute le code et imprime le résultat
         wrapper_code = exercise.verification_code + "\n\n"
         wrapper_code += (
             "# --- Extraction du résultat ---\n"
@@ -260,7 +258,6 @@ def _verify_exercise_direct(exercise: Exercise) -> Exercise:
             "            break\n"
         )
 
-        # Écrire le code dans un fichier temporaire
         with tempfile.NamedTemporaryFile(
             mode='w', suffix='.py', delete=False, encoding='utf-8'
         ) as tmp_file:
@@ -268,68 +265,73 @@ def _verify_exercise_direct(exercise: Exercise) -> Exercise:
             tmp_path = tmp_file.name
 
         try:
-            # Exécuter dans un sous-processus avec timeout
             proc = subprocess.run(
                 [sys.executable, tmp_path],
-                capture_output=True,
-                text=True,
+                capture_output=True, text=True,
                 timeout=SANDBOX_TIMEOUT,
-                cwd=tempfile.gettempdir(),  # Répertoire de travail neutre
+                cwd=tempfile.gettempdir(),
             )
 
             stdout = proc.stdout
             stderr = proc.stderr
 
+            # --- Construire l'output détaillé ---
+            detail = []
+            detail.append("═══ VÉRIFICATION AUTOMATIQUE ═══\n")
+
             if proc.returncode != 0:
+                detail.append("❌ ERREUR D'EXÉCUTION DU CODE")
+                detail.append(f"Code retour : {proc.returncode}")
+                if stderr:
+                    detail.append(f"\nErreur :\n{stderr[:500]}")
                 exercise.verified = False
-                exercise.verification_output = (
-                    f"❌ Erreur lors de l'exécution (code retour {proc.returncode}) :\n"
-                    f"{stderr[:500] if stderr else 'Pas de détails.'}"
-                )
+                exercise.verification_output = "\n".join(detail)
                 return exercise
 
-            # Chercher le résultat dans la sortie
+            # Extraire les lignes de calcul (tout sauf __RESULT__)
+            calc_lines = [
+                line for line in stdout.splitlines()
+                if not line.startswith("__RESULT__")
+            ]
+            if calc_lines:
+                detail.append("📊 Résultats des calculs :")
+                for line in calc_lines:
+                    detail.append(f"   {line}")
+                detail.append("")
+
+            # Extraire le résultat final
             result_match = re.search(r'__RESULT__=(.+)', stdout)
             if result_match:
                 result_value = result_match.group(1).strip()
+                detail.append(f"🎯 Résultat du code : {result_value}")
+                detail.append(f"📝 Réponse attendue : {exercise.expected_answer}")
+                detail.append("")
 
-                # Comparer avec la réponse attendue
                 try:
                     expected = float(exercise.expected_answer.replace(',', '.'))
                     actual = float(result_value)
-                    # Tolérance de 0.1% pour les arrondis
                     if abs(expected - actual) < abs(expected) * 0.001 + 0.01:
                         exercise.verified = True
-                        exercise.verification_output = (
-                            f"✅ Vérifié par exécution sandbox. "
-                            f"Résultat obtenu : {actual}, attendu : {expected}"
-                        )
+                        detail.append("✅ VÉRIFIÉ — Tous les calculs sont corrects")
                     else:
                         exercise.verified = False
-                        exercise.verification_output = (
-                            f"❌ Résultat incorrect. "
-                            f"Obtenu : {actual}, attendu : {expected}"
-                        )
+                        detail.append(f"❌ ERREUR — Résultat ({actual}) ≠ attendu ({expected})")
                 except ValueError:
-                    # Comparaison en string
                     if result_value.strip() == exercise.expected_answer.strip():
                         exercise.verified = True
-                        exercise.verification_output = "✅ Vérifié (comparaison texte)."
+                        detail.append("✅ VÉRIFIÉ — Comparaison texte correcte")
                     else:
                         exercise.verified = False
-                        exercise.verification_output = (
-                            f"❌ Résultat différent. "
-                            f"Obtenu : {result_value}, attendu : {exercise.expected_answer}"
-                        )
+                        detail.append(f"❌ ERREUR — Obtenu \"{result_value}\" ≠ attendu \"{exercise.expected_answer}\"")
             else:
                 exercise.verified = False
-                exercise.verification_output = (
-                    "⚠️ Le code de vérification n'a pas produit de variable résultat "
-                    "(result, answer, res, etc.)\n"
-                    f"Sortie standard : {stdout[:300] if stdout else '(vide)'}"
-                )
+                detail.append("⚠️ Le code n'a pas produit de variable résultat (result, answer, res...)")
+                if stdout.strip():
+                    detail.append(f"Sortie brute : {stdout[:300]}")
+
+            exercise.verification_output = "\n".join(detail)
+
         finally:
-            # Nettoyage du fichier temporaire
             try:
                 os.unlink(tmp_path)
             except OSError:
@@ -337,12 +339,59 @@ def _verify_exercise_direct(exercise: Exercise) -> Exercise:
 
     except subprocess.TimeoutExpired:
         exercise.verified = False
-        exercise.verification_output = (
-            f"⏱️ Timeout : le code de vérification a dépassé {SANDBOX_TIMEOUT}s."
-        )
+        exercise.verification_output = f"⏱️ Timeout : le code a dépassé {SANDBOX_TIMEOUT}s."
     except Exception as e:
         exercise.verified = False
-        exercise.verification_output = f"❌ Erreur lors de l'exécution sandbox : {str(e)}"
+        exercise.verification_output = f"❌ Erreur sandbox : {str(e)}"
+
+    return exercise
+
+
+def _correct_exercise_with_llm(exercise: Exercise, model: Optional[str] = None) -> Exercise:
+    """
+    Demande au LLM de corriger un exercice dont la vérification a échoué.
+    Envoie le résultat du code Python au LLM pour qu'il corrige sa résolution.
+    """
+    system_prompt = """Tu es un expert en correction d'exercices. L'exercice suivant a échoué la vérification automatique : le code Python de vérification donne un résultat différent de la réponse attendue.
+
+Analyse l'erreur et corrige :
+- La réponse attendue (expected_answer) pour qu'elle corresponde au résultat CORRECT
+- Les étapes de résolution si elles contiennent une erreur
+- Le code de vérification si nécessaire
+- La correction détaillée
+
+Le code Python fait foi : si le code calcule correctement, c'est la réponse attendue qui est fausse.
+
+FORMAT DE RÉPONSE (JSON strict) :
+{
+    "expected_answer": "valeur_corrigée",
+    "steps": ["Étape 1 corrigée...", "Étape 2 corrigée..."],
+    "correction": "Correction détaillée expliquant le raisonnement correct...",
+    "verification_code": "# Code Python corrigé si nécessaire..."
+}"""
+
+    user_prompt = (
+        f"EXERCICE :\n{exercise.statement}\n\n"
+        f"RÉPONSE ATTENDUE (initiale, probablement fausse) : {exercise.expected_answer}\n\n"
+        f"CODE DE VÉRIFICATION :\n```python\n{exercise.verification_code}\n```\n\n"
+        f"RÉSULTAT DE LA VÉRIFICATION :\n{exercise.verification_output}\n\n"
+        "Corrige cet exercice. Le résultat du code Python est la référence."
+    )
+
+    try:
+        result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
+
+        if "expected_answer" in result:
+            exercise.expected_answer = str(result["expected_answer"])
+        if "steps" in result:
+            exercise.steps = result["steps"]
+            exercise.num_steps = len(result["steps"])
+        if "correction" in result:
+            exercise.correction = result["correction"]
+        if "verification_code" in result:
+            exercise.verification_code = result["verification_code"]
+    except Exception as e:
+        print(f"Correction LLM échouée : {e}")
 
     return exercise
 
@@ -358,7 +407,7 @@ def generate_exercises_from_chunk(
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
-    Si la vérification échoue, re-génère l'exercice (max max_retries tentatives).
+    Si la vérification échoue, demande au LLM de corriger puis re-vérifie.
     """
     system_prompt, user_prompt = _build_exercise_prompt(
         chunk.text, num_exercises, notions_text=notions_text,
@@ -394,7 +443,21 @@ def generate_exercises_from_chunk(
                         difficulty_level=difficulty,
                     )
 
-                    exercise = _verify_exercise_with_agent(exercise, model=model)
+                    # 1. Vérification directe (exécution du code)
+                    exercise = _verify_exercise_direct(exercise)
+
+                    # 2. Si échec → correction par le LLM + re-vérification
+                    if not exercise.verified and exercise.verification_code:
+                        initial_output = exercise.verification_output
+                        exercise = _correct_exercise_with_llm(exercise, model=model)
+                        exercise = _verify_exercise_direct(exercise)
+                        # Conserver la trace de la correction
+                        exercise.verification_output = (
+                            initial_output
+                            + "\n\n🔄 CORRECTION AUTOMATIQUE PAR L'IA\n"
+                            + exercise.verification_output
+                        )
+
                     exercises.append(exercise)
 
                 except (KeyError, TypeError):
