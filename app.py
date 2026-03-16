@@ -527,12 +527,6 @@ if uploaded_files:
                 help="Combien de réponses correctes parmi les choix."
             )
 
-            shuffle_choices = st.checkbox(
-                "🔀 Mélanger la position des réponses",
-                value=True,
-                help="Mélange aléatoirement l'ordre des choix après génération pour éviter que la bonne réponse soit toujours en A ou B."
-            )
-
         # 📝 Édition des prompts
         with st.expander("📝 Personnaliser les Prompts de Difficulté"):
             st.info("Modifiez les instructions envoyées à l'IA pour chaque niveau de difficulté.")
@@ -587,7 +581,6 @@ if uploaded_files:
                     model=selected_model,
                     progress_callback=quiz_progress,
                     notions=active_notions,
-                    shuffle_choices=shuffle_choices
                 )
                 st.session_state.quiz = quiz
                 increment_stats(questions=len(quiz.questions))

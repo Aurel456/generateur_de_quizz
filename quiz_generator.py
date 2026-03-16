@@ -2,7 +2,6 @@
 quiz_generator.py — Génération de quizz QCM à partir de chunks de texte.
 """
 
-import random
 import string
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -130,39 +129,6 @@ Génère exactement {num_questions} questions QCM de niveau {difficulty}."""
     return system_prompt, user_prompt
 
 
-def _shuffle_choices(
-    choices: Dict[str, str],
-    correct_answers: List[str],
-    choice_labels: List[str]
-) -> tuple:
-    """
-    Mélange aléatoirement l'ordre des choix et remet à jour correct_answers.
-    Garantit que la bonne réponse n'est pas toujours en A ou B.
-    
-    Returns:
-        (new_choices, new_correct_answers)
-    """
-    # Extraire les textes des choix dans l'ordre original
-    items = [(label, choices[label]) for label in choice_labels if label in choices]
-    
-    # Identifier les indices des bonnes réponses (par leur texte)
-    correct_texts = {choices[ans] for ans in correct_answers if ans in choices}
-    
-    # Mélanger
-    random.shuffle(items)
-    
-    # Reconstruire le dict avec les nouveaux labels
-    new_choices = {}
-    new_correct = []
-    for i, (_, text) in enumerate(items):
-        new_label = choice_labels[i]
-        new_choices[new_label] = text
-        if text in correct_texts:
-            new_correct.append(new_label)
-    
-    return new_choices, new_correct
-
-
 def generate_quiz_from_chunk(
     chunk: TextChunk,
     difficulty: str = "moyen",
@@ -172,7 +138,6 @@ def generate_quiz_from_chunk(
     difficulty_prompts: Optional[Dict[str, str]] = None,
     model: Optional[str] = None,
     notions_text: str = "",
-    shuffle_choices: bool = True
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -201,10 +166,6 @@ def generate_quiz_from_chunk(
 
             choices = q_data["choices"]
             correct_answers = q_data["correct_answers"]
-
-            # Shuffle des choix si activé
-            if shuffle_choices:
-                choices, correct_answers = _shuffle_choices(choices, correct_answers, choice_labels)
 
             question = QuizQuestion(
                 question=q_data["question"],
@@ -236,7 +197,6 @@ def generate_quiz(
     model: Optional[str] = None,
     progress_callback=None,
     notions: Optional[list] = None,
-    shuffle_choices: bool = True
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -321,7 +281,6 @@ def generate_quiz(
                     difficulty_prompts=difficulty_prompts,
                     model=model,
                     notions_text=notions_text,
-                    shuffle_choices=shuffle_choices
                 )
                 all_questions.extend(questions)
             except Exception as e:
