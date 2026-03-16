@@ -54,7 +54,10 @@ CONTEXTE IMPORTANT :
 Les étudiants suivent une formation mais ne possèdent PAS le document source au moment de l'exercice.
 Chaque exercice doit être AUTONOME, fournir toutes les données nécessaires dans son énoncé,
 et être résolvable sans le document.
-N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document", etc.
+INTERDIT ABSOLU dans l'énoncé : toute référence au document source.
+N'utilise JAMAIS : "selon le texte", "d'après le document", "comme indiqué ci-dessus",
+"dans le texte fourni", "d'après le passage", "selon l'extrait", ou toute formulation similaire.
+L'énoncé doit se lire comme un exercice autonome, sans que l'apprenant n'ait besoin d'aucun document.
 
 RÈGLES :
 1. Chaque exercice doit avoir une réponse numérique claire et vérifiable
@@ -165,7 +168,9 @@ def _build_exercise_prompt(
     user_prompt = (
         f"Voici le texte source{doc_context} :\n\n---\n{text}\n---\n\n"
         f"Crée exactement {num_exercises} exercice(s) de niveau {difficulty} avec des réponses numériques vérifiables.\n"
-        f"Rappel : l'énoncé doit être auto-suffisant et le code de vérification doit reproduire INTÉGRALEMENT les calculs."
+        f"Rappel : l'énoncé doit être auto-suffisant et le code de vérification doit reproduire INTÉGRALEMENT les calculs.\n"
+        f"IMPORTANT : l'énoncé NE DOIT PAS faire référence au texte source. "
+        f"Intègre directement les données dans l'énoncé sans mentionner 'le texte', 'le document', etc."
     )
 
     return system_prompt, user_prompt

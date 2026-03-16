@@ -119,6 +119,33 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+with st.expander("ℹ️ Comment fonctionne cet outil ? Lire avant utilisation", expanded=False):
+    st.markdown("""
+**Comment ça marche ?**
+
+1. **Uploadez** un ou plusieurs documents (PDF, DOCX, ODT, PPTX, TXT) dans la barre latérale.
+2. **Détectez les notions** fondamentales du cours (onglet *Notions*). Ces notions servent de base de critères pour orienter le LLM : elles lui donnent le contexte des concepts clés sur lesquels appuyer la génération des questions et exercices. Vous pouvez les activer/désactiver, les modifier ou en ajouter manuellement.
+3. **Générez** des quizz QCM (onglet *Quizz*) ou des exercices mathématiques/logiques (onglet *Exercices*) en choisissant le nombre de questions par niveau de difficulté.
+4. **Exportez** les résultats en HTML interactif (quizz avec score en temps réel) ou en CSV.
+
+**Fonctionnement des exercices**
+
+L'IA génère un énoncé autonome (toutes les données nécessaires sont incluses dans l'énoncé), une solution pas à pas, et un code Python de vérification exécuté automatiquement. Si la vérification échoue, l'IA se corrige elle-même avant de vous afficher l'exercice.
+
+---
+
+**Avertissement — Qualité du contenu généré**
+
+L'intelligence artificielle peut produire des **erreurs factuelles, des calculs incorrects ou des formulations imprécises**. La qualité des exercices et quizz générés dépend de plusieurs facteurs :
+- **La qualité et la richesse du document fourni** : un document incomplet ou ambigu limitera la pertinence des questions.
+- **La qualité des notions détectées** : si des concepts importants n'ont pas été identifiés, les questions peuvent passer à côté des points essentiels.
+- **La familiarité du modèle avec le domaine** : certains sujets très spécialisés ou peu représentés dans les données d'entraînement peuvent donner des résultats moins fiables.
+
+De plus, **le modèle ne perçoit pas les images, schémas, graphiques et tableaux** présents dans les documents — seul le texte est analysé. La prise en charge de ces éléments visuels est en cours de développement.
+
+Tout contenu généré doit être **relu et validé par un formateur** avant toute utilisation pédagogique officielle.
+    """)
+
 # ─── Session state ──────────────────────────────────────────────────────────────
 
 if "quiz" not in st.session_state:

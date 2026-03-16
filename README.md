@@ -31,7 +31,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
   - 🟢 **Facile** : Application numérique directe d'une formule ou d'un concept en une étape.
   - 🟡 **Moyen** : Raisonnement multi-étapes combinant plusieurs formules ou concepts.
   - 🔴 **Difficile** : Résolution complexe de niveau études supérieures (modélisation, optimisation, démonstration).
-- **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source.
+- **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source. Toute référence au document est strictement interdite dans l'énoncé ("selon le texte", "d'après le document", etc.).
 - **Vérification pas à pas** : Le code Python de vérification affiche chaque étape intermédiaire avec `print()`, permettant un suivi détaillé des calculs.
 - **Auto-correction par l'IA** : Si la vérification échoue, le système renvoie automatiquement le résultat du code Python au LLM pour corriger la solution, puis re-vérifie.
 - **Code de vérification complet** : Le code Python reproduit intégralement le raisonnement pas à pas (pas de simple `result = valeur`).
@@ -46,7 +46,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Fusion des notions similaires** : Bouton **"🔗 Regrouper les notions"** — le LLM fusionne automatiquement les notions redondantes ou similaires pour obtenir une liste plus concise et claire.
 - **Édition interactive** : Activez/désactivez, supprimez ou ajoutez manuellement des notions.
 - **Chat LLM** : Modifiez les notions en langage naturel (ex: *« Ajoute une notion sur les dérivées partielles »*).
-- **Guidage de la génération** : Les notions activées orientent les quizz et exercices vers les concepts essentiels.
+- **Guidage de la génération** : Les notions activées servent de base de critères pour orienter le LLM — elles lui fournissent le contexte des concepts clés sur lesquels appuyer la génération des questions et exercices.
 - **Barre de progression avec ETA** : Affichage du temps restant estimé pendant la détection (style tqdm).
 
 ### 📊 Statistiques & Suivi Global
@@ -276,6 +276,8 @@ graph TD
 - **max_tokens** : Aucune limite de tokens de réponse n'est envoyée à l'API par défaut, permettant des réponses longues sans troncature.
 - **Chunking** : Deux modes sont disponibles : **Page par page** (recommandé pour la précision des sources) et **Par blocs de tokens** (pour une analyse large, jusqu'à 15 000 tokens).
 - **Tiktoken** : L'encodeur tiktoken est configurable via `TIKTOKEN_ENCODING` dans `.env`. Utilisez `cl100k_base` pour GPT-4 ou `o200k_base` pour GPT-4o.
+- **Qualité du contenu généré** : La pertinence des quizz et exercices dépend de la richesse du document fourni, de la qualité des notions détectées, et de la familiarité du modèle avec le domaine. Tout contenu généré doit être relu et validé par un formateur avant utilisation pédagogique.
+- **Pas de vision des images** : Le modèle analyse uniquement le texte extrait des documents. Les images, schémas, graphiques et tableaux intégrés ne sont pas encore pris en compte — cette fonctionnalité est en cours de développement.
 
 ## 📄 Licence
 
