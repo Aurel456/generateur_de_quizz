@@ -239,6 +239,43 @@ def _verify_exercise_with_agent(exercise: Exercise, model: Optional[str] = None)
     return exercise
 
 
+def _parse_numeric(value: str) -> float:
+    """
+    Parse une valeur numérique de manière robuste.
+    Gère : espaces, virgules décimales, séparateurs de milliers,
+    suffixes d'unités, pourcentages, notation scientifique.
+    Exemples : "10" → 10.0, "10.0" → 10.0, "10,5" → 10.5,
+               "1 000" → 1000.0, "42.5%" → 42.5, "3.14 m" → 3.14
+    """
+    s = str(value).strip()
+    # Retirer les unités/texte en fin de chaîne (%, €, m, kg, etc.)
+    s = re.sub(r'[%€$£°]$', '', s).strip()
+    s = re.sub(r'\s*[a-zA-Zµ°/²³]+[\s/a-zA-Z²³]*$', '', s).strip()
+    # Retirer les espaces (séparateur de milliers français : "1 000")
+    s = s.replace('\u202f', '').replace('\xa0', '').replace(' ', '')
+    # Gérer virgule vs point décimal
+    # Si on a à la fois des points et des virgules, le dernier est le séparateur décimal
+    has_comma = ',' in s
+    has_dot = '.' in s
+    if has_comma and has_dot:
+        # "1,000.5" ou "1.000,5"
+        if s.rfind(',') > s.rfind('.'):
+            # Virgule est le séparateur décimal : "1.000,5"
+            s = s.replace('.', '').replace(',', '.')
+        else:
+            # Point est le séparateur décimal : "1,000.5"
+            s = s.replace(',', '')
+    elif has_comma:
+        # Virgule seule : séparateur décimal ("10,5") ou milliers ("1,000")
+        parts = s.split(',')
+        if len(parts) == 2 and len(parts[1]) == 3 and parts[1].isdigit():
+            # Probablement séparateur de milliers : "1,000"
+            s = s.replace(',', '')
+        else:
+            s = s.replace(',', '.')
+    return float(s)
+
+
 def _verify_exercise_direct(exercise: Exercise) -> Exercise:
     """
     Vérification directe en exécutant le code Python dans un sous-processus isolé.
@@ -313,15 +350,15 @@ def _verify_exercise_direct(exercise: Exercise) -> Exercise:
                 detail.append("")
 
                 try:
-                    expected = float(exercise.expected_answer.replace(',', '.'))
-                    actual = float(result_value)
+                    expected = _parse_numeric(exercise.expected_answer)
+                    actual = _parse_numeric(result_value)
                     if abs(expected - actual) < abs(expected) * 0.001 + 0.01:
                         exercise.verified = True
                         detail.append("✅ VÉRIFIÉ — Tous les calculs sont corrects")
                     else:
                         exercise.verified = False
                         detail.append(f"❌ ERREUR — Résultat ({actual}) ≠ attendu ({expected})")
-                except ValueError:
+                except (ValueError, TypeError):
                     if result_value.strip() == exercise.expected_answer.strip():
                         exercise.verified = True
                         detail.append("✅ VÉRIFIÉ — Comparaison texte correcte")

@@ -182,7 +182,7 @@ Contrairement aux quizz classiques, les exercices mathématiques ou logiques pas
 
 1. **Génération** : Le LLM crée l'énoncé, la solution et un script Python de vérification avec affichage pas à pas (`print()` à chaque étape).
 2. **Exécution** : Le script est exécuté dans un **sous-processus isolé** (sandbox avec timeout).
-3. **Validation** : Le système compare le résultat de l'exécution avec la réponse annoncée par le LLM.
+3. **Validation** : Le système compare le résultat de l'exécution avec la réponse annoncée par le LLM. La comparaison numérique est **robuste** : elle tolère les différences de format (entier vs décimal : `10` vs `10.0`), les virgules décimales françaises (`10,5`), les séparateurs de milliers (`1 000`, `1.000,5`) et les suffixes d'unités (`3.14 m`, `42.5%`).
    - Si les résultats concordent, l'exercice est marqué comme **Vérifié ✅**.
    - Si la vérification échoue : le résultat du code Python est renvoyé au LLM pour **correction automatique** de la solution et des étapes, puis une **re-vérification** est effectuée.
    - En cas d'erreur ou de JSON invalide, le système relance automatiquement la génération (jusqu'à 3 tentatives).
