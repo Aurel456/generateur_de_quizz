@@ -2,7 +2,11 @@ import json
 import os
 from threading import Lock
 
-STATS_FILE = "/app/shared_data/global_stats.json"
+from dotenv import load_dotenv
+load_dotenv(".env")
+
+
+STATS_FILE = os.getenv("GLOBAL_STATS")
 _lock = Lock()
 
 def load_stats():

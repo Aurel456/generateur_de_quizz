@@ -180,7 +180,7 @@ with st.sidebar:
     # Sélection du modèle
     st.markdown("## 🤖 Modèle LLM")
     available_models = list_models()
-    model_options = "Gtp-oss-120b" # [m.id for m in available_models] if available_models else ["gtp-oss-120b"]
+    model_options = "Gpt-oss-120b" # [m.id for m in available_models] if available_models else ["gtp-oss-120b"]
     
     selected_model = st.selectbox(
         "Modèle LLM à sélectionner",
