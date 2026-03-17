@@ -4,5 +4,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .env.example
-.gitignore
 .vscode
+.claude
+.gitignore
