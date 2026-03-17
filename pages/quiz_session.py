@@ -177,6 +177,10 @@ if not st.session_state.submitted:
             else:
                 st.error("Erreur lors de la soumission. La session est peut-être fermée.")
 
+    st.caption("💡 Si les résultats ne s'affichent pas après soumission, cliquez sur **Rafraîchir** ci-dessous.")
+    if st.button("🔃 Rafraîchir", key="refresh_pre_submit"):
+        st.rerun()
+
 else:
     # ─── Affichage des résultats ──────────────────────────────────────────────
 
@@ -238,9 +242,14 @@ else:
                 if explanation:
                     st.info(f"💡 {explanation}")
 
-        # Bouton pour refaire
+        # Boutons de refaire et rafraîchir
         st.divider()
-        if st.button("🔄 Refaire le quizz", use_container_width=True):
-            st.session_state.submitted = False
-            st.session_state.result = None
-            st.rerun()
+        col_redo, col_refresh = st.columns(2)
+        with col_redo:
+            if st.button("🔄 Refaire le quizz", use_container_width=True):
+                st.session_state.submitted = False
+                st.session_state.result = None
+                st.rerun()
+        with col_refresh:
+            if st.button("🔃 Rafraîchir la page", use_container_width=True):
+                st.rerun()

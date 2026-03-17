@@ -47,7 +47,9 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Conversation guidée** : L'IA pose des questions pour comprendre le sujet, le niveau et le périmètre souhaités.
 - **Génération automatique de notions** : À partir de la conversation, l'IA identifie les notions fondamentales du sujet.
 - **Validation interactive** : Revoyez, activez/désactivez ou modifiez les notions proposées avant la génération.
-- **Génération de contenu synthétique** : L'IA rédige un texte éducatif structuré couvrant les notions validées, qui sert de base à la génération des questions et exercices.
+- **Extraction automatique des préférences** : Si vous mentionnez un nombre de questions ou un niveau de difficulté dans la conversation (ex: *"10 questions faciles"*), le formulaire de configuration est **pré-rempli** automatiquement.
+- **Génération directe** : Le LLM génère les questions directement à partir du sujet et des notions — **aucun document fictif intermédiaire** n'est créé.
+- **Session partagée** : Après génération, vous pouvez créer une session partagée directement depuis le mode libre.
 - **Même qualité d'export** : Les quizz et exercices générés en mode libre bénéficient des mêmes exports (HTML, CSV) et du même affichage que le mode document.
 
 ### 📚 Notions Fondamentales
@@ -72,6 +74,8 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
   - **Taux de réussite par notion** : Graphique radar montrant quelles notions posent problème aux participants.
   - **Classement des participants** : Tableau avec podium (🥇🥈🥉), score et pourcentage.
 - **Gestion des sessions** : Fermez une session pour empêcher de nouvelles soumissions.
+- **Onglet "Sessions Partagées"** : Mode dédié dans la barre latérale pour consulter **toutes les sessions**, visualiser les questions et accéder aux analytics sans quitter l'interface principale.
+- **Bouton Rafraîchir** : Les participants peuvent rafraîchir la page après soumission pour voir leurs résultats immédiatement (compatible Docker).
 - **Stockage persistant** : Les sessions et résultats sont stockés en base SQLite.
 
 ### 📊 Statistiques & Suivi Global
@@ -189,11 +193,19 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 ### Mode Libre (sans document)
 
 1. Sélectionnez **"💬 Mode libre (IA)"** dans la barre latérale.
-2. **Décrivez le sujet** souhaité dans le chat (ex: *"Je veux un quizz sur Kubernetes"*).
+2. **Décrivez le sujet** souhaité dans le chat (ex: *"Je veux 10 questions faciles sur Kubernetes"*).
 3. L'IA pose quelques **questions de clarification** (niveau, aspects spécifiques, périmètre).
 4. L'IA propose des **notions fondamentales** — validez-les ou modifiez-les.
-5. **Configurez** le nombre de questions/exercices par niveau et lancez la génération.
+5. **Configurez** le nombre de questions/exercices par niveau (pré-rempli depuis la conversation) et lancez la génération.
 6. Les résultats sont affichés et exportables exactement comme en mode document.
+7. (Optionnel) Cliquez sur **"📤 Créer une session partagée"** pour partager le quizz.
+
+### Sessions Partagées
+
+1. Sélectionnez **"📡 Sessions Partagées"** dans la barre latérale.
+2. Choisissez une session dans la liste déroulante.
+3. **Onglet Questions** : Visualisez toutes les questions avec réponses, explications et tags de notions.
+4. **Onglet Analytics** : Consultez les graphiques de réussite et le classement des participants.
 
 ## 🧠 Fonctionnement détaillé
 
@@ -236,9 +248,9 @@ Le mode libre utilise une **machine à états** pour guider la conversation :
 
 1. **Découverte du sujet** : Le LLM explore le thème avec l'utilisateur via un chat libre.
 2. **Génération de notions** : Quand le LLM estime avoir assez d'informations, il extrait automatiquement des notions fondamentales structurées.
-3. **Validation** : L'utilisateur valide/modifie les notions via des checkboxes.
-4. **Contenu synthétique** : Le LLM génère un texte éducatif détaillé couvrant les notions validées, qui sert de "document source" synthétique.
-5. **Génération** : Les fonctions `generate_quiz` et `generate_exercises` existantes sont réutilisées avec ces chunks synthétiques.
+3. **Extraction des préférences** : Le LLM analyse la conversation pour pré-remplir la configuration (nombre de questions, niveau, type QCM/exercices).
+4. **Validation** : L'utilisateur valide/modifie les notions via des checkboxes.
+5. **Génération directe** : Le LLM génère les questions/exercices directement à partir du sujet et des notions validées, sans document intermédiaire.
 
 ### 🔗 Sessions Partagées
 
@@ -258,18 +270,19 @@ graph TD
     User((Utilisateur))
 
     subgraph UI [Interface Streamlit]
-        Mode{Mode Document / Libre}
+        Mode{Mode Document / Libre / Sessions}
         Upload[Upload Fichiers]
         Chat[Chat LLM]
         Params[Configuration]
         Tabs[Onglets: Notions / Quizz / Exercices / Analytics]
+        SessionsTab[Onglet Sessions Partagées]
     end
 
     subgraph Core [Traitement]
         DocProc[document_processor.py]
         ChatMode[chat_mode.py]
         Chunking[Chunking Intelligent]
-        SyntheticChunks[Chunks Synthétiques IA]
+        DirectGen[Génération directe LLM]
     end
 
     subgraph Logic [Modules IA]
@@ -294,17 +307,17 @@ graph TD
     User --> Mode
     Mode -- "Document" --> Upload
     Mode -- "Libre" --> Chat
+    Mode -- "Sessions" --> SessionsTab
 
     Upload --> DocProc
     DocProc --> Chunking
 
     Chat --> ChatMode
-    ChatMode --> SyntheticChunks
+    ChatMode -- "Notions + Sujet" --> DirectGen
+    DirectGen --> QuizGen
+    DirectGen --> ExGen
 
     Chunking --> NotionDet
-    SyntheticChunks --> QuizGen
-    SyntheticChunks --> ExGen
-
     NotionDet -- "Détection itérative" --> NotionDet
     NotionDet --> Tabs
 
@@ -323,6 +336,7 @@ graph TD
     Session --> SQLite
     Participant --> SQLite
     SQLite --> Dashboard
+    SessionsTab --> Dashboard
 
     HTML --> User
     Dashboard --> User
@@ -332,8 +346,8 @@ graph TD
 
 ## 🏗️ Architecture du projet
 
-- `app.py` : Interface utilisateur principale (Streamlit), sélecteur de mode (document/libre).
-- `chat_mode.py` : Machine à états pour le mode libre (conversation LLM, génération de notions et chunks synthétiques).
+- `app.py` : Interface utilisateur principale (Streamlit), sélecteur de mode (document/libre/sessions partagées).
+- `chat_mode.py` : Machine à états pour le mode libre (conversation LLM, génération de notions, génération directe de questions/exercices).
 - `ui_components.py` : Composants UI réutilisables (stat cards, badges difficulté, sources).
 - `stats_manager.py` : Gestionnaire de sauvegarde persistante (JSON) pour le suivi des statistiques globales.
 - `document_processor.py` : Extraction de texte multi-format et découpage intelligent (support multi-documents).

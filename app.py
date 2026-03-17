@@ -14,8 +14,14 @@ from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_cs
 from notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
 from ui_components import render_stat_card, render_source_info, render_difficulty_badge
 from stats_manager import load_stats, increment_stats
-from chat_mode import ChatSession, ChatState, init_session, process_user_message, generate_synthetic_chunks
-from session_store import create_session as create_quiz_session, deactivate_session
+from chat_mode import (
+    ChatSession, ChatState, init_session, process_user_message,
+    extract_generation_config, generate_quiz_direct, generate_exercises_direct,
+)
+from session_store import (
+    create_session as create_quiz_session, deactivate_session,
+    list_sessions, get_session as get_quiz_session,
+)
 from analytics import render_analytics_dashboard, render_session_selector
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
@@ -174,10 +180,10 @@ with st.sidebar:
     st.markdown("## 🎯 Mode")
     app_mode = st.radio(
         "Choisir le mode",
-        ["📄 Depuis un document", "💬 Mode libre (IA)"],
-        horizontal=True,
+        ["📄 Depuis un document", "💬 Mode libre (IA)", "📡 Sessions Partagées"],
+        horizontal=False,
         label_visibility="collapsed",
-        help="Mode document : uploadez des fichiers. Mode libre : conversez avec l'IA pour générer un quizz sur n'importe quel sujet."
+        help="Mode document : uploadez des fichiers. Mode libre : conversez avec l'IA. Sessions : consultez les quizz partagés."
     )
 
     st.divider()
@@ -224,99 +230,101 @@ with st.sidebar:
 
         st.divider()
 
-    # Sélection du modèle
-    st.markdown("## 🤖 Modèle LLM")
-    available_models = list_models()
-    model_options = "Gpt-oss-120b" # [m.id for m in available_models] if available_models else ["gtp-oss-120b"]
-    
-    selected_model = st.selectbox(
-        "Modèle LLM à sélectionner",
-        options=model_options,
-        # index=5,
-        help="Choisissez le modèle IA à utiliser pour la génération."
-    )
-    
+    # Sélection du modèle (masqué en mode Sessions)
+    selected_model = None
+    if app_mode != "📡 Sessions Partagées":
+        st.markdown("## 🤖 Modèle LLM")
+        available_models = list_models()
+        model_options = "Gpt-oss-120b" # [m.id for m in available_models] if available_models else ["gtp-oss-120b"]
 
-    # ─── Sauvegarde / Chargement de session ─────────────────────────────────
-    st.divider()
-    st.markdown("## 💾 Session")
-
-    # Sauvegarder
-    session_data = {}
-    has_data = False
-    if st.session_state.quiz is not None:
-        quiz = st.session_state.quiz
-        session_data["quiz"] = {
-            "title": quiz.title,
-            "difficulty": quiz.difficulty,
-            "questions": [
-                {
-                    "question": q.question, "choices": q.choices,
-                    "correct_answers": q.correct_answers, "explanation": q.explanation,
-                    "source_pages": q.source_pages, "difficulty_level": q.difficulty_level,
-                    "source_document": q.source_document, "citation": q.citation,
-                    "related_notions": q.related_notions,
-                } for q in quiz.questions
-            ],
-        }
-        has_data = True
-    if st.session_state.exercises is not None:
-        session_data["exercises"] = [
-            {
-                "statement": ex.statement, "expected_answer": ex.expected_answer,
-                "steps": ex.steps, "num_steps": ex.num_steps, "correction": ex.correction,
-                "verification_code": ex.verification_code, "verified": ex.verified,
-                "verification_output": ex.verification_output,
-                "source_pages": ex.source_pages, "source_document": ex.source_document,
-                "citation": ex.citation, "difficulty_level": ex.difficulty_level,
-                "related_notions": ex.related_notions,
-            } for ex in st.session_state.exercises
-        ]
-        has_data = True
-    if st.session_state.notions is not None:
-        session_data["notions"] = [
-            {
-                "title": n.title, "description": n.description,
-                "source_document": n.source_document, "source_pages": n.source_pages,
-                "enabled": n.enabled, "category": n.category,
-            } for n in st.session_state.notions
-        ]
-        has_data = True
-
-    if has_data:
-        st.download_button(
-            label="💾 Sauvegarder la session",
-            data=json.dumps(session_data, ensure_ascii=False, indent=2),
-            file_name="session_quizz.json",
-            mime="application/json",
-            use_container_width=True,
+        selected_model = st.selectbox(
+            "Modèle LLM à sélectionner",
+            options=model_options,
+            # index=5,
+            help="Choisissez le modèle IA à utiliser pour la génération."
         )
 
-    # Charger
-    uploaded_session = st.file_uploader(
-        "📂 Charger une session", type=["json"], key="session_loader",
-        help="Restaurez une session précédemment sauvegardée."
-    )
-    if uploaded_session is not None:
-        try:
-            data = json.loads(uploaded_session.read().decode("utf-8"))
-            if "quiz" in data:
-                from quiz_generator import QuizQuestion
-                questions = [QuizQuestion(**q) for q in data["quiz"]["questions"]]
-                st.session_state.quiz = Quiz(
-                    title=data["quiz"].get("title", "Quizz restauré"),
-                    difficulty=data["quiz"].get("difficulty", "moyen"),
-                    questions=questions,
-                )
-            if "exercises" in data:
-                from exercise_generator import Exercise
-                st.session_state.exercises = [Exercise(**ex) for ex in data["exercises"]]
-            if "notions" in data:
-                st.session_state.notions = [Notion(**n) for n in data["notions"]]
-            st.success("✅ Session restaurée !")
-            st.rerun()
-        except Exception as e:
-            st.error(f"❌ Erreur : {e}")
+    # ─── Sauvegarde / Chargement de session ─────────────────────────────────
+    if app_mode != "📡 Sessions Partagées":
+        st.divider()
+        st.markdown("## 💾 Session")
+
+        # Sauvegarder
+        session_data = {}
+        has_data = False
+        if st.session_state.quiz is not None:
+            quiz = st.session_state.quiz
+            session_data["quiz"] = {
+                "title": quiz.title,
+                "difficulty": quiz.difficulty,
+                "questions": [
+                    {
+                        "question": q.question, "choices": q.choices,
+                        "correct_answers": q.correct_answers, "explanation": q.explanation,
+                        "source_pages": q.source_pages, "difficulty_level": q.difficulty_level,
+                        "source_document": q.source_document, "citation": q.citation,
+                        "related_notions": q.related_notions,
+                    } for q in quiz.questions
+                ],
+            }
+            has_data = True
+        if st.session_state.exercises is not None:
+            session_data["exercises"] = [
+                {
+                    "statement": ex.statement, "expected_answer": ex.expected_answer,
+                    "steps": ex.steps, "num_steps": ex.num_steps, "correction": ex.correction,
+                    "verification_code": ex.verification_code, "verified": ex.verified,
+                    "verification_output": ex.verification_output,
+                    "source_pages": ex.source_pages, "source_document": ex.source_document,
+                    "citation": ex.citation, "difficulty_level": ex.difficulty_level,
+                    "related_notions": ex.related_notions,
+                } for ex in st.session_state.exercises
+            ]
+            has_data = True
+        if st.session_state.notions is not None:
+            session_data["notions"] = [
+                {
+                    "title": n.title, "description": n.description,
+                    "source_document": n.source_document, "source_pages": n.source_pages,
+                    "enabled": n.enabled, "category": n.category,
+                } for n in st.session_state.notions
+            ]
+            has_data = True
+
+        if has_data:
+            st.download_button(
+                label="💾 Sauvegarder la session",
+                data=json.dumps(session_data, ensure_ascii=False, indent=2),
+                file_name="session_quizz.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+
+        # Charger
+        uploaded_session = st.file_uploader(
+            "📂 Charger une session", type=["json"], key="session_loader",
+            help="Restaurez une session précédemment sauvegardée."
+        )
+        if uploaded_session is not None:
+            try:
+                data = json.loads(uploaded_session.read().decode("utf-8"))
+                if "quiz" in data:
+                    from quiz_generator import QuizQuestion
+                    questions = [QuizQuestion(**q) for q in data["quiz"]["questions"]]
+                    st.session_state.quiz = Quiz(
+                        title=data["quiz"].get("title", "Quizz restauré"),
+                        difficulty=data["quiz"].get("difficulty", "moyen"),
+                        questions=questions,
+                    )
+                if "exercises" in data:
+                    from exercise_generator import Exercise
+                    st.session_state.exercises = [Exercise(**ex) for ex in data["exercises"]]
+                if "notions" in data:
+                    st.session_state.notions = [Notion(**n) for n in data["notions"]]
+                st.success("✅ Session restaurée !")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erreur : {e}")
 
     st.divider()
     st.markdown("## 🌍 Statistiques Globales")
@@ -1034,22 +1042,33 @@ elif app_mode == "💬 Mode libre (IA)":
         st.divider()
         st.markdown("#### ⚙️ Configuration de la génération")
 
-        gen_type = st.radio("Type de génération", ["🎯 Quizz QCM", "🧮 Exercices", "🎯+🧮 Les deux"], horizontal=True)
+        # Pré-remplir depuis les préférences extraites de la conversation
+        cfg = chat_session.suggested_config or {}
+        default_gen = cfg.get("gen_type", "quiz")
+        gen_type_options = ["🎯 Quizz QCM", "🧮 Exercices", "🎯+🧮 Les deux"]
+        gen_type_index = 0
+        if default_gen == "exercices":
+            gen_type_index = 1
+        elif default_gen == "les_deux":
+            gen_type_index = 2
+        gen_type = st.radio("Type de génération", gen_type_options, index=gen_type_index, horizontal=True, key="chat_gen_type")
 
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown("**Questions par niveau**")
             c1, c2, c3 = st.columns(3)
             with c1:
-                chat_num_facile = st.number_input("🟢 Facile", min_value=0, max_value=50, value=0, key="chat_facile")
+                chat_num_facile = st.number_input("🟢 Facile", min_value=0, max_value=50, value=cfg.get("facile", 0), key="chat_facile")
             with c2:
-                chat_num_moyen = st.number_input("🟡 Moyen", min_value=0, max_value=50, value=5, key="chat_moyen")
+                chat_num_moyen = st.number_input("🟡 Moyen", min_value=0, max_value=50, value=cfg.get("moyen", 5), key="chat_moyen")
             with c3:
-                chat_num_difficile = st.number_input("🔴 Difficile", min_value=0, max_value=50, value=0, key="chat_difficile")
+                chat_num_difficile = st.number_input("🔴 Difficile", min_value=0, max_value=50, value=cfg.get("difficile", 0), key="chat_difficile")
         with col_b:
+            chat_num_choices = 4
+            chat_num_correct = 1
             if "Quizz" in gen_type:
-                chat_num_choices = st.slider("Nombre de choix", min_value=4, max_value=7, value=4, key="chat_choices")
-                chat_num_correct = st.slider("Bonnes réponses", min_value=1, max_value=chat_num_choices - 1, value=1, key="chat_correct")
+                chat_num_choices = st.slider("Nombre de choix", min_value=4, max_value=7, value=cfg.get("num_choices", 4), key="chat_choices")
+                chat_num_correct = st.slider("Bonnes réponses", min_value=1, max_value=chat_num_choices - 1, value=min(cfg.get("num_correct", 1), chat_num_choices - 1), key="chat_correct")
 
         chat_difficulty_counts = {
             "facile": chat_num_facile,
@@ -1059,65 +1078,55 @@ elif app_mode == "💬 Mode libre (IA)":
         chat_total = sum(chat_difficulty_counts.values())
 
         if st.button("🚀 Générer", type="primary", use_container_width=True, disabled=(chat_total == 0)):
-            progress_bar = st.progress(0, text="🧠 Génération du contenu de référence...")
+            progress_bar = st.progress(0, text="🧠 Génération directe des questions...")
 
             try:
-                # Étape 1 : Générer les chunks synthétiques
-                chunks = generate_synthetic_chunks(st.session_state.chat_session, model=selected_model)
-                st.session_state.chunks = chunks
-                progress_bar.progress(0.2, text="📝 Génération des questions en cours...")
-
-                active_notions = st.session_state.chat_session.notions
                 _gen_start = time.time()
 
-                # Étape 2 : Générer le quizz
+                # Générer le quizz directement (sans document synthétique)
                 if "Quizz" in gen_type:
                     def chat_quiz_progress(current, total):
                         if total > 0:
-                            pct = 0.2 + 0.6 * (current / total)
+                            pct = 0.5 * (current / total)
                             elapsed = time.time() - _gen_start
                             if current / total > 0.01:
                                 eta = int(elapsed / (current / total) - elapsed)
                                 eta_str = f" — ~{eta}s restantes"
                             else:
                                 eta_str = ""
-                            progress_bar.progress(pct, text=f"Quiz: chunk {min(current,total)}/{total}{eta_str}")
+                            progress_bar.progress(max(0.01, pct), text=f"Quiz: niveau {min(current+1,total)}/{total}{eta_str}")
 
-                    quiz = generate_quiz(
-                        chunks=chunks,
+                    quiz = generate_quiz_direct(
+                        session=st.session_state.chat_session,
                         difficulty_counts=chat_difficulty_counts,
-                        num_choices=chat_num_choices if "Quizz" in gen_type else 4,
-                        num_correct=chat_num_correct if "Quizz" in gen_type else 1,
-                        difficulty_prompts=st.session_state.difficulty_prompts,
+                        num_choices=chat_num_choices,
+                        num_correct=chat_num_correct,
                         model=selected_model,
                         progress_callback=chat_quiz_progress,
-                        notions=active_notions,
                     )
                     st.session_state.quiz = quiz
                     st.session_state.chat_session.quiz = quiz
                     increment_stats(questions=len(quiz.questions))
 
-                # Étape 3 : Générer les exercices
+                # Générer les exercices directement
                 if "Exercices" in gen_type or "deux" in gen_type:
                     def chat_ex_progress(current, total):
                         if total > 0:
-                            base = 0.6 if "Quizz" in gen_type else 0.2
-                            pct = base + 0.3 * (current / total)
+                            base = 0.5 if "Quizz" in gen_type else 0.0
+                            pct = base + 0.5 * (current / total)
                             elapsed = time.time() - _gen_start
                             if current / total > 0.01:
                                 eta = int(elapsed / (current / total) - elapsed)
                                 eta_str = f" — ~{eta}s restantes"
                             else:
                                 eta_str = ""
-                            progress_bar.progress(pct, text=f"Exercice {min(current,total)}/{total}{eta_str}")
+                            progress_bar.progress(max(0.01, pct), text=f"Exercice: niveau {min(current+1,total)}/{total}{eta_str}")
 
-                    exercises = generate_exercises(
-                        chunks=chunks,
+                    exercises = generate_exercises_direct(
+                        session=st.session_state.chat_session,
                         difficulty_counts=chat_difficulty_counts,
                         model=selected_model,
                         progress_callback=chat_ex_progress,
-                        notions=active_notions,
-                        custom_exercise_prompts=st.session_state.exercise_prompts,
                     )
                     st.session_state.exercises = exercises
                     st.session_state.chat_session.exercises = exercises
@@ -1133,7 +1142,7 @@ elif app_mode == "💬 Mode libre (IA)":
                 progress_bar.empty()
                 st.error(f"❌ Erreur lors de la génération : {str(e)}")
 
-        # Afficher les résultats si disponibles (réutiliser le même code d'affichage)
+        # Afficher les résultats si disponibles
         if st.session_state.quiz is not None and chat_session.state == ChatState.COMPLETE:
             quiz = st.session_state.quiz
             st.markdown(f"### 📋 Résultat : {len(quiz.questions)} questions générées")
@@ -1169,6 +1178,42 @@ elif app_mode == "💬 Mode libre (IA)":
                     st.download_button("📊 Télécharger CSV", data=csv_content, file_name="quizz_libre.csv", mime="text/csv", use_container_width=True)
             except Exception as e:
                 st.error(f"Erreur export : {e}")
+
+            # Section partage (mode libre)
+            st.divider()
+            st.markdown("### 🔗 Partager ce quizz")
+            share_title_libre = st.text_input(
+                "Titre de la session partagée",
+                value=quiz.title,
+                key="share_quiz_title_libre",
+            )
+            if st.button("📤 Créer une session partagée", type="secondary", use_container_width=True, key="share_libre"):
+                try:
+                    quiz_data = {
+                        "title": quiz.title,
+                        "difficulty": quiz.difficulty,
+                        "questions": [
+                            {
+                                "question": q.question, "choices": q.choices,
+                                "correct_answers": q.correct_answers, "explanation": q.explanation,
+                                "source_pages": q.source_pages, "difficulty_level": q.difficulty_level,
+                                "source_document": q.source_document, "citation": q.citation,
+                                "related_notions": q.related_notions,
+                            } for q in quiz.questions
+                        ],
+                    }
+                    notions_data = []
+                    if st.session_state.notions:
+                        notions_data = [
+                            {"title": n.title, "description": n.description, "enabled": n.enabled}
+                            for n in st.session_state.notions
+                        ]
+                    session_obj = create_quiz_session(quiz_data, notions_data, share_title_libre)
+                    st.success(f"Session créée ! Code : **{session_obj.session_code}**")
+                    st.code(f"Code de session : {session_obj.session_code}", language=None)
+                    st.caption("Les participants peuvent rejoindre via la page 'Quiz Session' avec ce code.")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
 
         if st.session_state.exercises is not None and chat_session.state == ChatState.COMPLETE:
             exercises = st.session_state.exercises
@@ -1233,6 +1278,90 @@ elif app_mode == "💬 Mode libre (IA)":
             st.session_state.exercises = None
             st.session_state.notions = None
             st.rerun()
+
+elif app_mode == "📡 Sessions Partagées":
+    # ═══ MODE SESSIONS PARTAGÉES ══════════════════════════════════════════════
+    st.markdown("### 📡 Sessions Partagées")
+    st.caption("Consultez les sessions de quizz partagées, les questions et les analytics.")
+
+    all_sessions = list_sessions()
+    if not all_sessions:
+        st.info("Aucune session partagée n'a été créée. Générez un quizz puis partagez-le.")
+    else:
+        # Sélecteur de session
+        session_labels = {
+            f"{'🟢' if s.is_active else '🔴'} {s.title} ({s.session_code}) — {s.created_at[:10]}": s.session_code
+            for s in all_sessions
+        }
+        selected_label = st.selectbox("Sélectionnez une session", list(session_labels.keys()))
+        selected_code = session_labels.get(selected_label, "")
+
+        if selected_code:
+            sess = get_quiz_session(selected_code)
+            if sess:
+                # Infos session
+                col_info1, col_info2, col_info3 = st.columns(3)
+                with col_info1:
+                    st.metric("Code", sess.session_code)
+                with col_info2:
+                    st.metric("Statut", "Active" if sess.is_active else "Fermée")
+                with col_info3:
+                    st.metric("Créée le", sess.created_at[:10])
+
+                # Actions
+                col_act1, col_act2 = st.columns(2)
+                with col_act1:
+                    if sess.is_active:
+                        if st.button("🔒 Fermer cette session", use_container_width=True):
+                            deactivate_session(selected_code)
+                            st.success("Session fermée.")
+                            st.rerun()
+                with col_act2:
+                    if st.button("🔃 Rafraîchir", use_container_width=True, key="refresh_sessions"):
+                        st.rerun()
+
+                st.divider()
+
+                # Onglets Questions / Analytics
+                tab_questions, tab_analytics_shared = st.tabs(["📋 Questions", "📊 Analytics"])
+
+                with tab_questions:
+                    quiz_data = json.loads(sess.quiz_json)
+                    questions = quiz_data.get("questions", [])
+                    st.markdown(f"**{len(questions)} question(s)** dans cette session")
+
+                    for i, q in enumerate(questions):
+                        diff_label = q.get("difficulty_level", "moyen")
+                        diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
+                        related_notions = q.get("related_notions", [])
+
+                        with st.expander(f"{diff_emoji} **Q{i+1}.** {q.get('question', '')[:100]}", expanded=(i < 3)):
+                            render_difficulty_badge(diff_label)
+
+                            if related_notions:
+                                tags_html = " ".join(
+                                    f'<span style="background:rgba(108,99,255,0.15);color:#6c63ff;'
+                                    f'padding:0.2rem 0.6rem;border-radius:12px;font-size:0.8rem;'
+                                    f'margin-right:0.3rem;display:inline-block;margin-bottom:0.3rem;">{n}</span>'
+                                    for n in related_notions
+                                )
+                                st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
+
+                            st.markdown(q.get("question", ""))
+
+                            choices = q.get("choices", {})
+                            correct_answers = q.get("correct_answers", [])
+                            for label, text in choices.items():
+                                is_correct = label in correct_answers
+                                icon = "✅" if is_correct else "⬜"
+                                st.markdown(f"**{icon} {label}.** {text}")
+
+                            explanation = q.get("explanation", "")
+                            if explanation:
+                                st.info(f"💡 {explanation}")
+
+                with tab_analytics_shared:
+                    render_analytics_dashboard(selected_code)
 
 else:
     # Message quand aucun document n'est uploadé (mode document)
