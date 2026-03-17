@@ -22,6 +22,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Tags de notions** : Chaque question affiche les **notions fondamentales** qu'elle couvre sous forme de badges cliquables, permettant d'identifier immédiatement les concepts testés.
 - **Export HTML interactif** : Téléchargez un fichier HTML autonome avec design sombre, score en temps réel et explications détaillées.
 - **Badges de difficulté** : Chaque question affiche son niveau de difficulté avec un badge coloré (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
+- **Vérification IA des réponses** : Un bouton dédié permet au LLM de **relire le document source** et de tenter de répondre à chaque question comme un étudiant. Si le LLM échoue (mauvaise réponse ou mauvais nombre de réponses), la question est **reformulée automatiquement** (jusqu'à 3 tentatives). Si la question reste incorrecte après 3 reformulations, elle est **supprimée**. Les tentatives sont affichées discrètement dans un expander et loguées.
 - **Citations précises** : Les explications incluent une citation exacte du texte source.
 - **Attribution des sources** : Document source et numéro de page précis pour chaque question.
 
@@ -180,6 +181,7 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
     - (Optionnel) Modifiez les instructions spécifiques envoyées à l'IA dans l'expandeur **"Personnaliser les Prompts"**.
     - Cliquez sur **"Générer le Quizz"**.
     - Visualisez les questions avec leurs badges de difficulté, tags de notions, citations et sources. Téléchargez en HTML ou CSV.
+    - (Optionnel) Cliquez sur **"🔍 Vérifier les réponses par l'IA"** pour que le LLM relise le document et vérifie chaque question. Les questions incorrectes sont reformulées ou supprimées automatiquement.
     - Cliquez sur **"📤 Créer une session partagée"** pour partager le quizz avec des participants.
 5. **Onglet Exercices** :
     - Saisissez le nombre d'exercices pour chaque niveau (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
@@ -242,6 +244,16 @@ Contrairement aux quizz classiques, les exercices mathématiques ou logiques pas
    - En cas d'erreur ou de JSON invalide, le système relance automatiquement la génération (jusqu'à 3 tentatives).
 4. **Détails de vérification** : L'affichage montre les calculs intermédiaires, le résultat obtenu vs attendu, et le statut final (Vérifié ✅ / Erreur ❌).
 
+### 🔍 Vérification IA des réponses QCM
+
+Après la génération d'un quizz en mode document, un bouton permet de lancer une **vérification automatique par le LLM** :
+
+1. **Vérification** : Le LLM relit le document source et tente de répondre à chaque question **comme un étudiant**, sans voir les bonnes réponses. Il sélectionne ses réponses et justifie son raisonnement.
+2. **Comparaison** : Les réponses du LLM sont comparées aux bonnes réponses attendues.
+3. **Reformulation** (si échec) : Si le LLM ne trouve pas la bonne réponse, la question et les choix sont **reformulés automatiquement** pour éliminer les ambiguïtés, puis re-vérifiés. Ce cycle se répète **jusqu'à 3 fois**.
+4. **Suppression** (si toujours incorrect) : Si après 3 reformulations le LLM échoue toujours, la question est **supprimée** du quizz.
+5. **Rapport** : Un résumé affiche le nombre de questions vérifiées, reformulées et supprimées. Les détails de chaque tentative (réponses LLM, raisonnement, résultat) sont consultables dans un expander discret et loguées via `logging`.
+
 ### 💬 Mode Libre — Génération par conversation
 
 Le mode libre utilise une **machine à états** pour guider la conversation :
@@ -288,6 +300,7 @@ graph TD
     subgraph Logic [Modules IA]
         NotionDet[notion_detector.py]
         QuizGen[quiz_generator.py]
+        QuizVerif[quiz_verifier.py]
         ExGen[exercise_generator.py]
         Agent[Vérification Python + Auto-correction LLM]
     end
@@ -327,7 +340,9 @@ graph TD
     Chunking --> QuizGen
     Chunking --> ExGen
 
-    QuizGen -- "Génération via LLM" --> HTML
+    QuizGen -- "Génération via LLM" --> QuizVerif
+    QuizVerif -- "Reformulation / Suppression" --> QuizGen
+    QuizVerif -- "Vérifié" --> HTML
     ExGen -- "Génération + Code" --> Agent
     Agent -- "Vérification" --> ExGen
     ExGen --> CSV
@@ -354,6 +369,7 @@ graph TD
 - `notion_detector.py` : Détection, édition et fusion des notions fondamentales similaires via LLM.
 - `llm_service.py` : Client API OpenAI, gestion des tokens, retry réseau, retry JSON, et support conversation multi-tours (`call_llm_chat`).
 - `quiz_generator.py` : Logique de création des QCM avec citations, difficulté, sources précises et **tags de notions**.
+- `quiz_verifier.py` : Vérification IA des réponses QCM — le LLM relit le document et tente de répondre comme un étudiant, avec **reformulation automatique** (jusqu'à 3 fois) et **suppression** des questions incorrectes.
 - `exercise_generator.py` : Création d'exercices par niveau de difficulté, **vérification pas à pas**, **auto-correction** via LLM et **tags de notions**.
 - `quiz_exporter.py` : Export HTML interactif (Jinja2) et CSV enrichis (avec notions).
 - `session_store.py` : Backend SQLite pour les sessions de quizz partagées (création, soumission, scoring, analytics).
