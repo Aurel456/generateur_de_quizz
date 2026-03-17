@@ -44,7 +44,8 @@ EXERCISE_JSON_FORMAT = """FORMAT DE RÉPONSE (JSON strict) :
             "correction": "Correction détaillée avec explications pédagogiques...",
             "verification_code": "# Code Python COMPLET\\n# Étape 1 : Données\\ndonnee_1 = 100\\ndonnee_2 = 0.425\\n# Étape 2 : Calcul\\nresult = donnee_1 * donnee_2\\nprint(f'Résultat: {{result}}')",
             "citation": "Citation exacte du passage du texte qui inspire l'exercice...",
-            "source_page": 1
+            "source_page": 1,
+            "related_notions": ["Titre notion 1", "Titre notion 2"]
         }}
     ]
 }}"""
@@ -72,6 +73,7 @@ RÈGLES :
 8. Inclus une CITATION exacte du passage du texte qui inspire l'exercice
 9. Le code doit afficher chaque étape intermédiaire avec print() pour permettre la vérification pas à pas
    Exemple : print(f'Étape 1 — donnee_1 = {donnee_1}') ; print(f'Étape 2 — calcul = {calcul}')
+10. Pour chaque exercice, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes. Utilise les titres tels qu'ils apparaissent dans la liste des notions.
 {{notions_block}}"""
 
 # Prompts éditables par difficulté (sans le bloc JSON fixe)
@@ -128,6 +130,7 @@ class Exercise:
     source_document: str = ""
     citation: str = ""
     difficulty_level: str = "moyen"  # facile / moyen / difficile
+    related_notions: List[str] = field(default_factory=list)  # Titres des notions couvertes
 
 
 def _get_langchain_llm(model: Optional[str] = None):
@@ -483,6 +486,7 @@ def generate_exercises_from_chunk(
                         source_document=chunk.source_document,
                         citation=ex_data.get("citation", ""),
                         difficulty_level=difficulty,
+                        related_notions=ex_data.get("related_notions", []),
                     )
 
                     # 1. Vérification directe (exécution du code)

@@ -14,6 +14,9 @@ from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_cs
 from notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
 from ui_components import render_stat_card, render_source_info, render_difficulty_badge
 from stats_manager import load_stats, increment_stats
+from chat_mode import ChatSession, ChatState, init_session, process_user_message, generate_synthetic_chunks
+from session_store import create_session as create_quiz_session, deactivate_session
+from analytics import render_analytics_dashboard, render_session_selector
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
 
@@ -162,47 +165,64 @@ if "notions" not in st.session_state:
     st.session_state.notions = None
 if "exercise_prompts" not in st.session_state:
     st.session_state.exercise_prompts = {k: v for k, v in DEFAULT_EXERCISE_PROMPTS.items()}
+if "chat_session" not in st.session_state:
+    st.session_state.chat_session = None
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## 📄 Documents")
-    uploaded_files = st.file_uploader(
-        "Choisir un ou plusieurs fichiers",
-        type=["pdf", "docx", "odt", "odp", "pptx", "txt"],
-        accept_multiple_files=True,
-        help="Uploadez les documents à partir desquels générer les questions."
+    st.markdown("## 🎯 Mode")
+    app_mode = st.radio(
+        "Choisir le mode",
+        ["📄 Depuis un document", "💬 Mode libre (IA)"],
+        horizontal=True,
+        label_visibility="collapsed",
+        help="Mode document : uploadez des fichiers. Mode libre : conversez avec l'IA pour générer un quizz sur n'importe quel sujet."
     )
 
     st.divider()
 
-    st.markdown("## ⚙️ Paramètres de lecture")
-    read_mode = st.selectbox(
-        "Mode de lecture",
-        options=["page", "token"],
-        format_func=lambda x: {
-            "page": "📄 Par page / slide / section",
-            "token": "🏷️ Par blocs de tokens"
-        }[x],
-        index=1,
-        help=(
-            "**Par page/slide** : Chaque page (PDF) ou slide (PPTX) devient un chunk indépendant.\n\n"
-            "**Par blocs de tokens** : Découpe le texte en segments de taille fixe. Idéal pour une vision globale."
-        )
-    )
-
-    max_chunk_tokens = 10000  # Valeur par défaut
-    if read_mode == "token":
-        max_chunk_tokens = st.slider(
-            "Taille max des chunks (tokens)",
-            min_value=5000,
-            max_value=25000,
-            value=10000,
-            step=1000,
-            help="Nombre de tokens par segment (uniquement pour le mode 'Par blocs de tokens')."
+    uploaded_files = []
+    if app_mode == "📄 Depuis un document":
+        st.markdown("## 📄 Documents")
+        uploaded_files = st.file_uploader(
+            "Choisir un ou plusieurs fichiers",
+            type=["pdf", "docx", "odt", "odp", "pptx", "txt"],
+            accept_multiple_files=True,
+            help="Uploadez les documents à partir desquels générer les questions."
         )
 
-    st.divider()
+        st.divider()
+
+    read_mode = "token"
+    max_chunk_tokens = 10000
+    if app_mode == "📄 Depuis un document":
+        st.markdown("## ⚙️ Paramètres de lecture")
+        read_mode = st.selectbox(
+            "Mode de lecture",
+            options=["page", "token"],
+            format_func=lambda x: {
+                "page": "📄 Par page / slide / section",
+                "token": "🏷️ Par blocs de tokens"
+            }[x],
+            index=1,
+            help=(
+                "**Par page/slide** : Chaque page (PDF) ou slide (PPTX) devient un chunk indépendant.\n\n"
+                "**Par blocs de tokens** : Découpe le texte en segments de taille fixe. Idéal pour une vision globale."
+            )
+        )
+
+        if read_mode == "token":
+            max_chunk_tokens = st.slider(
+                "Taille max des chunks (tokens)",
+                min_value=5000,
+                max_value=25000,
+                value=10000,
+                step=1000,
+                help="Nombre de tokens par segment (uniquement pour le mode 'Par blocs de tokens')."
+            )
+
+        st.divider()
 
     # Sélection du modèle
     st.markdown("## 🤖 Modèle LLM")
@@ -235,6 +255,7 @@ with st.sidebar:
                     "correct_answers": q.correct_answers, "explanation": q.explanation,
                     "source_pages": q.source_pages, "difficulty_level": q.difficulty_level,
                     "source_document": q.source_document, "citation": q.citation,
+                    "related_notions": q.related_notions,
                 } for q in quiz.questions
             ],
         }
@@ -248,6 +269,7 @@ with st.sidebar:
                 "verification_output": ex.verification_output,
                 "source_pages": ex.source_pages, "source_document": ex.source_document,
                 "citation": ex.citation, "difficulty_level": ex.difficulty_level,
+                "related_notions": ex.related_notions,
             } for ex in st.session_state.exercises
         ]
         has_data = True
@@ -387,7 +409,7 @@ if uploaded_files:
 
     # ─── Onglets Quizz / Exercices ──────────────────────────────────────────────
 
-    tab_notions, tab_quiz, tab_exercises, tab_preview = st.tabs(["📚 Notions Fondamentales", "🎯 Quizz QCM", "🧮 Exercices", "👁️ Aperçu texte"])
+    tab_notions, tab_quiz, tab_exercises, tab_analytics, tab_preview = st.tabs(["📚 Notions Fondamentales", "🎯 Quizz QCM", "🧮 Exercices", "📊 Analytics", "👁️ Aperçu texte"])
 
     # ═══ ONGLET NOTIONS FONDAMENTALES ════════════════════════════════════════════
 
@@ -610,6 +632,16 @@ if uploaded_files:
                     # Badge difficulté en haut
                     render_difficulty_badge(diff_label)
 
+                    # Tags notions
+                    if q.related_notions:
+                        tags_html = " ".join(
+                            f'<span style="background:rgba(108,99,255,0.15);color:#6c63ff;'
+                            f'padding:0.2rem 0.6rem;border-radius:12px;font-size:0.8rem;'
+                            f'margin-right:0.3rem;display:inline-block;margin-bottom:0.3rem;">{n}</span>'
+                            for n in q.related_notions
+                        )
+                        st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
+
                     for label, text in q.choices.items():
                         is_correct = label in q.correct_answers
                         icon = "✅" if is_correct else "⬜"
@@ -654,6 +686,43 @@ if uploaded_files:
                 st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur. Le fichier CSV est idéal pour Excel.")
             except Exception as e:
                 st.error(f"Erreur lors de l'export : {e}")
+
+            # Section partage
+            st.divider()
+            st.markdown("### 🔗 Partager ce quizz")
+            share_title = st.text_input(
+                "Titre de la session partagée",
+                value=quiz.title,
+                key="share_quiz_title",
+            )
+            if st.button("📤 Créer une session partagée", type="secondary", use_container_width=True):
+                try:
+                    # Sérialiser le quiz pour le stockage
+                    quiz_data = {
+                        "title": quiz.title,
+                        "difficulty": quiz.difficulty,
+                        "questions": [
+                            {
+                                "question": q.question, "choices": q.choices,
+                                "correct_answers": q.correct_answers, "explanation": q.explanation,
+                                "source_pages": q.source_pages, "difficulty_level": q.difficulty_level,
+                                "source_document": q.source_document, "citation": q.citation,
+                                "related_notions": q.related_notions,
+                            } for q in quiz.questions
+                        ],
+                    }
+                    notions_data = []
+                    if st.session_state.notions:
+                        notions_data = [
+                            {"title": n.title, "description": n.description, "enabled": n.enabled}
+                            for n in st.session_state.notions
+                        ]
+                    session_obj = create_quiz_session(quiz_data, notions_data, share_title)
+                    st.success(f"Session créée ! Code : **{session_obj.session_code}**")
+                    st.code(f"Code de session : {session_obj.session_code}", language=None)
+                    st.caption("Les participants peuvent accéder au quizz via l'onglet 'Quiz Session' dans la barre latérale ou en ajoutant `?code=" + session_obj.session_code + "` à l'URL de la page quiz_session.")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
 
     # ═══ ONGLET EXERCICES ════════════════════════════════════════════════════════
 
@@ -786,6 +855,16 @@ if uploaded_files:
                     # Badge difficulté
                     render_difficulty_badge(diff_label)
 
+                    # Tags notions
+                    if ex.related_notions:
+                        tags_html = " ".join(
+                            f'<span style="background:rgba(108,99,255,0.15);color:#6c63ff;'
+                            f'padding:0.2rem 0.6rem;border-radius:12px;font-size:0.8rem;'
+                            f'margin-right:0.3rem;display:inline-block;margin-bottom:0.3rem;">{n}</span>'
+                            for n in ex.related_notions
+                        )
+                        st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
+
                     # Énoncé
                     st.markdown("#### 📝 Énoncé")
                     st.markdown(ex.statement)
@@ -847,6 +926,23 @@ if uploaded_files:
             except Exception as e:
                 st.error(f"Erreur lors de l'export : {e}")
 
+    # ═══ ONGLET ANALYTICS ══════════════════════════════════════════════════════
+
+    with tab_analytics:
+        st.markdown("### 📊 Analytics des sessions partagées")
+        st.caption("Suivez les résultats des participants sur les quizz partagés.")
+
+        selected_code = render_session_selector()
+        if selected_code:
+            col_actions, _ = st.columns([1, 3])
+            with col_actions:
+                if st.button("🔒 Fermer cette session"):
+                    deactivate_session(selected_code)
+                    st.success("Session fermée.")
+                    st.rerun()
+
+            render_analytics_dashboard(selected_code)
+
     # ═══ ONGLET APERÇU TEXTE ════════════════════════════════════════════════════
 
     with tab_preview:
@@ -882,14 +978,270 @@ if uploaded_files:
         if total_pages_preview > 1:
             st.caption(f"Affichage des chunks {start_idx + 1} à {end_idx} sur {len(chunks)}")
 
+elif app_mode == "💬 Mode libre (IA)":
+    # ═══ MODE LIBRE (CHAT LLM) ════════════════════════════════════════════════
+    st.markdown("### 💬 Mode libre — Générez un quizz par conversation")
+    st.caption("Décrivez le sujet souhaité et l'IA vous guidera pour créer un quizz ou des exercices.")
+
+    # Initialiser la session de chat si nécessaire
+    if st.session_state.chat_session is None:
+        welcome_msg, session = init_session()
+        st.session_state.chat_session = session
+
+    chat_session = st.session_state.chat_session
+
+    # Afficher l'historique des messages
+    for msg in chat_session.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Phase NOTION_VALIDATION : afficher les notions avec contrôles
+    if chat_session.state == ChatState.NOTION_VALIDATION and chat_session.notions:
+        st.divider()
+        st.markdown("#### 📚 Notions détectées — Cochez celles à conserver")
+
+        for idx, notion in enumerate(chat_session.notions):
+            col_check, col_text = st.columns([0.5, 9.5])
+            with col_check:
+                new_enabled = st.checkbox(
+                    "act", value=notion.enabled,
+                    key=f"chat_notion_{idx}", label_visibility="collapsed"
+                )
+                if new_enabled != notion.enabled:
+                    st.session_state.chat_session.notions[idx].enabled = new_enabled
+            with col_text:
+                style = "" if notion.enabled else "opacity: 0.5;"
+                st.markdown(
+                    f"<div style='{style}'><strong>{notion.title}</strong><br/>"
+                    f"<span style='color: #a0a0b8; font-size: 0.85em;'>{notion.description}</span></div>",
+                    unsafe_allow_html=True
+                )
+
+        if st.button("✅ Valider les notions et configurer le quizz", type="primary", use_container_width=True):
+            st.session_state.chat_session.state = ChatState.GENERATION_CONFIG
+            st.session_state.chat_session.notions = [n for n in chat_session.notions if n.enabled]
+            # Stocker les notions dans le session state global aussi
+            st.session_state.notions = st.session_state.chat_session.notions
+            confirm_msg = (
+                f"✅ **{len(st.session_state.chat_session.notions)} notion(s) validée(s).** "
+                "Configurez maintenant le quizz ou les exercices ci-dessous."
+            )
+            st.session_state.chat_session.messages.append({"role": "assistant", "content": confirm_msg})
+            st.rerun()
+
+    # Phase GENERATION_CONFIG : configuration + génération
+    if chat_session.state in (ChatState.GENERATION_CONFIG, ChatState.COMPLETE):
+        st.divider()
+        st.markdown("#### ⚙️ Configuration de la génération")
+
+        gen_type = st.radio("Type de génération", ["🎯 Quizz QCM", "🧮 Exercices", "🎯+🧮 Les deux"], horizontal=True)
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("**Questions par niveau**")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                chat_num_facile = st.number_input("🟢 Facile", min_value=0, max_value=50, value=0, key="chat_facile")
+            with c2:
+                chat_num_moyen = st.number_input("🟡 Moyen", min_value=0, max_value=50, value=5, key="chat_moyen")
+            with c3:
+                chat_num_difficile = st.number_input("🔴 Difficile", min_value=0, max_value=50, value=0, key="chat_difficile")
+        with col_b:
+            if "Quizz" in gen_type:
+                chat_num_choices = st.slider("Nombre de choix", min_value=4, max_value=7, value=4, key="chat_choices")
+                chat_num_correct = st.slider("Bonnes réponses", min_value=1, max_value=chat_num_choices - 1, value=1, key="chat_correct")
+
+        chat_difficulty_counts = {
+            "facile": chat_num_facile,
+            "moyen": chat_num_moyen,
+            "difficile": chat_num_difficile,
+        }
+        chat_total = sum(chat_difficulty_counts.values())
+
+        if st.button("🚀 Générer", type="primary", use_container_width=True, disabled=(chat_total == 0)):
+            progress_bar = st.progress(0, text="🧠 Génération du contenu de référence...")
+
+            try:
+                # Étape 1 : Générer les chunks synthétiques
+                chunks = generate_synthetic_chunks(st.session_state.chat_session, model=selected_model)
+                st.session_state.chunks = chunks
+                progress_bar.progress(0.2, text="📝 Génération des questions en cours...")
+
+                active_notions = st.session_state.chat_session.notions
+                _gen_start = time.time()
+
+                # Étape 2 : Générer le quizz
+                if "Quizz" in gen_type:
+                    def chat_quiz_progress(current, total):
+                        if total > 0:
+                            pct = 0.2 + 0.6 * (current / total)
+                            elapsed = time.time() - _gen_start
+                            if current / total > 0.01:
+                                eta = int(elapsed / (current / total) - elapsed)
+                                eta_str = f" — ~{eta}s restantes"
+                            else:
+                                eta_str = ""
+                            progress_bar.progress(pct, text=f"Quiz: chunk {min(current,total)}/{total}{eta_str}")
+
+                    quiz = generate_quiz(
+                        chunks=chunks,
+                        difficulty_counts=chat_difficulty_counts,
+                        num_choices=chat_num_choices if "Quizz" in gen_type else 4,
+                        num_correct=chat_num_correct if "Quizz" in gen_type else 1,
+                        difficulty_prompts=st.session_state.difficulty_prompts,
+                        model=selected_model,
+                        progress_callback=chat_quiz_progress,
+                        notions=active_notions,
+                    )
+                    st.session_state.quiz = quiz
+                    st.session_state.chat_session.quiz = quiz
+                    increment_stats(questions=len(quiz.questions))
+
+                # Étape 3 : Générer les exercices
+                if "Exercices" in gen_type or "deux" in gen_type:
+                    def chat_ex_progress(current, total):
+                        if total > 0:
+                            base = 0.6 if "Quizz" in gen_type else 0.2
+                            pct = base + 0.3 * (current / total)
+                            elapsed = time.time() - _gen_start
+                            if current / total > 0.01:
+                                eta = int(elapsed / (current / total) - elapsed)
+                                eta_str = f" — ~{eta}s restantes"
+                            else:
+                                eta_str = ""
+                            progress_bar.progress(pct, text=f"Exercice {min(current,total)}/{total}{eta_str}")
+
+                    exercises = generate_exercises(
+                        chunks=chunks,
+                        difficulty_counts=chat_difficulty_counts,
+                        model=selected_model,
+                        progress_callback=chat_ex_progress,
+                        notions=active_notions,
+                        custom_exercise_prompts=st.session_state.exercise_prompts,
+                    )
+                    st.session_state.exercises = exercises
+                    st.session_state.chat_session.exercises = exercises
+                    increment_stats(questions=len(exercises))
+
+                st.session_state.chat_session.state = ChatState.COMPLETE
+                progress_bar.progress(1.0, text="✅ Génération terminée !")
+                time.sleep(0.5)
+                progress_bar.empty()
+                st.rerun()
+
+            except Exception as e:
+                progress_bar.empty()
+                st.error(f"❌ Erreur lors de la génération : {str(e)}")
+
+        # Afficher les résultats si disponibles (réutiliser le même code d'affichage)
+        if st.session_state.quiz is not None and chat_session.state == ChatState.COMPLETE:
+            quiz = st.session_state.quiz
+            st.markdown(f"### 📋 Résultat : {len(quiz.questions)} questions générées")
+
+            for i, q in enumerate(quiz.questions):
+                diff_label = q.difficulty_level or "moyen"
+                diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
+                with st.expander(f"{diff_emoji} **Q{i+1}.** {q.question}", expanded=(i < 3)):
+                    render_difficulty_badge(diff_label)
+                    if q.related_notions:
+                        tags_html = " ".join(
+                            f'<span style="background:rgba(108,99,255,0.15);color:#6c63ff;'
+                            f'padding:0.2rem 0.6rem;border-radius:12px;font-size:0.8rem;'
+                            f'margin-right:0.3rem;display:inline-block;margin-bottom:0.3rem;">{n}</span>'
+                            for n in q.related_notions
+                        )
+                        st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
+                    for label, text in q.choices.items():
+                        is_correct = label in q.correct_answers
+                        icon = "✅" if is_correct else "⬜"
+                        st.markdown(f"**{icon} {label}.** {text}")
+                    if q.explanation:
+                        st.info(f"💡 **Explication :** {q.explanation}")
+
+            st.divider()
+            col_d1, col_d2 = st.columns(2)
+            try:
+                with col_d1:
+                    html_content = export_quiz_html(quiz)
+                    st.download_button("📥 Télécharger HTML", data=html_content, file_name="quizz_libre.html", mime="text/html", type="primary", use_container_width=True)
+                with col_d2:
+                    csv_content = export_quiz_csv(quiz)
+                    st.download_button("📊 Télécharger CSV", data=csv_content, file_name="quizz_libre.csv", mime="text/csv", use_container_width=True)
+            except Exception as e:
+                st.error(f"Erreur export : {e}")
+
+        if st.session_state.exercises is not None and chat_session.state == ChatState.COMPLETE:
+            exercises = st.session_state.exercises
+            st.markdown(f"### 📋 {len(exercises)} exercice(s) généré(s)")
+
+            for i, ex in enumerate(exercises):
+                diff_label = ex.difficulty_level or "moyen"
+                diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
+                verified_label = "✅ Vérifié" if ex.verified else "⚠️ Non vérifié"
+                with st.expander(f"{diff_emoji} **Exercice {i+1}** — {verified_label}", expanded=True):
+                    if ex.verified:
+                        st.success("✅ Réponse vérifiée par exécution de code")
+                    else:
+                        st.warning("⚠️ La vérification automatique n'a pas pu confirmer la réponse")
+                    render_difficulty_badge(diff_label)
+                    if ex.related_notions:
+                        tags_html = " ".join(
+                            f'<span style="background:rgba(108,99,255,0.15);color:#6c63ff;'
+                            f'padding:0.2rem 0.6rem;border-radius:12px;font-size:0.8rem;'
+                            f'margin-right:0.3rem;display:inline-block;margin-bottom:0.3rem;">{n}</span>'
+                            for n in ex.related_notions
+                        )
+                        st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
+                    st.markdown("#### 📝 Énoncé")
+                    st.markdown(ex.statement)
+                    st.markdown(f"#### 🎯 Réponse attendue : `{ex.expected_answer}`")
+                    if ex.steps:
+                        st.markdown(f"#### 📊 Résolution ({ex.num_steps} étapes)")
+                        for j, step in enumerate(ex.steps):
+                            st.markdown(f"**{j+1}.** {step}")
+
+            st.divider()
+            col_e1, col_e2 = st.columns(2)
+            try:
+                with col_e1:
+                    html_ex = export_exercises_html(exercises)
+                    st.download_button("📥 Exercices HTML", data=html_ex, file_name="exercices_libre.html", mime="text/html", type="primary", use_container_width=True)
+                with col_e2:
+                    csv_ex = export_exercises_csv(exercises)
+                    st.download_button("📊 Exercices CSV", data=csv_ex, file_name="exercices_libre.csv", mime="text/csv", use_container_width=True)
+            except Exception as e:
+                st.error(f"Erreur export : {e}")
+
+    # Input de chat (toujours visible sauf pendant la génération et après complétion config)
+    if chat_session.state in (ChatState.TOPIC_DISCOVERY, ChatState.NOTION_VALIDATION):
+        if user_input := st.chat_input("Votre message..."):
+            with st.chat_message("user"):
+                st.markdown(user_input)
+            with st.spinner("🧠 Réflexion..."):
+                response, updated_session = process_user_message(
+                    st.session_state.chat_session, user_input, model=selected_model
+                )
+                st.session_state.chat_session = updated_session
+            st.rerun()
+
+    # Bouton pour réinitialiser le chat
+    if chat_session.state != ChatState.TOPIC_DISCOVERY or len(chat_session.messages) > 1:
+        st.divider()
+        if st.button("🔄 Nouvelle conversation", use_container_width=True):
+            st.session_state.chat_session = None
+            st.session_state.quiz = None
+            st.session_state.exercises = None
+            st.session_state.notions = None
+            st.rerun()
+
 else:
-    # Message quand aucun document n'est uploadé
+    # Message quand aucun document n'est uploadé (mode document)
     st.markdown("""
     <div style="text-align: center; padding: 4rem 2rem;">
         <div style="font-size: 4rem; margin-bottom: 1rem;">📄</div>
         <h2 style="color: #6c63ff; margin-bottom: 0.5rem;">Aucun document uploadé</h2>
         <p style="color: #a0a0b8; max-width: 500px; margin: 0 auto;">
-            Uploadez un ou plusieurs fichiers (PDF, DOCX, ODT...) dans la barre latérale pour commencer à 
+            Uploadez un ou plusieurs fichiers (PDF, DOCX, ODT...) dans la barre latérale pour commencer à
             générer des quizz et exercices automatiquement avec l'IA.
         </p>
     </div>

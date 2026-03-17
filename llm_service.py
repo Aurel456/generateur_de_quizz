@@ -6,7 +6,7 @@ import json
 import os
 import re
 import time
-from typing import Optional
+from typing import Dict, List, Optional
 
 import tiktoken
 from dotenv import load_dotenv
@@ -209,6 +209,146 @@ def call_llm_json(
 
     raise ValueError(
         f"Impossible de parser la réponse JSON après {retries} tentatives.\n"
+        f"Dernière réponse brute :\n{(last_raw or '')[:500]}"
+    )
+
+
+def call_llm_chat(
+    messages: List[Dict[str, str]],
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.7,
+    retries: int = 3,
+) -> str:
+    """
+    Appel au LLM avec historique de conversation complet.
+
+    Args:
+        messages: Liste de dicts [{"role": "system"|"user"|"assistant", "content": "..."}].
+        model: Nom du modèle à utiliser. Si None, utilise MODEL_NAME.
+        max_tokens: Nombre max de tokens pour la réponse.
+        temperature: Température de génération.
+        retries: Nombre de tentatives en cas d'erreur.
+
+    Returns:
+        Réponse du LLM (content du dernier message assistant).
+    """
+    client = get_client()
+    target_model = model or MODEL_NAME
+
+    # Estimer les tokens utilisés par l'historique
+    total_prompt_tokens = sum(count_tokens(m["content"]) for m in messages) + SYSTEM_PROMPT_MARGIN
+    available = MODEL_CONTEXT_WINDOW - total_prompt_tokens
+    if available < 100:
+        raise ValueError(
+            f"L'historique de conversation est trop long pour le contexte du modèle "
+            f"({MODEL_CONTEXT_WINDOW} tokens). "
+            f"Tokens disponibles pour la réponse : {available}"
+        )
+
+    if max_tokens is not None:
+        max_tokens = min(max_tokens, available)
+
+    last_error = None
+    for attempt in range(retries):
+        try:
+            kwargs = {
+                "model": target_model,
+                "messages": messages,
+                "temperature": temperature,
+            }
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+
+            response = client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content
+
+            try:
+                if hasattr(response, 'usage') and response.usage:
+                    from stats_manager import increment_stats
+                    increment_stats(tokens=response.usage.completion_tokens or 0)
+            except Exception:
+                pass
+
+            return content.strip() if content else ""
+
+        except Exception as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait_time = 2 ** attempt
+                time.sleep(wait_time)
+
+    raise RuntimeError(
+        f"Échec de l'appel LLM chat avec le modèle {target_model} après {retries} tentatives. "
+        f"Dernière erreur : {last_error}"
+    )
+
+
+def call_llm_chat_json(
+    messages: List[Dict[str, str]],
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.5,
+    retries: int = 3,
+) -> dict:
+    """
+    Appel au LLM chat avec parsing JSON automatique et retry si le JSON est invalide.
+
+    Returns:
+        Dict parsé depuis la réponse JSON du LLM.
+    """
+    # Ajouter l'instruction JSON au system message s'il existe
+    json_messages = []
+    json_suffix = (
+        "\n\nIMPORTANT: Tu DOIS répondre UNIQUEMENT avec un objet JSON valide. "
+        "Pas de texte avant ou après le JSON. Pas de bloc markdown."
+    )
+    for m in messages:
+        if m["role"] == "system":
+            json_messages.append({"role": "system", "content": m["content"] + json_suffix})
+        else:
+            json_messages.append(m)
+
+    # Si pas de system message, ajouter l'instruction au dernier user message
+    if not any(m["role"] == "system" for m in json_messages):
+        json_messages.append({"role": "system", "content": json_suffix.strip()})
+
+    last_raw = None
+    for attempt in range(retries):
+        try:
+            raw = call_llm_chat(json_messages, model, max_tokens, temperature, retries=2)
+        except Exception as e:
+            print(f"LLM chat call failed (attempt {attempt + 1}/{retries}): {e}")
+            continue
+
+        last_raw = raw
+
+        # Tentative 1 : parsing direct
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+
+        # Tentative 2 : extraire JSON d'un bloc markdown
+        json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Tentative 3 : trouver le premier { ... } ou [ ... ]
+        brace_match = re.search(r'(\{.*\}|\[.*\])', raw, re.DOTALL)
+        if brace_match:
+            try:
+                return json.loads(brace_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        print(f"JSON parse failed (chat attempt {attempt + 1}/{retries}), retrying LLM call...")
+
+    raise ValueError(
+        f"Impossible de parser la réponse JSON (chat) après {retries} tentatives.\n"
         f"Dernière réponse brute :\n{(last_raw or '')[:500]}"
     )
 

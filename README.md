@@ -1,6 +1,6 @@
 # 📝 Générateur de Quizz & Exercices IA (Streamlit + LangGraph)
 
-Application Streamlit permettant de générer automatiquement des **Quizz QCM** et des **Exercices mathématiques/logiques** à partir de **multiples documents** PDF, DOCX, ODT, PPTX et TXT, en utilisant des modèles LLM via l'API OpenAI (ou compatible).
+Application Streamlit permettant de générer automatiquement des **Quizz QCM** et des **Exercices mathématiques/logiques** à partir de **multiples documents** PDF, DOCX, ODT, PPTX et TXT, ou **directement par conversation avec l'IA** (mode libre), en utilisant des modèles LLM via l'API OpenAI (ou compatible).
 
 ## ✨ Fonctionnalités
 
@@ -19,7 +19,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
   - Nombre de choix de réponses (A, B, C, D... jusqu'à G).
   - Nombre de bonnes réponses (choix multiple possible).
 - **Questions autonomes** : Les questions sont conçues pour être répondables **sans le document source**, uniquement avec les connaissances acquises en formation. Aucune référence de type "selon le texte" n'est utilisée.
-- **Mélange des réponses** : Option de shuffle aléatoire des choix (activée par défaut) pour éviter que la bonne réponse soit toujours en A ou B.
+- **Tags de notions** : Chaque question affiche les **notions fondamentales** qu'elle couvre sous forme de badges cliquables, permettant d'identifier immédiatement les concepts testés.
 - **Export HTML interactif** : Téléchargez un fichier HTML autonome avec design sombre, score en temps réel et explications détaillées.
 - **Badges de difficulté** : Chaque question affiche son niveau de difficulté avec un badge coloré (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
 - **Citations précises** : Les explications incluent une citation exacte du texte source.
@@ -32,6 +32,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
   - 🟡 **Moyen** : Raisonnement multi-étapes combinant plusieurs formules ou concepts.
   - 🔴 **Difficile** : Résolution complexe de niveau études supérieures (modélisation, optimisation, démonstration).
 - **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source. Toute référence au document est strictement interdite dans l'énoncé ("selon le texte", "d'après le document", etc.).
+- **Tags de notions** : Chaque exercice indique les notions fondamentales qu'il couvre.
 - **Vérification pas à pas** : Le code Python de vérification affiche chaque étape intermédiaire avec `print()`, permettant un suivi détaillé des calculs.
 - **Auto-correction par l'IA** : Si la vérification échoue, le système renvoie automatiquement le résultat du code Python au LLM pour corriger la solution, puis re-vérifie.
 - **Code de vérification complet** : Le code Python reproduit intégralement le raisonnement pas à pas (pas de simple `result = valeur`).
@@ -40,6 +41,15 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Affichage complet** : Énoncé, Réponse attendue, Étapes de résolution détaillées, Code de vérification Python.
 - **Citations et sources** : Chaque exercice indique la citation du texte source et le document/page d'origine.
 
+### 💬 Mode Libre (Génération par conversation IA)
+
+- **Sans document requis** : Générez des quizz et exercices sur **n'importe quel sujet** sans uploader de fichier.
+- **Conversation guidée** : L'IA pose des questions pour comprendre le sujet, le niveau et le périmètre souhaités.
+- **Génération automatique de notions** : À partir de la conversation, l'IA identifie les notions fondamentales du sujet.
+- **Validation interactive** : Revoyez, activez/désactivez ou modifiez les notions proposées avant la génération.
+- **Génération de contenu synthétique** : L'IA rédige un texte éducatif structuré couvrant les notions validées, qui sert de base à la génération des questions et exercices.
+- **Même qualité d'export** : Les quizz et exercices générés en mode libre bénéficient des mêmes exports (HTML, CSV) et du même affichage que le mode document.
+
 ### 📚 Notions Fondamentales
 
 - **Détection automatique** : L'IA identifie les concepts clés, définitions, théorèmes et principes des documents.
@@ -47,7 +57,22 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Édition interactive** : Activez/désactivez, supprimez ou ajoutez manuellement des notions.
 - **Chat LLM** : Modifiez les notions en langage naturel (ex: *« Ajoute une notion sur les dérivées partielles »*).
 - **Guidage de la génération** : Les notions activées servent de base de critères pour orienter le LLM — elles lui fournissent le contexte des concepts clés sur lesquels appuyer la génération des questions et exercices.
+- **Tagging automatique** : Chaque question et exercice généré est automatiquement associé aux notions qu'il couvre (champ `related_notions`).
 - **Barre de progression avec ETA** : Affichage du temps restant estimé pendant la détection (style tqdm).
+
+### 🔗 Sessions Partagées & Analytics
+
+- **Partage de quizz** : Après la génération d'un quizz, créez une **session partagée** avec un code unique (ex: `K8S42X`).
+- **Page participant** : Les participants accèdent au quizz via une URL Streamlit dédiée (`/quiz_session?code=...`), saisissent leur nom et répondent aux questions.
+- **Scoring côté serveur** : Les réponses correctes ne sont jamais envoyées au client — le calcul du score est effectué côté serveur pour éviter la triche.
+- **Correction détaillée** : Après soumission, chaque participant voit son score, les bonnes réponses et les explications.
+- **Dashboard Analytics** (onglet dédié) :
+  - **Métriques globales** : Nombre de participants, score moyen, score médian.
+  - **Taux de réussite par question** : Graphique en barres coloré (vert/orange/rouge) identifiant les questions difficiles.
+  - **Taux de réussite par notion** : Graphique radar montrant quelles notions posent problème aux participants.
+  - **Classement des participants** : Tableau avec podium (🥇🥈🥉), score et pourcentage.
+- **Gestion des sessions** : Fermez une session pour empêcher de nouvelles soumissions.
+- **Stockage persistant** : Les sessions et résultats sont stockés en base SQLite.
 
 ### 📊 Statistiques & Suivi Global
 
@@ -118,6 +143,9 @@ MODEL_CONTEXT_WINDOW=32000
 
 # Encodeur tiktoken (cl100k_base pour GPT-4, o200k_base pour GPT-4o)
 TIKTOKEN_ENCODING=cl100k_base
+
+# Base de données SQLite pour les sessions partagées (optionnel)
+QUIZ_SESSIONS_DB=shared_data/quiz_sessions.db
 ```
 
 ---
@@ -132,6 +160,8 @@ streamlit run app.py
 
 L'application s'ouvrira dans votre navigateur par défaut (généralement `http://localhost:8501`).
 
+### Mode Document (depuis un fichier)
+
 1. **Upload** : Chargez un ou **plusieurs fichiers** (PDF, DOCX, ODT...) dans la barre latérale.
 2. **Configuration** :
     - Ajustez le mode de lecture et la taille des chunks.
@@ -143,15 +173,27 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
     - Utilisez le chat LLM pour modifier les notions en langage naturel.
 4. **Onglet Quizz** :
     - Saisissez le nombre de questions pour chaque niveau (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
-    - Activez/désactivez le **mélange des réponses** (🔀) pour randomiser la position des bonnes réponses.
     - (Optionnel) Modifiez les instructions spécifiques envoyées à l'IA dans l'expandeur **"Personnaliser les Prompts"**.
     - Cliquez sur **"Générer le Quizz"**.
-    - Visualisez les questions avec leurs badges de difficulté, citations et sources. Téléchargez en HTML ou CSV.
+    - Visualisez les questions avec leurs badges de difficulté, tags de notions, citations et sources. Téléchargez en HTML ou CSV.
+    - Cliquez sur **"📤 Créer une session partagée"** pour partager le quizz avec des participants.
 5. **Onglet Exercices** :
     - Saisissez le nombre d'exercices pour chaque niveau (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
     - (Optionnel) Modifiez les **prompts par niveau** dans l'expandeur **"Personnaliser les Prompts d'Exercice"** (le bloc JSON est fixe et non modifiable).
     - Cliquez sur **"Générer les Exercices"**.
     - L'IA va générer, *vérifier pas à pas* et *auto-corriger* chaque exercice via l'exécution de code Python complet.
+6. **Onglet Analytics** :
+    - Sélectionnez une session partagée pour voir les résultats des participants.
+    - Consultez les graphiques de réussite par question et par notion.
+
+### Mode Libre (sans document)
+
+1. Sélectionnez **"💬 Mode libre (IA)"** dans la barre latérale.
+2. **Décrivez le sujet** souhaité dans le chat (ex: *"Je veux un quizz sur Kubernetes"*).
+3. L'IA pose quelques **questions de clarification** (niveau, aspects spécifiques, périmètre).
+4. L'IA propose des **notions fondamentales** — validez-les ou modifiez-les.
+5. **Configurez** le nombre de questions/exercices par niveau et lancez la génération.
+6. Les résultats sont affichés et exportables exactement comme en mode document.
 
 ## 🧠 Fonctionnement détaillé
 
@@ -188,6 +230,25 @@ Contrairement aux quizz classiques, les exercices mathématiques ou logiques pas
    - En cas d'erreur ou de JSON invalide, le système relance automatiquement la génération (jusqu'à 3 tentatives).
 4. **Détails de vérification** : L'affichage montre les calculs intermédiaires, le résultat obtenu vs attendu, et le statut final (Vérifié ✅ / Erreur ❌).
 
+### 💬 Mode Libre — Génération par conversation
+
+Le mode libre utilise une **machine à états** pour guider la conversation :
+
+1. **Découverte du sujet** : Le LLM explore le thème avec l'utilisateur via un chat libre.
+2. **Génération de notions** : Quand le LLM estime avoir assez d'informations, il extrait automatiquement des notions fondamentales structurées.
+3. **Validation** : L'utilisateur valide/modifie les notions via des checkboxes.
+4. **Contenu synthétique** : Le LLM génère un texte éducatif détaillé couvrant les notions validées, qui sert de "document source" synthétique.
+5. **Génération** : Les fonctions `generate_quiz` et `generate_exercises` existantes sont réutilisées avec ces chunks synthétiques.
+
+### 🔗 Sessions Partagées
+
+Le système de sessions partagées fonctionne entièrement dans Streamlit :
+
+1. Le créateur génère un quizz puis clique sur "Créer une session partagée" → un code unique est généré.
+2. Les participants ouvrent la page `/quiz_session?code=...` dans leur navigateur.
+3. Le scoring est effectué **côté serveur** (les bonnes réponses ne sont jamais envoyées au client).
+4. Les résultats sont stockés en **SQLite** et agrégés pour le dashboard analytics.
+
 ---
 
 ## 🏛️ Diagramme Structurel
@@ -197,15 +258,18 @@ graph TD
     User((Utilisateur))
 
     subgraph UI [Interface Streamlit]
+        Mode{Mode Document / Libre}
         Upload[Upload Fichiers]
+        Chat[Chat LLM]
         Params[Configuration]
-        Tabs[Onglets: Notions / Quizz / Exercices]
+        Tabs[Onglets: Notions / Quizz / Exercices / Analytics]
     end
 
-    subgraph Core [Traitement Documentaire]
+    subgraph Core [Traitement]
         DocProc[document_processor.py]
-        Stats[Calcul Stats]
+        ChatMode[chat_mode.py]
         Chunking[Chunking Intelligent]
+        SyntheticChunks[Chunks Synthétiques IA]
     end
 
     subgraph Logic [Modules IA]
@@ -215,18 +279,32 @@ graph TD
         Agent[Vérification Python + Auto-correction LLM]
     end
 
-    subgraph Output [Exports]
+    subgraph Output [Exports & Partage]
         HTML[Export HTML interactif]
         CSV[Export CSV]
+        Session[Session Partagée]
     end
 
-    User --> Upload
-    User --> Params
+    subgraph Analytics [Analytics]
+        SQLite[(SQLite DB)]
+        Dashboard[Dashboard Plotly]
+        Participant[Page Participant]
+    end
+
+    User --> Mode
+    Mode -- "Document" --> Upload
+    Mode -- "Libre" --> Chat
+
     Upload --> DocProc
-    DocProc --> Stats
     DocProc --> Chunking
 
+    Chat --> ChatMode
+    ChatMode --> SyntheticChunks
+
     Chunking --> NotionDet
+    SyntheticChunks --> QuizGen
+    SyntheticChunks --> ExGen
+
     NotionDet -- "Détection itérative" --> NotionDet
     NotionDet --> Tabs
 
@@ -240,23 +318,34 @@ graph TD
     ExGen -- "Génération + Code" --> Agent
     Agent -- "Vérification" --> ExGen
     ExGen --> CSV
+
+    QuizGen --> Session
+    Session --> SQLite
+    Participant --> SQLite
+    SQLite --> Dashboard
+
     HTML --> User
+    Dashboard --> User
 ```
 
 ---
 
 ## 🏗️ Architecture du projet
 
-- `app.py` : Interface utilisateur principale (Streamlit).
+- `app.py` : Interface utilisateur principale (Streamlit), sélecteur de mode (document/libre).
+- `chat_mode.py` : Machine à états pour le mode libre (conversation LLM, génération de notions et chunks synthétiques).
 - `ui_components.py` : Composants UI réutilisables (stat cards, badges difficulté, sources).
 - `stats_manager.py` : Gestionnaire de sauvegarde persistante (JSON) pour le suivi des statistiques globales.
 - `document_processor.py` : Extraction de texte multi-format et découpage intelligent (support multi-documents).
 - `notion_detector.py` : Détection, édition et fusion des notions fondamentales similaires via LLM.
-- `llm_service.py` : Client API OpenAI, gestion des tokens, retry réseau et retry JSON.
-- `quiz_generator.py` : Logique de création des QCM avec citations, difficulté et sources précises.
-- `exercise_generator.py` : Création d'exercices par niveau de difficulté, **vérification pas à pas** et **auto-correction** via LLM (sous-processus sandbox).
-- `quiz_exporter.py` : Export HTML interactif (Jinja2) et CSV enrichis.
-- `templates/quiz_template.html` : Template HTML/CSS/JS pour l'export des quizz (badges difficulté, citations, sources).
+- `llm_service.py` : Client API OpenAI, gestion des tokens, retry réseau, retry JSON, et support conversation multi-tours (`call_llm_chat`).
+- `quiz_generator.py` : Logique de création des QCM avec citations, difficulté, sources précises et **tags de notions**.
+- `exercise_generator.py` : Création d'exercices par niveau de difficulté, **vérification pas à pas**, **auto-correction** via LLM et **tags de notions**.
+- `quiz_exporter.py` : Export HTML interactif (Jinja2) et CSV enrichis (avec notions).
+- `session_store.py` : Backend SQLite pour les sessions de quizz partagées (création, soumission, scoring, analytics).
+- `analytics.py` : Dashboard analytics Plotly (graphiques par question, par notion, classement participants).
+- `pages/quiz_session.py` : Page participant Streamlit pour passer un quizz partagé.
+- `templates/quiz_template.html` : Template HTML/CSS/JS pour l'export des quizz (badges difficulté, tags notions, citations, sources).
 
 ## 📦 Dépendances principales
 
@@ -266,17 +355,19 @@ graph TD
 - `pdfplumber`, `python-docx`, `odfpy`, `python-pptx` : Extraction multi-format.
 - `tiktoken` : Tokenizer OpenAI rapide.
 - `jinja2` : Templating HTML.
+- `plotly` : Graphiques interactifs pour le dashboard analytics.
 
 ---
 
 ## ⚠️ Notes importantes
 
 - **Sécurité** : L'agent de vérification des exercices exécute du code Python généré par le LLM dans un **sous-processus isolé** avec un timeout de 30 secondes. Cela offre une isolation de base (le code ne peut pas affecter le processus principal), mais n'est pas équivalent à un sandbox Docker. Utilisez ce logiciel dans un environnement de confiance pour la production.
+- **Sessions partagées** : Le scoring des quizz partagés est effectué **côté serveur** — les bonnes réponses ne sont jamais envoyées au navigateur des participants. La base SQLite est stockée dans `shared_data/`.
 - **Modèles** : L'interface permet de choisir n'importe quel modèle disponible sur votre API. Testé principalement avec `gtp-oss-120b`.
 - **max_tokens** : Aucune limite de tokens de réponse n'est envoyée à l'API par défaut, permettant des réponses longues sans troncature.
 - **Chunking** : Deux modes sont disponibles : **Page par page** (recommandé pour la précision des sources) et **Par blocs de tokens** (pour une analyse large, jusqu'à 15 000 tokens).
 - **Tiktoken** : L'encodeur tiktoken est configurable via `TIKTOKEN_ENCODING` dans `.env`. Utilisez `cl100k_base` pour GPT-4 ou `o200k_base` pour GPT-4o.
-- **Qualité du contenu généré** : La pertinence des quizz et exercices dépend de la richesse du document fourni, de la qualité des notions détectées, et de la familiarité du modèle avec le domaine. Tout contenu généré doit être relu et validé par un formateur avant utilisation pédagogique.
+- **Qualité du contenu généré** : La pertinence des quizz et exercices dépend de la richesse du document fourni (ou de la conversation en mode libre), de la qualité des notions détectées, et de la familiarité du modèle avec le domaine. Tout contenu généré doit être relu et validé par un formateur avant utilisation pédagogique.
 - **Pas de vision des images** : Le modèle analyse uniquement le texte extrait des documents. Les images, schémas, graphiques et tableaux intégrés ne sont pas encore pris en compte — cette fonctionnalité est en cours de développement.
 
 ## 📄 Licence

@@ -24,6 +24,7 @@ class QuizQuestion:
     difficulty_level: str = ""
     source_document: str = ""
     citation: str = ""
+    related_notions: List[str] = field(default_factory=list)  # Titres des notions couvertes
 
 
 @dataclass
@@ -100,6 +101,7 @@ RÈGLES STRICTES :
 9. INTERDIT : N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document",
    "dans le passage", "le texte mentionne", "l'auteur affirme", etc.
    Chaque question doit être auto-suffisante et fournir tout le contexte nécessaire dans son énoncé.
+{"10. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions." if notions_text else ""}
 {notions_block}
 
 FORMAT DE RÉPONSE (JSON strict) :
@@ -112,7 +114,8 @@ FORMAT DE RÉPONSE (JSON strict) :
             "explanation": "Explication détaillée de la bonne réponse...",
             "citation": "Citation exacte du passage du texte qui justifie la réponse...",
             "source_page": 1,
-            "difficulty_level": "{difficulty}"
+            "difficulty_level": "{difficulty}",
+            "related_notions": ["Titre notion 1", "Titre notion 2"]
         }}
     ]
 }}"""
@@ -176,6 +179,7 @@ def generate_quiz_from_chunk(
                 difficulty_level=q_data.get("difficulty_level", difficulty),
                 source_document=chunk.source_document,
                 citation=q_data.get("citation", ""),
+                related_notions=q_data.get("related_notions", []),
             )
             # Validation : vérifier que les bonnes réponses sont dans les choix
             if all(ans in question.choices for ans in question.correct_answers):

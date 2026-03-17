@@ -44,6 +44,7 @@ def export_quiz_html(quiz: Quiz) -> str:
             "source_document": q.source_document or "",
             "citation": q.citation or "",
             "source_pages": q.source_pages,
+            "related_notions": getattr(q, 'related_notions', []) or [],
         })
     
     html = template.render(
@@ -75,7 +76,7 @@ def export_quiz_csv(quiz: Quiz) -> str:
     header = ["Question"]
     for i in range(max_choices):
         header.append(f"Choix {chr(65 + i)}")
-    header.extend(["Bonnes Réponses", "Explication", "Difficulté", "Citation", "Document Source", "Pages Source"])
+    header.extend(["Bonnes Réponses", "Explication", "Difficulté", "Citation", "Document Source", "Pages Source", "Notions"])
     writer.writerow(header)
     
     # Données
@@ -95,6 +96,7 @@ def export_quiz_csv(quiz: Quiz) -> str:
         row.append(getattr(q, 'citation', '') or '')
         row.append(getattr(q, 'source_document', '') or '')
         row.append(", ".join(map(str, q.source_pages)))
+        row.append(", ".join(getattr(q, 'related_notions', []) or []))
         writer.writerow(row)
     
     return output.getvalue()
@@ -110,7 +112,7 @@ def export_exercises_csv(exercises: list) -> str:
     writer = csv.writer(output, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
     
     # En-tête
-    header = ["Énoncé", "Réponse Attendue", "Étapes de Résolution", "Correction IA", "Vérifié", "Citation", "Document Source", "Pages Source"]
+    header = ["Énoncé", "Réponse Attendue", "Étapes de Résolution", "Correction IA", "Vérifié", "Citation", "Document Source", "Pages Source", "Notions"]
     writer.writerow(header)
     
     # Données
@@ -123,10 +125,11 @@ def export_exercises_csv(exercises: list) -> str:
             "Oui" if ex.verified else "Non",
             getattr(ex, 'citation', '') or '',
             getattr(ex, 'source_document', '') or '',
-            ", ".join(map(str, ex.source_pages))
+            ", ".join(map(str, ex.source_pages)),
+            ", ".join(getattr(ex, 'related_notions', []) or []),
         ]
         writer.writerow(row)
-    
+
     return output.getvalue()
 
 
@@ -177,13 +180,22 @@ def export_exercises_html(exercises: list) -> str:
         citation_html = ""
         if ex.citation:
             citation_html = f'<blockquote>📝 {ex.citation}</blockquote>'
-        
+
+        notions_html = ""
+        ex_notions = getattr(ex, 'related_notions', []) or []
+        if ex_notions:
+            notion_tags = " ".join(
+                f'<span class="notion-tag">{n}</span>' for n in ex_notions
+            )
+            notions_html = f'<div class="notion-tags">📚 {notion_tags}</div>'
+
         exercises_html_parts.append(f"""
         <div class="exercise-card">
             <div class="exercise-header">
                 <h3>Exercice {i}</h3>
                 {verified_badge}
             </div>
+            {notions_html}
             <h4>📝 Énoncé</h4>
             <p>{ex.statement}</p>
             <h4>🎯 Réponse attendue : <code>{ex.expected_answer}</code></h4>
@@ -227,6 +239,12 @@ def export_exercises_html(exercises: list) -> str:
     .source {{ color: #a0a0b8; font-size: 0.85rem; margin-top: 0.5rem; }}
     details {{ margin: 0.5rem 0; }}
     summary {{ cursor: pointer; color: #6c63ff; font-weight: 500; }}
+    .notion-tags {{ margin: 0.5rem 0; }}
+    .notion-tag {{
+        display: inline-block; background: rgba(108,99,255,0.15); color: #6c63ff;
+        padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.8rem;
+        margin-right: 0.3rem; margin-bottom: 0.3rem;
+    }}
 </style>
 </head>
 <body>

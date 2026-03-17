@@ -349,6 +349,21 @@
             border: 1px solid rgba(255, 23, 68, 0.3);
         }
 
+        /* Notion tags */
+        .notion-tags {
+            margin-bottom: 0.8rem;
+        }
+        .notion-tag {
+            display: inline-block;
+            background: rgba(108, 99, 255, 0.15);
+            color: var(--accent);
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            margin-right: 0.3rem;
+            margin-bottom: 0.3rem;
+        }
+
         /* Citation */
         .question-citation {
             margin-top: 0.8rem;
@@ -460,6 +475,11 @@
                 <div class="question-number">{{ q.index }}</div>
                 <span class="difficulty-badge {{ q.difficulty_level }}">{{ q.difficulty_level | capitalize }}</span>
             </div>
+            {% if q.related_notions %}
+            <div class="notion-tags">
+                📚 {% for notion in q.related_notions %}<span class="notion-tag">{{ notion }}</span>{% endfor %}
+            </div>
+            {% endif %}
             <div class="question-text">{{ q.question }}</div>
             {% if q.is_multiple %}
             <div class="question-hint">⚡ Sélectionnez {{ q.num_correct }} réponse(s)</div>
