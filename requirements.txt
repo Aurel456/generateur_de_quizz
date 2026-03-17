@@ -17,5 +17,5 @@ pdfplumber          # → import pdfplumber
 python-docx         # → from docx import Document as DocxDocument
 python-pptx        # → from pptx import Presentation
 odfpy              # → from odf.opendocument import load as load_odf
-                               #   from odf import text, draw, table
+plotly                              #   from odf import text, draw, table
                                #   from odf.teletype import extractText
