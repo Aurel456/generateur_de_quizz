@@ -54,8 +54,7 @@ DIFFICULTY_PROMPTS = {
         "Génère des questions DIFFICILES qui testent l'analyse et la synthèse. "
         "Les questions doivent nécessiter une réflexion approfondie, "
         "la capacité à faire des inférences, ou à appliquer des concepts à des situations nouvelles. "
-        "Les mauvaises réponses doivent être très plausibles et subtiles. "
-        "Inclure des questions qui combinent plusieurs concepts."
+        "Les mauvaises réponses doivent être plausibles mais incorrectes. "
     ),
 }
 

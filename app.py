@@ -297,7 +297,7 @@ with st.sidebar:
                 data=json.dumps(session_data, ensure_ascii=False, indent=2),
                 file_name="session_quizz.json",
                 mime="application/json",
-                use_container_width=True,
+                width='stretch',
             )
 
         # Charger
@@ -426,7 +426,7 @@ if uploaded_files:
         st.caption("Identifiez les concepts clés des documents. Ces notions guideront la génération des quizz et exercices.")
 
         # Bouton de détection
-        if st.button("🔍 Détecter les notions fondamentales", type="primary", use_container_width=True):
+        if st.button("🔍 Détecter les notions fondamentales", type="primary", width='stretch'):
             progress_bar = st.progress(0, text="🧠 Démarrage...")
             try:
                 _notion_start = time.time()
@@ -463,7 +463,7 @@ if uploaded_files:
             with col_meta:
                 st.markdown(f"**{len(notions)} notion(s) détectée(s)** — {active_count} active(s)")
             with col_group:
-                if st.button("🔗 Regrouper les notions", use_container_width=True,
+                if st.button("🔗 Regrouper les notions", width='stretch',
                              help="Fusionne les notions similaires ou redondantes entre elles"):
                     with st.spinner("🧠 Fusion des notions en cours..."):
                         try:
@@ -577,7 +577,7 @@ if uploaded_files:
             )
 
         # Bouton de génération
-        if st.button("🚀 Générer le Quizz", type="primary", use_container_width=True):
+        if st.button("🚀 Générer le Quizz", type="primary", width='stretch'):
             progress_bar = st.progress(0, text="Démarrage...")
             status_text = st.empty()
             _quiz_start = time.time()
@@ -677,7 +677,7 @@ if uploaded_files:
                         file_name="quizz_interactif.html",
                         mime="text/html",
                         type="primary",
-                        use_container_width=True
+                        width='stretch'
                     )
                 
                 with col_down2:
@@ -688,7 +688,7 @@ if uploaded_files:
                         file_name="quizz.csv",
                         mime="text/csv",
                         type="secondary",
-                        use_container_width=True
+                        width='stretch'
                     )
                 
                 st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur. Le fichier CSV est idéal pour Excel.")
@@ -703,7 +703,7 @@ if uploaded_files:
                 value=quiz.title,
                 key="share_quiz_title",
             )
-            if st.button("📤 Créer une session partagée", type="secondary", use_container_width=True):
+            if st.button("📤 Créer une session partagée", type="secondary", width='stretch'):
                 try:
                     # Sérialiser le quiz pour le stockage
                     quiz_data = {
@@ -798,7 +798,7 @@ if uploaded_files:
             with st.expander("📌 Bloc JSON fixe (non modifiable)", expanded=False):
                 st.code(EXERCISE_JSON_FORMAT, language="json")
 
-        if st.button("🧮 Générer les Exercices", type="primary", use_container_width=True, disabled=(total_ex == 0)):
+        if st.button("🧮 Générer les Exercices", type="primary", width='stretch', disabled=(total_ex == 0)):
             progress_bar = st.progress(0, text="Démarrage...")
             _ex_start = time.time()
 
@@ -918,7 +918,7 @@ if uploaded_files:
                         file_name="exercices.html",
                         mime="text/html",
                         type="primary",
-                        use_container_width=True
+                        width='stretch'
                     )
                 with col_ex2:
                     csv_exercises = export_exercises_csv(exercises)
@@ -928,7 +928,7 @@ if uploaded_files:
                         file_name="exercices.csv",
                         mime="text/csv",
                         type="secondary",
-                        use_container_width=True
+                        width='stretch'
                     )
                 st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur. Le fichier CSV est idéal pour Excel.")
             except Exception as e:
@@ -1025,7 +1025,7 @@ elif app_mode == "💬 Mode libre (IA)":
                     unsafe_allow_html=True
                 )
 
-        if st.button("✅ Valider les notions et configurer le quizz", type="primary", use_container_width=True):
+        if st.button("✅ Valider les notions et configurer le quizz", type="primary", width='stretch'):
             st.session_state.chat_session.state = ChatState.GENERATION_CONFIG
             st.session_state.chat_session.notions = [n for n in chat_session.notions if n.enabled]
             # Stocker les notions dans le session state global aussi
@@ -1077,7 +1077,7 @@ elif app_mode == "💬 Mode libre (IA)":
         }
         chat_total = sum(chat_difficulty_counts.values())
 
-        if st.button("🚀 Générer", type="primary", use_container_width=True, disabled=(chat_total == 0)):
+        if st.button("🚀 Générer", type="primary", width='stretch', disabled=(chat_total == 0)):
             progress_bar = st.progress(0, text="🧠 Génération directe des questions...")
 
             try:
@@ -1172,10 +1172,10 @@ elif app_mode == "💬 Mode libre (IA)":
             try:
                 with col_d1:
                     html_content = export_quiz_html(quiz)
-                    st.download_button("📥 Télécharger HTML", data=html_content, file_name="quizz_libre.html", mime="text/html", type="primary", use_container_width=True)
+                    st.download_button("📥 Télécharger HTML", data=html_content, file_name="quizz_libre.html", mime="text/html", type="primary", width='stretch')
                 with col_d2:
                     csv_content = export_quiz_csv(quiz)
-                    st.download_button("📊 Télécharger CSV", data=csv_content, file_name="quizz_libre.csv", mime="text/csv", use_container_width=True)
+                    st.download_button("📊 Télécharger CSV", data=csv_content, file_name="quizz_libre.csv", mime="text/csv", width='stretch')
             except Exception as e:
                 st.error(f"Erreur export : {e}")
 
@@ -1187,7 +1187,7 @@ elif app_mode == "💬 Mode libre (IA)":
                 value=quiz.title,
                 key="share_quiz_title_libre",
             )
-            if st.button("📤 Créer une session partagée", type="secondary", use_container_width=True, key="share_libre"):
+            if st.button("📤 Créer une session partagée", type="secondary", width='stretch', key="share_libre"):
                 try:
                     quiz_data = {
                         "title": quiz.title,
@@ -1250,10 +1250,10 @@ elif app_mode == "💬 Mode libre (IA)":
             try:
                 with col_e1:
                     html_ex = export_exercises_html(exercises)
-                    st.download_button("📥 Exercices HTML", data=html_ex, file_name="exercices_libre.html", mime="text/html", type="primary", use_container_width=True)
+                    st.download_button("📥 Exercices HTML", data=html_ex, file_name="exercices_libre.html", mime="text/html", type="primary", width='stretch')
                 with col_e2:
                     csv_ex = export_exercises_csv(exercises)
-                    st.download_button("📊 Exercices CSV", data=csv_ex, file_name="exercices_libre.csv", mime="text/csv", use_container_width=True)
+                    st.download_button("📊 Exercices CSV", data=csv_ex, file_name="exercices_libre.csv", mime="text/csv", width='stretch')
             except Exception as e:
                 st.error(f"Erreur export : {e}")
 
@@ -1272,7 +1272,7 @@ elif app_mode == "💬 Mode libre (IA)":
     # Bouton pour réinitialiser le chat
     if chat_session.state != ChatState.TOPIC_DISCOVERY or len(chat_session.messages) > 1:
         st.divider()
-        if st.button("🔄 Nouvelle conversation", use_container_width=True):
+        if st.button("🔄 Nouvelle conversation", width='stretch'):
             st.session_state.chat_session = None
             st.session_state.quiz = None
             st.session_state.exercises = None
@@ -1312,12 +1312,12 @@ elif app_mode == "📡 Sessions Partagées":
                 col_act1, col_act2 = st.columns(2)
                 with col_act1:
                     if sess.is_active:
-                        if st.button("🔒 Fermer cette session", use_container_width=True):
+                        if st.button("🔒 Fermer cette session", width='stretch'):
                             deactivate_session(selected_code)
                             st.success("Session fermée.")
                             st.rerun()
                 with col_act2:
-                    if st.button("🔃 Rafraîchir", use_container_width=True, key="refresh_sessions"):
+                    if st.button("🔃 Rafraîchir", width='stretch', key="refresh_sessions"):
                         st.rerun()
 
                 st.divider()

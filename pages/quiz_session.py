@@ -167,7 +167,7 @@ if not st.session_state.submitted:
     if not all_answered:
         st.warning("Répondez à toutes les questions avant de soumettre.")
 
-    if st.button("📤 Soumettre mes réponses", type="primary", use_container_width=True, disabled=not all_answered):
+    if st.button("📤 Soumettre mes réponses", type="primary", width='stretch', disabled=not all_answered):
         with st.spinner("Envoi des résultats..."):
             result = submit_result(session_code, participant_name, answers)
             if result:
@@ -246,10 +246,10 @@ else:
         st.divider()
         col_redo, col_refresh = st.columns(2)
         with col_redo:
-            if st.button("🔄 Refaire le quizz", use_container_width=True):
+            if st.button("🔄 Refaire le quizz", width='stretch'):
                 st.session_state.submitted = False
                 st.session_state.result = None
                 st.rerun()
         with col_refresh:
-            if st.button("🔃 Rafraîchir la page", use_container_width=True):
+            if st.button("🔃 Rafraîchir la page", width='stretch'):
                 st.rerun()

@@ -119,7 +119,7 @@ def render_per_question_chart(analytics: dict):
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.1)")
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def render_per_notion_chart(analytics: dict):
@@ -168,7 +168,7 @@ def render_per_notion_chart(analytics: dict):
             showlegend=False,
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         # Fallback : bar chart horizontal si moins de 3 notions
         fig = go.Figure(data=[
@@ -191,7 +191,7 @@ def render_per_notion_chart(analytics: dict):
             height=350,
             margin=dict(t=10, b=40, l=10, r=10),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 
 def render_participant_table(analytics: dict):
@@ -224,7 +224,7 @@ def render_participant_table(analytics: dict):
 
     st.dataframe(
         table_data,
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
     )
 
