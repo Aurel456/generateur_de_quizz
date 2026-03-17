@@ -23,6 +23,7 @@ from session_store import (
     list_sessions, get_session as get_quiz_session,
 )
 from analytics import render_analytics_dashboard, render_session_selector
+from quiz_verifier import verify_quiz, QuestionVerificationResult
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
 
@@ -173,6 +174,8 @@ if "exercise_prompts" not in st.session_state:
     st.session_state.exercise_prompts = {k: v for k, v in DEFAULT_EXERCISE_PROMPTS.items()}
 if "chat_session" not in st.session_state:
     st.session_state.chat_session = None
+if "verification_results" not in st.session_state:
+    st.session_state.verification_results = None
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
@@ -613,6 +616,7 @@ if uploaded_files:
                     notions=active_notions,
                 )
                 st.session_state.quiz = quiz
+                st.session_state.verification_results = None
                 increment_stats(questions=len(quiz.questions))
                 progress_bar.progress(1.0, text="✅ Quizz généré !")
                 time.sleep(0.5)
@@ -664,10 +668,98 @@ if uploaded_files:
                     # Source enrichie
                     render_source_info(q.source_document, q.source_pages)
 
+            # ─── Vérification IA des réponses ──────────────────────────────
+            st.divider()
+            st.markdown("### 🔍 Vérification IA des réponses")
+            st.caption(
+                "Le LLM relit le document source et tente de répondre aux questions comme un étudiant. "
+                "Si il échoue, la question est reformulée (jusqu'à 3 fois) ou supprimée."
+            )
+
+            # Afficher les résultats de vérification existants
+            if st.session_state.verification_results is not None:
+                vr_list = st.session_state.verification_results
+                n_verified = sum(1 for r in vr_list if r.status == "verified")
+                n_reformulated = sum(1 for r in vr_list if r.status == "reformulated")
+                n_deleted = sum(1 for r in vr_list if r.status == "deleted")
+
+                col_v1, col_v2, col_v3 = st.columns(3)
+                col_v1.metric("✅ Vérifiées", n_verified)
+                col_v2.metric("🔄 Reformulées", n_reformulated)
+                col_v3.metric("🗑️ Supprimées", n_deleted)
+
+                if n_deleted > 0:
+                    st.warning(
+                        f"{n_deleted} question(s) supprimée(s) car le LLM n'a pas pu trouver "
+                        "la bonne réponse après 3 reformulations."
+                    )
+                if n_reformulated > 0:
+                    st.info(
+                        f"{n_reformulated} question(s) reformulée(s) pour améliorer la clarté."
+                    )
+
+                with st.expander("📋 Détails des vérifications", expanded=False):
+                    for r in vr_list:
+                        icon = {"verified": "✅", "reformulated": "🔄", "deleted": "🗑️"}.get(r.status, "❓")
+                        status_label = {"verified": "Vérifiée", "reformulated": "Reformulée", "deleted": "Supprimée"}.get(r.status, r.status)
+                        st.markdown(f"**{icon} Q{r.question_index + 1}** — {status_label}")
+                        for a in r.attempts:
+                            attempt_icon = "✅" if a.is_correct else "❌"
+                            reformulated_tag = " *(après reformulation)*" if a.was_reformulated else ""
+                            st.markdown(
+                                f"&nbsp;&nbsp;&nbsp;&nbsp;Tentative {a.attempt_num + 1} : "
+                                f"LLM → `{a.llm_answers}` vs attendu `{a.expected_answers}` "
+                                f"{attempt_icon}{reformulated_tag}"
+                            )
+                            if a.reasoning:
+                                st.caption(f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;💬 {a.reasoning[:300]}")
+                        st.markdown("---")
+
+            if st.button(
+                "🔍 Vérifier les réponses par l'IA",
+                type="secondary",
+                use_container_width=True,
+                key="verify_quiz_btn",
+            ):
+                verify_bar = st.progress(0, text="Vérification en cours...")
+                _verify_start = time.time()
+
+                def verify_progress(current, total):
+                    if total > 0:
+                        pct = current / total
+                        elapsed = time.time() - _verify_start
+                        if pct > 0.01:
+                            eta = int(elapsed / pct - elapsed)
+                            eta_str = f" — ~{eta}s restantes"
+                        else:
+                            eta_str = ""
+                        verify_bar.progress(
+                            max(0.01, pct),
+                            text=f"Question {min(current + 1, total)}/{total}{eta_str}",
+                        )
+
+                try:
+                    verified_quiz, vr_results = verify_quiz(
+                        quiz=quiz,
+                        chunks=chunks,
+                        model=selected_model,
+                        max_reformulations=3,
+                        progress_callback=verify_progress,
+                    )
+                    st.session_state.quiz = verified_quiz
+                    st.session_state.verification_results = vr_results
+                    verify_bar.progress(1.0, text="✅ Vérification terminée !")
+                    time.sleep(0.5)
+                    verify_bar.empty()
+                    st.rerun()
+                except Exception as e:
+                    verify_bar.empty()
+                    st.error(f"❌ Erreur lors de la vérification : {str(e)}")
+
             # Boutons de téléchargement
             st.divider()
             col_down1, col_down2 = st.columns(2)
-            
+
             try:
                 with col_down1:
                     html_content = export_quiz_html(quiz)
@@ -679,7 +771,7 @@ if uploaded_files:
                         type="primary",
                         use_container_width=True
                     )
-                
+
                 with col_down2:
                     csv_content = export_quiz_csv(quiz)
                     st.download_button(
