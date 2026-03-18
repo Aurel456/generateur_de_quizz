@@ -181,6 +181,21 @@ if "chat_session" not in st.session_state:
     st.session_state.chat_session = None
 if "verification_results" not in st.session_state:
     st.session_state.verification_results = None
+if "_download_cache" not in st.session_state:
+    st.session_state._download_cache = {}
+
+
+def _invalidate_download_cache():
+    """Vide le cache des exports pour forcer leur recalcul."""
+    st.session_state._download_cache = {}
+
+
+def _get_cached(key: str, fn, *args):
+    """Retourne le résultat mis en cache, ou le calcule et le stocke."""
+    cache = st.session_state._download_cache
+    if key not in cache:
+        cache[key] = fn(*args)
+    return cache[key]
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
@@ -300,9 +315,14 @@ with st.sidebar:
             has_data = True
 
         if has_data:
+            session_json = _get_cached(
+                "session_json",
+                lambda d: json.dumps(d, ensure_ascii=False, indent=2),
+                session_data,
+            )
             st.download_button(
                 label="💾 Sauvegarder la session",
-                data=json.dumps(session_data, ensure_ascii=False, indent=2),
+                data=session_json,
                 file_name="session_quizz.json",
                 mime="application/json",
                 width='stretch',
@@ -329,6 +349,7 @@ with st.sidebar:
                     st.session_state.exercises = [Exercise(**ex) for ex in data["exercises"]]
                 if "notions" in data:
                     st.session_state.notions = [Notion(**n) for n in data["notions"]]
+                _invalidate_download_cache()
                 st.success("✅ Session restaurée !")
                 st.rerun()
             except Exception as e:
@@ -367,6 +388,7 @@ if uploaded_files:
             # Reset les résultats précédents
             st.session_state.quiz = None
             st.session_state.exercises = None
+            _invalidate_download_cache()
 
     stats = st.session_state.pdf_stats
     chunks = st.session_state.chunks
@@ -622,6 +644,7 @@ if uploaded_files:
                 )
                 st.session_state.quiz = quiz
                 st.session_state.verification_results = None
+                _invalidate_download_cache()
                 increment_stats(questions=len(quiz.questions))
                 progress_bar.progress(1.0, text="✅ Quizz généré !")
                 time.sleep(0.5)
@@ -753,6 +776,7 @@ if uploaded_files:
                     )
                     st.session_state.quiz = verified_quiz
                     st.session_state.verification_results = vr_results
+                    _invalidate_download_cache()
                     verify_bar.progress(1.0, text="✅ Vérification terminée !")
                     time.sleep(0.5)
                     verify_bar.empty()
@@ -767,7 +791,7 @@ if uploaded_files:
 
             try:
                 with col_down1:
-                    html_content = export_quiz_html(quiz)
+                    html_content = _get_cached("quiz_html", export_quiz_html, quiz)
                     st.download_button(
                         label="📥 Télécharger le Quizz sous format HTML Interactif",
                         data=html_content,
@@ -778,7 +802,7 @@ if uploaded_files:
                     )
 
                 with col_down2:
-                    csv_content = export_quiz_csv(quiz)
+                    csv_content = _get_cached("quiz_csv", export_quiz_csv, quiz)
                     st.download_button(
                         label="📊 Télécharger le Quizz sous format CSV",
                         data=csv_content,
@@ -927,6 +951,7 @@ if uploaded_files:
                     custom_exercise_prompts=st.session_state.exercise_prompts,
                 )
                 st.session_state.exercises = exercises
+                _invalidate_download_cache()
                 increment_stats(questions=len(exercises))
                 progress_bar.progress(1.0, text="✅ Exercices générés et vérifiés !")
                 time.sleep(0.5)
@@ -1008,7 +1033,7 @@ if uploaded_files:
             col_ex1, col_ex2 = st.columns(2)
             try:
                 with col_ex1:
-                    html_exercises = export_exercises_html(exercises)
+                    html_exercises = _get_cached("ex_html", export_exercises_html, exercises)
                     st.download_button(
                         label="📥 Télécharger les Exercices (HTML)",
                         data=html_exercises,
@@ -1018,7 +1043,7 @@ if uploaded_files:
                         width='stretch'
                     )
                 with col_ex2:
-                    csv_exercises = export_exercises_csv(exercises)
+                    csv_exercises = _get_cached("ex_csv", export_exercises_csv, exercises)
                     st.download_button(
                         label="📊 Télécharger les Exercices (CSV)",
                         data=csv_exercises,
@@ -1186,6 +1211,7 @@ elif app_mode == "💬 Mode libre (IA)":
                     )
                     st.session_state.quiz = quiz
                     st.session_state.chat_session.quiz = quiz
+                    _invalidate_download_cache()
                     increment_stats(questions=len(quiz.questions))
 
                 # Générer les exercices directement
@@ -1210,6 +1236,7 @@ elif app_mode == "💬 Mode libre (IA)":
                     )
                     st.session_state.exercises = exercises
                     st.session_state.chat_session.exercises = exercises
+                    _invalidate_download_cache()
                     increment_stats(questions=len(exercises))
 
                 st.session_state.chat_session.state = ChatState.COMPLETE
@@ -1316,6 +1343,7 @@ elif app_mode == "💬 Mode libre (IA)":
                     st.session_state.quiz = verified_quiz
                     st.session_state.chat_session.quiz = verified_quiz
                     st.session_state.verification_results = vr_results
+                    _invalidate_download_cache()
                     verify_bar.progress(1.0, text="✅ Vérification terminée !")
                     time.sleep(0.5)
                     verify_bar.empty()
@@ -1328,10 +1356,10 @@ elif app_mode == "💬 Mode libre (IA)":
             col_d1, col_d2 = st.columns(2)
             try:
                 with col_d1:
-                    html_content = export_quiz_html(quiz)
+                    html_content = _get_cached("quiz_html", export_quiz_html, quiz)
                     st.download_button("📥 Télécharger HTML", data=html_content, file_name="quizz_libre.html", mime="text/html", type="primary", width='stretch')
                 with col_d2:
-                    csv_content = export_quiz_csv(quiz)
+                    csv_content = _get_cached("quiz_csv", export_quiz_csv, quiz)
                     st.download_button("📊 Télécharger CSV", data=csv_content, file_name="quizz_libre.csv", mime="text/csv", width='stretch')
             except Exception as e:
                 st.error(f"Erreur export : {e}")
@@ -1406,10 +1434,10 @@ elif app_mode == "💬 Mode libre (IA)":
             col_e1, col_e2 = st.columns(2)
             try:
                 with col_e1:
-                    html_ex = export_exercises_html(exercises)
+                    html_ex = _get_cached("ex_html", export_exercises_html, exercises)
                     st.download_button("📥 Exercices HTML", data=html_ex, file_name="exercices_libre.html", mime="text/html", type="primary", width='stretch')
                 with col_e2:
-                    csv_ex = export_exercises_csv(exercises)
+                    csv_ex = _get_cached("ex_csv", export_exercises_csv, exercises)
                     st.download_button("📊 Exercices CSV", data=csv_ex, file_name="exercices_libre.csv", mime="text/csv", width='stretch')
             except Exception as e:
                 st.error(f"Erreur export : {e}")
@@ -1434,6 +1462,7 @@ elif app_mode == "💬 Mode libre (IA)":
             st.session_state.quiz = None
             st.session_state.exercises = None
             st.session_state.notions = None
+            _invalidate_download_cache()
             st.rerun()
 
 elif app_mode == "📡 Sessions Partagées":
