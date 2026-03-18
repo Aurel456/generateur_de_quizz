@@ -136,11 +136,16 @@ with st.expander("ℹ️ Comment fonctionne cet outil ? Lire avant utilisation",
 1. **Uploadez** un ou plusieurs documents (PDF, DOCX, ODT, PPTX, TXT) dans la barre latérale.
 2. **Détectez les notions** fondamentales du cours (onglet *Notions*). Ces notions servent de base de critères pour orienter le LLM : elles lui donnent le contexte des concepts clés sur lesquels appuyer la génération des questions et exercices. Vous pouvez les activer/désactiver, les modifier ou en ajouter manuellement.
 3. **Générez** des quizz QCM (onglet *Quizz*) ou des exercices mathématiques/logiques (onglet *Exercices*) en choisissant le nombre de questions par niveau de difficulté.
-4. **Exportez** les résultats en HTML interactif (quizz avec score en temps réel) ou en CSV.
+4. **(Optionnel) Vérifiez** les réponses du quizz via le bouton **"🔍 Vérifier les réponses par l'IA"** : le LLM relit le document et tente de répondre comme un étudiant. Les questions ambiguës sont reformulées ou supprimées automatiquement.
+5. **Exportez** les résultats en HTML interactif (quizz avec score en temps réel) ou en CSV (séparateur `;`).
 
 **Fonctionnement des exercices**
 
 L'IA génère un énoncé autonome (toutes les données nécessaires sont incluses dans l'énoncé), une solution pas à pas, et un code Python de vérification exécuté automatiquement. Si la vérification échoue, l'IA se corrige elle-même avant de vous afficher l'exercice.
+
+**Vérification IA des QCM**
+
+Après génération d'un quizz, vous pouvez demander au LLM de vérifier ses propres réponses. Il relit le document source (ou utilise ses connaissances en mode libre) et tente de répondre à chaque question sans voir les bonnes réponses. Si il échoue, la question est reformulée automatiquement (jusqu'à 3 tentatives). Si elle reste incorrecte, elle est supprimée. Les détails de chaque tentative sont consultables dans un rapport discret.
 
 ---
 
@@ -420,7 +425,7 @@ if uploaded_files:
 
     # ─── Onglets Quizz / Exercices ──────────────────────────────────────────────
 
-    tab_notions, tab_quiz, tab_exercises, tab_analytics, tab_preview = st.tabs(["📚 Notions Fondamentales", "🎯 Quizz QCM", "🧮 Exercices", "📊 Analytics", "👁️ Aperçu texte"])
+    tab_notions, tab_quiz, tab_exercises, tab_preview = st.tabs(["📚 Notions Fondamentales", "🎯 Quizz QCM", "🧮 Exercices", "👁️ Aperçu texte"])
 
     # ═══ ONGLET NOTIONS FONDAMENTALES ════════════════════════════════════════════
 
@@ -1026,23 +1031,6 @@ if uploaded_files:
             except Exception as e:
                 st.error(f"Erreur lors de l'export : {e}")
 
-    # ═══ ONGLET ANALYTICS ══════════════════════════════════════════════════════
-
-    with tab_analytics:
-        st.markdown("### 📊 Analytics des sessions partagées")
-        st.caption("Suivez les résultats des participants sur les quizz partagés.")
-
-        selected_code = render_session_selector()
-        if selected_code:
-            col_actions, _ = st.columns([1, 3])
-            with col_actions:
-                if st.button("🔒 Fermer cette session"):
-                    deactivate_session(selected_code)
-                    st.success("Session fermée.")
-                    st.rerun()
-
-            render_analytics_dashboard(selected_code)
-
     # ═══ ONGLET APERÇU TEXTE ════════════════════════════════════════════════════
 
     with tab_preview:
@@ -1259,6 +1247,83 @@ elif app_mode == "💬 Mode libre (IA)":
                     if q.explanation:
                         st.info(f"💡 **Explication :** {q.explanation}")
 
+            # ─── Vérification IA (mode libre) ────────────────────────────
+            st.divider()
+            st.markdown("### 🔍 Vérification IA des réponses")
+            st.caption(
+                "Le LLM tente de répondre aux questions comme un étudiant (à partir de ses connaissances). "
+                "Si il échoue, la question est reformulée (jusqu'à 3 fois) ou supprimée."
+            )
+
+            if st.session_state.verification_results is not None:
+                vr_list = st.session_state.verification_results
+                n_v = sum(1 for r in vr_list if r.status == "verified")
+                n_r = sum(1 for r in vr_list if r.status == "reformulated")
+                n_d = sum(1 for r in vr_list if r.status == "deleted")
+                cv1, cv2, cv3 = st.columns(3)
+                cv1.metric("✅ Vérifiées", n_v)
+                cv2.metric("🔄 Reformulées", n_r)
+                cv3.metric("🗑️ Supprimées", n_d)
+                if n_d > 0:
+                    st.warning(f"{n_d} question(s) supprimée(s) après 3 reformulations.")
+                if n_r > 0:
+                    st.info(f"{n_r} question(s) reformulée(s) pour plus de clarté.")
+                with st.expander("📋 Détails des vérifications", expanded=False):
+                    for r in vr_list:
+                        icon = {"verified": "✅", "reformulated": "🔄", "deleted": "🗑️"}.get(r.status, "❓")
+                        status_label = {"verified": "Vérifiée", "reformulated": "Reformulée", "deleted": "Supprimée"}.get(r.status, r.status)
+                        st.markdown(f"**{icon} Q{r.question_index + 1}** — {status_label}")
+                        for a in r.attempts:
+                            a_icon = "✅" if a.is_correct else "❌"
+                            ref_tag = " *(après reformulation)*" if a.was_reformulated else ""
+                            st.markdown(
+                                f"&nbsp;&nbsp;&nbsp;&nbsp;Tentative {a.attempt_num + 1} : "
+                                f"LLM → `{a.llm_answers}` vs attendu `{a.expected_answers}` "
+                                f"{a_icon}{ref_tag}"
+                            )
+                            if a.reasoning:
+                                st.caption(f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;💬 {a.reasoning[:300]}")
+                        st.markdown("---")
+
+            if st.button("🔍 Vérifier les réponses par l'IA", type="secondary", width='stretch', key="verify_quiz_libre"):
+                # En mode libre, pas de chunks — on génère un texte source depuis les notions
+                from document_processor import TextChunk
+                notions_text = "\n\n".join(
+                    f"## {n.title}\n{n.description}"
+                    for n in (chat_session.notions or [])
+                )
+                fake_chunks = [TextChunk(
+                    text=f"Sujet : {chat_session.topic}\n\n{notions_text}",
+                    source_pages=[],
+                    source_document="Généré par IA",
+                    token_count=0,
+                )]
+                verify_bar = st.progress(0, text="Vérification en cours...")
+                _vstart = time.time()
+
+                def libre_verify_progress(current, total):
+                    if total > 0:
+                        pct = current / total
+                        elapsed = time.time() - _vstart
+                        eta_str = f" — ~{int(elapsed / pct - elapsed)}s" if pct > 0.01 else ""
+                        verify_bar.progress(max(0.01, pct), text=f"Question {min(current+1, total)}/{total}{eta_str}")
+
+                try:
+                    verified_quiz, vr_results = verify_quiz(
+                        quiz=quiz, chunks=fake_chunks, model=selected_model,
+                        max_reformulations=3, progress_callback=libre_verify_progress,
+                    )
+                    st.session_state.quiz = verified_quiz
+                    st.session_state.chat_session.quiz = verified_quiz
+                    st.session_state.verification_results = vr_results
+                    verify_bar.progress(1.0, text="✅ Vérification terminée !")
+                    time.sleep(0.5)
+                    verify_bar.empty()
+                    st.rerun()
+                except Exception as e:
+                    verify_bar.empty()
+                    st.error(f"❌ Erreur lors de la vérification : {str(e)}")
+
             st.divider()
             col_d1, col_d2 = st.columns(2)
             try:
@@ -1415,7 +1480,7 @@ elif app_mode == "📡 Sessions Partagées":
                 st.divider()
 
                 # Onglets Questions / Analytics
-                tab_questions, tab_analytics_shared = st.tabs(["📋 Questions", "📊 Analytics"])
+                tab_questions, tab_analytics_shared = st.tabs(["📋 Questions", "📊 Quizz Session Analytics"])
 
                 with tab_questions:
                     quiz_data = json.loads(sess.quiz_json)

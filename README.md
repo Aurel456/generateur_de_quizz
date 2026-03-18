@@ -21,6 +21,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Questions autonomes** : Les questions sont conçues pour être répondables **sans le document source**, uniquement avec les connaissances acquises en formation. Aucune référence de type "selon le texte" n'est utilisée.
 - **Tags de notions** : Chaque question affiche les **notions fondamentales** qu'elle couvre sous forme de badges cliquables, permettant d'identifier immédiatement les concepts testés.
 - **Export HTML interactif** : Téléchargez un fichier HTML autonome avec design sombre, score en temps réel et explications détaillées.
+- **Export CSV robuste** : Séparateur `;`, guillemets systématiques (`QUOTE_ALL`), BOM UTF-8 pour compatibilité Excel. Les retours à la ligne dans les champs sont remplacés par ` | `.
 - **Badges de difficulté** : Chaque question affiche son niveau de difficulté avec un badge coloré (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
 - **Vérification IA des réponses** : Un bouton dédié permet au LLM de **relire le document source** et de tenter de répondre à chaque question comme un étudiant. Si le LLM échoue (mauvaise réponse ou mauvais nombre de réponses), la question est **reformulée automatiquement** (jusqu'à 3 tentatives). Si la question reste incorrecte après 3 reformulations, elle est **supprimée**. Les tentatives sont affichées discrètement dans un expander et loguées.
 - **Citations précises** : Les explications incluent une citation exacte du texte source.
@@ -188,9 +189,6 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
     - (Optionnel) Modifiez les **prompts par niveau** dans l'expandeur **"Personnaliser les Prompts d'Exercice"** (le bloc JSON est fixe et non modifiable).
     - Cliquez sur **"Générer les Exercices"**.
     - L'IA va générer, *vérifier pas à pas* et *auto-corriger* chaque exercice via l'exécution de code Python complet.
-6. **Onglet Analytics** :
-    - Sélectionnez une session partagée pour voir les résultats des participants.
-    - Consultez les graphiques de réussite par question et par notion.
 
 ### Mode Libre (sans document)
 
@@ -207,7 +205,7 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 1. Sélectionnez **"📡 Sessions Partagées"** dans la barre latérale.
 2. Choisissez une session dans la liste déroulante.
 3. **Onglet Questions** : Visualisez toutes les questions avec réponses, explications et tags de notions.
-4. **Onglet Analytics** : Consultez les graphiques de réussite et le classement des participants.
+4. **Onglet Quizz Session Analytics** : Consultez les graphiques de réussite et le classement des participants.
 
 ## 🧠 Fonctionnement détaillé
 
@@ -286,7 +284,7 @@ graph TD
         Upload[Upload Fichiers]
         Chat[Chat LLM]
         Params[Configuration]
-        Tabs[Onglets: Notions / Quizz / Exercices / Analytics]
+        Tabs[Onglets: Notions / Quizz / Exercices / Aperçu]
         SessionsTab[Onglet Sessions Partagées]
     end
 
@@ -361,7 +359,7 @@ graph TD
 
 ## 🏗️ Architecture du projet
 
-- `app.py` : Interface utilisateur principale (Streamlit), sélecteur de mode (document/libre/sessions partagées).
+- `app.py` : Interface utilisateur principale (Streamlit), sélecteur de mode (document/libre/sessions partagées), vérification IA des QCM.
 - `chat_mode.py` : Machine à états pour le mode libre (conversation LLM, génération de notions, génération directe de questions/exercices).
 - `ui_components.py` : Composants UI réutilisables (stat cards, badges difficulté, sources).
 - `stats_manager.py` : Gestionnaire de sauvegarde persistante (JSON) pour le suivi des statistiques globales.

@@ -58,75 +58,84 @@ def export_quiz_html(quiz: Quiz) -> str:
     return html
 
 
+def _sanitize_csv_field(value: str) -> str:
+    """Nettoie un champ pour l'export CSV : remplace les retours à la ligne."""
+    if not value:
+        return ""
+    return value.replace("\r\n", " | ").replace("\n", " | ").replace("\r", " | ")
+
+
 def export_quiz_csv(quiz: Quiz) -> str:
     """
-    Exporte le quizz au format CSV.
-    
+    Exporte le quizz au format CSV (séparateur ;, guillemets systématiques, BOM UTF-8).
+
     Structure : Question, Choix A, Choix B, Choix C, Choix D, ..., Bonnes Réponses, Explication, Pages Source
     """
     output = io.StringIO()
-    writer = csv.writer(output, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-    
+    # BOM UTF-8 pour qu'Excel détecte automatiquement l'encodage
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=';', quotechar='"', quoting=csv.QUOTE_ALL)
+
     # Trouver le nombre max de choix pour l'en-tête
     max_choices = 0
     for q in quiz.questions:
         max_choices = max(max_choices, len(q.choices))
-    
+
     # En-tête
     header = ["Question"]
     for i in range(max_choices):
         header.append(f"Choix {chr(65 + i)}")
     header.extend(["Bonnes Réponses", "Explication", "Difficulté", "Citation", "Document Source", "Pages Source", "Notions"])
     writer.writerow(header)
-    
+
     # Données
     for q in quiz.questions:
-        row = [q.question]
-        # Ajouter les choix
+        row = [_sanitize_csv_field(q.question)]
         labels = sorted(q.choices.keys())
         for i in range(max_choices):
             if i < len(labels):
-                row.append(q.choices[labels[i]])
+                row.append(_sanitize_csv_field(q.choices[labels[i]]))
             else:
                 row.append("")
-        
-        row.append(", ".join(q.correct_answers))
-        row.append(q.explanation)
+
+        row.append(" | ".join(q.correct_answers))
+        row.append(_sanitize_csv_field(q.explanation))
         row.append(getattr(q, 'difficulty_level', '') or '')
-        row.append(getattr(q, 'citation', '') or '')
+        row.append(_sanitize_csv_field(getattr(q, 'citation', '') or ''))
         row.append(getattr(q, 'source_document', '') or '')
-        row.append(", ".join(map(str, q.source_pages)))
-        row.append(", ".join(getattr(q, 'related_notions', []) or []))
+        row.append(" | ".join(map(str, q.source_pages)))
+        row.append(" | ".join(getattr(q, 'related_notions', []) or []))
         writer.writerow(row)
-    
+
     return output.getvalue()
 
 
 def export_exercises_csv(exercises: list) -> str:
     """
-    Exporte les exercices au format CSV.
-    
+    Exporte les exercices au format CSV (séparateur ;, guillemets systématiques, BOM UTF-8).
+
     Structure : Énoncé, Réponse Attendue, Étapes, Correction, Vérifié, Pages Source
     """
     output = io.StringIO()
-    writer = csv.writer(output, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-    
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=';', quotechar='"', quoting=csv.QUOTE_ALL)
+
     # En-tête
     header = ["Énoncé", "Réponse Attendue", "Étapes de Résolution", "Correction IA", "Vérifié", "Citation", "Document Source", "Pages Source", "Notions"]
     writer.writerow(header)
-    
+
     # Données
     for ex in exercises:
         row = [
-            ex.statement,
+            _sanitize_csv_field(ex.statement),
             ex.expected_answer,
-            "\n".join(ex.steps),
-            ex.correction,
+            " | ".join(ex.steps),
+            _sanitize_csv_field(ex.correction),
             "Oui" if ex.verified else "Non",
-            getattr(ex, 'citation', '') or '',
+            _sanitize_csv_field(getattr(ex, 'citation', '') or ''),
             getattr(ex, 'source_document', '') or '',
-            ", ".join(map(str, ex.source_pages)),
-            ", ".join(getattr(ex, 'related_notions', []) or []),
+            " | ".join(map(str, ex.source_pages)),
+            " | ".join(getattr(ex, 'related_notions', []) or []),
         ]
         writer.writerow(row)
 
