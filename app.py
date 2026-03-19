@@ -6,7 +6,7 @@ import json
 import streamlit as st
 import time
 
-from document_processor import extract_and_chunk_multiple, get_text_stats_multiple, count_tokens
+from document_processor import extract_and_chunk_multiple, extract_and_chunk_multiple_vision, get_text_stats_multiple, count_tokens
 from llm_service import list_models
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
 from exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
@@ -156,7 +156,7 @@ L'intelligence artificielle peut produire des **erreurs factuelles, des calculs 
 - **La qualité des notions détectées** : si des concepts importants n'ont pas été identifiés, les questions peuvent passer à côté des points essentiels.
 - **La familiarité du modèle avec le domaine** : certains sujets très spécialisés ou peu représentés dans les données d'entraînement peuvent donner des résultats moins fiables.
 
-De plus, **le modèle ne perçoit pas les images, schémas, graphiques et tableaux** présents dans les documents — seul le texte est analysé. La prise en charge de ces éléments visuels est en cours de développement.
+De plus, **le modèle texte ne perçoit pas les images, schémas, graphiques et tableaux** présents dans les documents — seul le texte est analysé. Pour analyser le contenu visuel des PDF, activez le **Mode Vision** dans les options avancées de la barre latérale.
 
 Tout contenu généré doit être **relu et validé par un formateur** avant toute utilisation pédagogique officielle.
     """)
@@ -265,6 +265,25 @@ with st.sidebar:
             options=model_options,
             # index=5,
             help="Choisissez le modèle IA à utiliser pour la génération."
+        )
+
+    # ─── Options avancées (Batch + Vision) ──────────────────────────────────
+    batch_mode = False
+    vision_enabled = False
+    if app_mode != "📡 Sessions Partagées":
+        st.divider()
+        st.markdown("## Options avancees")
+
+        batch_mode = st.toggle(
+            "Traitement par lots (Batch API)",
+            value=False,
+            help="Envoie toutes les requetes LLM independantes en un seul lot. Plus rapide pour les gros quizz."
+        )
+
+        vision_enabled = st.toggle(
+            "Mode Vision (PDF → Images)",
+            value=False,
+            help="Analyse les images des pages PDF avec Qwen3-VL au lieu du texte extrait."
         )
 
     # ─── Sauvegarde / Chargement de session ─────────────────────────────────
@@ -378,9 +397,12 @@ if uploaded_files:
                 increment_stats(documents=st.session_state.pdf_stats.get('num_documents', 1))
 
             # Recalculer les chunks (changement de fichier OU de mode)
-            st.session_state.chunks = extract_and_chunk_multiple(
-                uploaded_files, mode=read_mode, max_tokens=max_chunk_tokens
-            )
+            if vision_enabled:
+                st.session_state.chunks = extract_and_chunk_multiple_vision(uploaded_files)
+            else:
+                st.session_state.chunks = extract_and_chunk_multiple(
+                    uploaded_files, mode=read_mode, max_tokens=max_chunk_tokens
+                )
             
             st.session_state._last_files_key = files_key
             st.session_state._last_params = current_params
@@ -475,7 +497,7 @@ if uploaded_files:
                             text=f"🧠 Chunk {min(current + 1, total)}/{total}{eta_str}"
                         )
 
-                notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress)
+                notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress, vision_mode=vision_enabled)
                 st.session_state.notions = notions
                 progress_bar.progress(1.0, text="✅ Notions détectées !")
                 time.sleep(0.5)
@@ -641,6 +663,8 @@ if uploaded_files:
                     model=selected_model,
                     progress_callback=quiz_progress,
                     notions=active_notions,
+                    batch_mode=batch_mode,
+                    vision_mode=vision_enabled,
                 )
                 st.session_state.quiz = quiz
                 st.session_state.verification_results = None
@@ -773,6 +797,7 @@ if uploaded_files:
                         model=selected_model,
                         max_reformulations=3,
                         progress_callback=verify_progress,
+                        batch_mode=batch_mode,
                     )
                     st.session_state.quiz = verified_quiz
                     st.session_state.verification_results = vr_results
@@ -949,6 +974,8 @@ if uploaded_files:
                     progress_callback=exercise_progress,
                     notions=active_notions,
                     custom_exercise_prompts=st.session_state.exercise_prompts,
+                    batch_mode=batch_mode,
+                    vision_mode=vision_enabled,
                 )
                 st.session_state.exercises = exercises
                 _invalidate_download_cache()
@@ -1208,6 +1235,7 @@ elif app_mode == "💬 Mode libre (IA)":
                         num_correct=chat_num_correct,
                         model=selected_model,
                         progress_callback=chat_quiz_progress,
+                        batch_mode=batch_mode,
                     )
                     st.session_state.quiz = quiz
                     st.session_state.chat_session.quiz = quiz
@@ -1233,6 +1261,7 @@ elif app_mode == "💬 Mode libre (IA)":
                         difficulty_counts=chat_difficulty_counts,
                         model=selected_model,
                         progress_callback=chat_ex_progress,
+                        batch_mode=batch_mode,
                     )
                     st.session_state.exercises = exercises
                     st.session_state.chat_session.exercises = exercises
@@ -1339,6 +1368,7 @@ elif app_mode == "💬 Mode libre (IA)":
                     verified_quiz, vr_results = verify_quiz(
                         quiz=quiz, chunks=fake_chunks, model=selected_model,
                         max_reformulations=3, progress_callback=libre_verify_progress,
+                        batch_mode=batch_mode,
                     )
                     st.session_state.quiz = verified_quiz
                     st.session_state.chat_session.quiz = verified_quiz

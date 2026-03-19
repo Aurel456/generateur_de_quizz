@@ -8,7 +8,7 @@ clés identifiés dans les documents. Elles guident la génération de quizz et 
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 
-from llm_service import call_llm_json, call_llm
+from llm_service import call_llm_json, call_llm_vision_json, call_llm
 from document_processor import TextChunk
 
 
@@ -106,7 +106,8 @@ def _parse_notions_response(result: dict) -> List[Notion]:
 def detect_notions(
     chunks: List[TextChunk],
     model: Optional[str] = None,
-    progress_callback=None
+    progress_callback=None,
+    vision_mode: bool = False,
 ) -> List[Notion]:
     """
     Détecte les notions fondamentales de manière itérative, chunk par chunk.
@@ -114,10 +115,13 @@ def detect_notions(
     À chaque chunk, le LLM reçoit les notions déjà trouvées et le nouveau texte,
     puis retourne la liste mise à jour (notions existantes enrichies + nouvelles notions).
 
+    Note: pas de batch possible ici (chaque chunk dépend des notions précédentes).
+
     Args:
         chunks: Liste de TextChunk à analyser.
         model: Modèle LLM à utiliser.
         progress_callback: Fonction callback(current, total) pour la progression.
+        vision_mode: Si True, envoie les images des chunks au modèle vision.
 
     Returns:
         Liste de Notion détectées et consolidées.
@@ -134,7 +138,10 @@ def detect_notions(
         system_prompt, user_prompt = _build_detection_prompt_incremental(chunk, notions)
 
         try:
-            result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
+            if vision_mode and chunk.page_images:
+                result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.3)
+            else:
+                result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
             notions = _parse_notions_response(result)
         except Exception as e:
             print(f"Erreur détection notions chunk {i}: {e}")

@@ -18,10 +18,12 @@ from langgraph.prebuilt import create_react_agent
 
 from llm_service import (
     call_llm_json,
+    call_llm_vision_json,
     count_tokens,
     OPENAI_API_BASE,
     OPENAI_API_KEY,
     MODEL_NAME,
+    VISION_MODEL_NAME,
     MODEL_CONTEXT_WINDOW,
 )
 from document_processor import TextChunk
@@ -441,6 +443,55 @@ FORMAT DE RÉPONSE (JSON strict) :
     return exercise
 
 
+def _parse_exercises(
+    result: dict,
+    chunk: TextChunk,
+    difficulty: str,
+) -> List[Exercise]:
+    """Parse le JSON retourné par le LLM en liste d'Exercise (sans vérification)."""
+    exercises = []
+    for ex_data in result.get("exercises", []):
+        try:
+            source_page = ex_data.get("source_page")
+            if source_page:
+                source_pages = [source_page] if isinstance(source_page, int) else chunk.source_pages
+            else:
+                source_pages = chunk.source_pages
+
+            exercise = Exercise(
+                statement=ex_data["statement"],
+                expected_answer=str(ex_data["expected_answer"]),
+                steps=ex_data.get("steps", []),
+                num_steps=len(ex_data.get("steps", [])),
+                correction=ex_data.get("correction", ""),
+                verification_code=ex_data.get("verification_code", ""),
+                source_pages=source_pages,
+                source_document=chunk.source_document,
+                citation=ex_data.get("citation", ""),
+                difficulty_level=difficulty,
+                related_notions=ex_data.get("related_notions", []),
+            )
+            exercises.append(exercise)
+        except (KeyError, TypeError):
+            continue
+    return exercises
+
+
+def _verify_and_correct_exercise(exercise: Exercise, model: Optional[str] = None) -> Exercise:
+    """Vérifie un exercice par exécution directe, corrige via LLM si échec."""
+    exercise = _verify_exercise_direct(exercise)
+    if not exercise.verified and exercise.verification_code:
+        initial_output = exercise.verification_output
+        exercise = _correct_exercise_with_llm(exercise, model=model)
+        exercise = _verify_exercise_direct(exercise)
+        exercise.verification_output = (
+            initial_output
+            + "\n\n🔄 CORRECTION AUTOMATIQUE PAR L'IA\n"
+            + exercise.verification_output
+        )
+    return exercise
+
+
 def generate_exercises_from_chunk(
     chunk: TextChunk,
     num_exercises: int = 1,
@@ -449,6 +500,7 @@ def generate_exercises_from_chunk(
     notions_text: str = "",
     custom_exercise_prompts: Optional[dict] = None,
     difficulty: str = "moyen",
+    vision_mode: bool = False,
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
@@ -465,49 +517,16 @@ def generate_exercises_from_chunk(
 
     for attempt in range(max_retries):
         try:
-            result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.5)
+            if vision_mode and chunk.page_images:
+                result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.5)
+            else:
+                result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.5)
 
-            for ex_data in result.get("exercises", []):
-                try:
-                    source_page = ex_data.get("source_page")
-                    if source_page:
-                        source_pages = [source_page] if isinstance(source_page, int) else chunk.source_pages
-                    else:
-                        source_pages = chunk.source_pages
+            parsed = _parse_exercises(result, chunk, difficulty)
 
-                    exercise = Exercise(
-                        statement=ex_data["statement"],
-                        expected_answer=str(ex_data["expected_answer"]),
-                        steps=ex_data.get("steps", []),
-                        num_steps=len(ex_data.get("steps", [])),
-                        correction=ex_data.get("correction", ""),
-                        verification_code=ex_data.get("verification_code", ""),
-                        source_pages=source_pages,
-                        source_document=chunk.source_document,
-                        citation=ex_data.get("citation", ""),
-                        difficulty_level=difficulty,
-                        related_notions=ex_data.get("related_notions", []),
-                    )
-
-                    # 1. Vérification directe (exécution du code)
-                    exercise = _verify_exercise_direct(exercise)
-
-                    # 2. Si échec → correction par le LLM + re-vérification
-                    if not exercise.verified and exercise.verification_code:
-                        initial_output = exercise.verification_output
-                        exercise = _correct_exercise_with_llm(exercise, model=model)
-                        exercise = _verify_exercise_direct(exercise)
-                        # Conserver la trace de la correction
-                        exercise.verification_output = (
-                            initial_output
-                            + "\n\n🔄 CORRECTION AUTOMATIQUE PAR L'IA\n"
-                            + exercise.verification_output
-                        )
-
-                    exercises.append(exercise)
-
-                except (KeyError, TypeError):
-                    continue
+            for exercise in parsed:
+                exercise = _verify_and_correct_exercise(exercise, model=model)
+                exercises.append(exercise)
 
             verified_count = sum(1 for ex in exercises if ex.verified)
             if verified_count >= num_exercises:
@@ -528,6 +547,8 @@ def generate_exercises(
     progress_callback=None,
     notions: Optional[list] = None,
     custom_exercise_prompts: Optional[dict] = None,
+    batch_mode: bool = False,
+    vision_mode: bool = False,
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks, avec support des niveaux de difficulté.
@@ -540,6 +561,8 @@ def generate_exercises(
         progress_callback: Fonction callback(current, total) pour la progression.
         notions: Liste de Notion fondamentales pour guider la génération.
         custom_exercise_prompts: Dict {difficulté: prompt_editable}.
+        batch_mode: Si True, utilise l'API Batch pour la génération initiale.
+        vision_mode: Si True, envoie les images des chunks au modèle vision.
 
     Returns:
         Liste d'Exercise.
@@ -580,19 +603,68 @@ def generate_exercises(
     total_steps = len(all_tasks)
     all_exercises = []
 
-    for i, (diff_name, chunk, n_ex) in enumerate(all_tasks):
-        if progress_callback:
-            progress_callback(i, total_steps)
-        try:
-            exercises = generate_exercises_from_chunk(
-                chunk, n_ex, model=model, notions_text=notions_text,
-                custom_exercise_prompts=custom_exercise_prompts,
+    # ─── MODE BATCH ────────────────────────────────────────────────────────
+    if batch_mode and total_steps > 1:
+        from batch_service import BatchRequest, run_batch_json
+
+        batch_requests = []
+        task_map = {}  # custom_id → (chunk, diff_name, n_ex)
+
+        for idx, (diff_name, chunk, n_ex) in enumerate(all_tasks):
+            system_prompt, user_prompt = _build_exercise_prompt(
+                chunk.text, n_ex, notions_text=notions_text,
+                source_document=chunk.source_document,
                 difficulty=diff_name,
+                custom_exercise_prompts=custom_exercise_prompts,
             )
-            all_exercises.extend(exercises)
-        except Exception as e:
-            print(f"Erreur sur le chunk {chunk.source_pages} ({diff_name}): {e}")
-            continue
+            custom_id = f"exercise_{diff_name}_{idx}"
+            images = chunk.page_images if (vision_mode and chunk.page_images) else None
+            target_model = (VISION_MODEL_NAME or model or MODEL_NAME) if (vision_mode and images) else (model or MODEL_NAME)
+
+            batch_requests.append(BatchRequest(
+                custom_id=custom_id,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=target_model,
+                temperature=0.5,
+                images=images,
+            ))
+            task_map[custom_id] = (chunk, diff_name, n_ex)
+
+        if progress_callback:
+            progress_callback(0, total_steps)
+
+        results = run_batch_json(
+            batch_requests,
+            progress_callback=lambda done, total: progress_callback(done, total) if progress_callback else None,
+        )
+
+        # Parse + vérification séquentielle
+        for custom_id, parsed_json in results.items():
+            chunk, diff_name, n_ex = task_map.get(custom_id, (None, None, None))
+            if chunk is None:
+                continue
+            parsed = _parse_exercises(parsed_json, chunk, diff_name)
+            for exercise in parsed[:n_ex]:
+                exercise = _verify_and_correct_exercise(exercise, model=model)
+                all_exercises.append(exercise)
+
+    # ─── MODE SÉQUENTIEL ───────────────────────────────────────────────────
+    else:
+        for i, (diff_name, chunk, n_ex) in enumerate(all_tasks):
+            if progress_callback:
+                progress_callback(i, total_steps)
+            try:
+                exercises = generate_exercises_from_chunk(
+                    chunk, n_ex, model=model, notions_text=notions_text,
+                    custom_exercise_prompts=custom_exercise_prompts,
+                    difficulty=diff_name,
+                    vision_mode=vision_mode,
+                )
+                all_exercises.extend(exercises)
+            except Exception as e:
+                print(f"Erreur sur le chunk {chunk.source_pages} ({diff_name}): {e}")
+                continue
 
     if progress_callback:
         progress_callback(total_steps, total_steps)

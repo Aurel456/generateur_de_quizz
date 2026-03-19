@@ -327,6 +327,7 @@ def generate_quiz_direct(
     num_correct: int = 1,
     model: Optional[str] = None,
     progress_callback=None,
+    batch_mode: bool = False,
 ) -> Quiz:
     """
     Génère un quizz QCM directement à partir du sujet et des notions,
@@ -345,11 +346,8 @@ def generate_quiz_direct(
     total_steps = len(difficulties)
     current_step = 0
 
-    for difficulty, count in difficulties:
-        if progress_callback:
-            progress_callback(current_step, total_steps)
-
-        system_prompt = f"""Tu es un expert en pédagogie et en création de quizz éducatifs.
+    def _build_direct_quiz_prompt(difficulty, count):
+        sys = f"""Tu es un expert en pédagogie et en création de quizz éducatifs.
 Tu dois générer exactement {count} questions QCM de niveau {difficulty}.
 
 SUJET : {session.topic}
@@ -382,14 +380,11 @@ FORMAT DE RÉPONSE (JSON strict) :
         }}
     ]
 }}"""
+        usr = f"Génère exactement {count} questions QCM de niveau {difficulty} sur le sujet '{session.topic}'."
+        return sys, usr
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Génère exactement {count} questions QCM de niveau {difficulty} sur le sujet '{session.topic}'."},
-        ]
-
-        result = call_llm_chat_json(messages, model=model, temperature=0.6)
-
+    def _parse_direct_quiz_result(result, difficulty):
+        questions = []
         for q_data in result.get("questions", []):
             try:
                 question = QuizQuestion(
@@ -404,11 +399,56 @@ FORMAT DE RÉPONSE (JSON strict) :
                     related_notions=q_data.get("related_notions", []),
                 )
                 if all(ans in question.choices for ans in question.correct_answers):
-                    all_questions.append(question)
+                    questions.append(question)
             except (KeyError, TypeError):
                 continue
+        return questions
 
-        current_step += 1
+    # ─── MODE BATCH ────────────────────────────────────────────────────────
+    if batch_mode and total_steps > 1:
+        from batch_service import BatchRequest, run_batch_json
+        from llm_service import MODEL_NAME as _MODEL_NAME
+
+        batch_requests = []
+        task_map = {}
+        for idx, (difficulty, count) in enumerate(difficulties):
+            sys_prompt, usr_prompt = _build_direct_quiz_prompt(difficulty, count)
+            custom_id = f"chat_quiz_{difficulty}_{idx}"
+            batch_requests.append(BatchRequest(
+                custom_id=custom_id,
+                system_prompt=sys_prompt,
+                user_prompt=usr_prompt,
+                model=model or _MODEL_NAME,
+                temperature=0.6,
+            ))
+            task_map[custom_id] = difficulty
+
+        if progress_callback:
+            progress_callback(0, total_steps)
+
+        results = run_batch_json(
+            batch_requests,
+            progress_callback=lambda done, total: progress_callback(done, total) if progress_callback else None,
+        )
+
+        for custom_id, parsed_json in results.items():
+            difficulty = task_map.get(custom_id)
+            if difficulty:
+                all_questions.extend(_parse_direct_quiz_result(parsed_json, difficulty))
+    # ─── MODE SÉQUENTIEL ───────────────────────────────────────────────────
+    else:
+        for difficulty, count in difficulties:
+            if progress_callback:
+                progress_callback(current_step, total_steps)
+
+            sys_prompt, usr_prompt = _build_direct_quiz_prompt(difficulty, count)
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": usr_prompt},
+            ]
+            result = call_llm_chat_json(messages, model=model, temperature=0.6)
+            all_questions.extend(_parse_direct_quiz_result(result, difficulty))
+            current_step += 1
 
     if progress_callback:
         progress_callback(total_steps, total_steps)
@@ -425,6 +465,7 @@ def generate_exercises_direct(
     difficulty_counts: Dict[str, int],
     model: Optional[str] = None,
     progress_callback=None,
+    batch_mode: bool = False,
 ) -> List[Exercise]:
     """
     Génère des exercices directement à partir du sujet et des notions,
@@ -440,11 +481,8 @@ def generate_exercises_direct(
     total_steps = len(difficulties)
     current_step = 0
 
-    for difficulty, count in difficulties:
-        if progress_callback:
-            progress_callback(current_step, total_steps)
-
-        system_prompt = f"""Tu es un expert pédagogique qui crée des exercices de niveau {difficulty.upper()}.
+    def _build_direct_exercise_prompt(difficulty, count):
+        sys = f"""Tu es un expert pédagogique qui crée des exercices de niveau {difficulty.upper()}.
 Tu dois créer exactement {count} exercice(s) sur le sujet donné.
 
 SUJET : {session.topic}
@@ -481,14 +519,11 @@ FORMAT DE RÉPONSE (JSON strict) :
         }}
     ]
 }}"""
+        usr = f"Génère exactement {count} exercice(s) de niveau {difficulty} sur le sujet '{session.topic}'."
+        return sys, usr
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Génère exactement {count} exercice(s) de niveau {difficulty} sur le sujet '{session.topic}'."},
-        ]
-
-        result = call_llm_chat_json(messages, model=model, temperature=0.5)
-
+    def _parse_direct_exercise_result(result, difficulty):
+        exercises = []
         for ex_data in result.get("exercises", []):
             try:
                 steps = ex_data.get("steps", [])
@@ -507,11 +542,56 @@ FORMAT DE RÉPONSE (JSON strict) :
                     difficulty_level=ex_data.get("difficulty_level", difficulty),
                     related_notions=ex_data.get("related_notions", []),
                 )
-                all_exercises.append(exercise)
+                exercises.append(exercise)
             except (KeyError, TypeError):
                 continue
+        return exercises
 
-        current_step += 1
+    # ─── MODE BATCH ────────────────────────────────────────────────────────
+    if batch_mode and total_steps > 1:
+        from batch_service import BatchRequest, run_batch_json
+        from llm_service import MODEL_NAME as _MODEL_NAME
+
+        batch_requests = []
+        task_map = {}
+        for idx, (difficulty, count) in enumerate(difficulties):
+            sys_prompt, usr_prompt = _build_direct_exercise_prompt(difficulty, count)
+            custom_id = f"chat_ex_{difficulty}_{idx}"
+            batch_requests.append(BatchRequest(
+                custom_id=custom_id,
+                system_prompt=sys_prompt,
+                user_prompt=usr_prompt,
+                model=model or _MODEL_NAME,
+                temperature=0.5,
+            ))
+            task_map[custom_id] = difficulty
+
+        if progress_callback:
+            progress_callback(0, total_steps)
+
+        results = run_batch_json(
+            batch_requests,
+            progress_callback=lambda done, total: progress_callback(done, total) if progress_callback else None,
+        )
+
+        for custom_id, parsed_json in results.items():
+            difficulty = task_map.get(custom_id)
+            if difficulty:
+                all_exercises.extend(_parse_direct_exercise_result(parsed_json, difficulty))
+    # ─── MODE SÉQUENTIEL ───────────────────────────────────────────────────
+    else:
+        for difficulty, count in difficulties:
+            if progress_callback:
+                progress_callback(current_step, total_steps)
+
+            sys_prompt, usr_prompt = _build_direct_exercise_prompt(difficulty, count)
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": usr_prompt},
+            ]
+            result = call_llm_chat_json(messages, model=model, temperature=0.5)
+            all_exercises.extend(_parse_direct_exercise_result(result, difficulty))
+            current_step += 1
 
     if progress_callback:
         progress_callback(total_steps, total_steps)

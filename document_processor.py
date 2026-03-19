@@ -28,6 +28,7 @@ class TextChunk:
     source_pages: List[int] = field(default_factory=list)
     token_count: int = 0
     source_document: str = ""
+    page_images: List[str] = field(default_factory=list)  # base64 images pour vision
 
 
 def _extract_from_pdf(file: BinaryIO) -> List[dict]:
@@ -488,6 +489,104 @@ def extract_and_chunk_multiple(
         file.seek(0)
         doc_name = getattr(file, "name", "inconnu")
         chunks = extract_and_chunk(file, mode=mode, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        for chunk in chunks:
+            chunk.source_document = doc_name
+        all_chunks.extend(chunks)
+        file.seek(0)
+    return all_chunks
+
+
+# ─── Mode Vision ──────────────────────────────────────────────────────────────
+
+
+def extract_and_chunk_vision(
+    file: BinaryIO,
+    max_images_per_chunk: int = 3,
+    min_dpi: int = 72,
+    max_dpi: int = 300,
+    model_seq_len: int = 80000,
+    text_token_buffer: int = 2000,
+) -> List[TextChunk]:
+    """
+    Mode vision : convertit les pages d'un PDF en images base64.
+    Crée des TextChunk avec page_images (pas de texte extrait).
+
+    Les pages sont groupées par paquets de max_images_per_chunk.
+    Pour les fichiers non-PDF, tombe sur l'extraction texte classique.
+    """
+    filename = getattr(file, "name", "").lower()
+
+    # Seuls les PDF bénéficient du mode vision
+    if not filename.endswith(".pdf"):
+        return extract_and_chunk(file, mode="page")
+
+    try:
+        from vision_processor import extract_pages_as_base64
+
+        file.seek(0)
+        page_data = extract_pages_as_base64(
+            file,
+            text_token_buffer=text_token_buffer,
+            min_dpi=min_dpi,
+            max_dpi=max_dpi,
+            model_seq_len=model_seq_len,
+        )
+        file.seek(0)
+
+        if not page_data:
+            # Fallback vers extraction texte si aucune image
+            return extract_and_chunk(file, mode="page")
+
+        # Grouper les pages en chunks
+        chunks = []
+        for i in range(0, len(page_data), max_images_per_chunk):
+            group = page_data[i:i + max_images_per_chunk]
+            pages = [p["page"] for p in group]
+            images = [p["base64"] for p in group]
+            total_tokens = sum(p["tokens"] for p in group)
+
+            chunks.append(TextChunk(
+                text=f"[Pages {pages[0]}-{pages[-1]} — {len(images)} image(s)]",
+                source_pages=pages,
+                token_count=total_tokens,
+                page_images=images,
+            ))
+
+        return chunks
+
+    except ImportError:
+        print("vision_processor non disponible, fallback vers extraction texte.")
+        return extract_and_chunk(file, mode="page")
+    except Exception as e:
+        print(f"Erreur extraction vision : {e}, fallback vers extraction texte.")
+        file.seek(0)
+        return extract_and_chunk(file, mode="page")
+
+
+def extract_and_chunk_multiple_vision(
+    files: List[BinaryIO],
+    max_images_per_chunk: int = 3,
+    min_dpi: int = 72,
+    max_dpi: int = 300,
+    model_seq_len: int = 80000,
+    text_token_buffer: int = 2000,
+) -> List[TextChunk]:
+    """
+    Pipeline vision multi-documents : extraction d'images pour les PDF,
+    extraction texte pour les autres formats.
+    """
+    all_chunks = []
+    for file in files:
+        file.seek(0)
+        doc_name = getattr(file, "name", "inconnu")
+        chunks = extract_and_chunk_vision(
+            file,
+            max_images_per_chunk=max_images_per_chunk,
+            min_dpi=min_dpi,
+            max_dpi=max_dpi,
+            model_seq_len=model_seq_len,
+            text_token_buffer=text_token_buffer,
+        )
         for chunk in chunks:
             chunk.source_document = doc_name
         all_chunks.extend(chunks)

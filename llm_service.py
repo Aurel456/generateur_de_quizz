@@ -21,6 +21,10 @@ MODEL_NAME = os.getenv("MODEL_NAME", "gtp-oss-120b")
 MODEL_CONTEXT_WINDOW = int(os.getenv("MODEL_CONTEXT_WINDOW", "32000"))
 TIKTOKEN_ENCODING = os.getenv("TIKTOKEN_ENCODING", "cl100k_base")
 
+# Configuration Vision
+VISION_MODEL_NAME = os.getenv("VISION_MODEL_NAME", "")
+VISION_CONTEXT_WINDOW = int(os.getenv("VISION_CONTEXT_WINDOW", "80000"))
+
 # Marge de sécurité pour les tokens (prompt system + overhead)
 SYSTEM_PROMPT_MARGIN = 500
 # Ratio de tokens réservé pour la réponse
@@ -349,6 +353,142 @@ def call_llm_chat_json(
 
     raise ValueError(
         f"Impossible de parser la réponse JSON (chat) après {retries} tentatives.\n"
+        f"Dernière réponse brute :\n{(last_raw or '')[:500]}"
+    )
+
+
+def call_llm_vision(
+    system_prompt: str,
+    user_prompt: str,
+    images: List[str],
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.7,
+    retries: int = 3,
+) -> str:
+    """
+    Appel au LLM avec images (format multimodal OpenAI).
+    Utilise le même endpoint, mais le modèle vision configuré.
+
+    Args:
+        system_prompt: Prompt système.
+        user_prompt: Prompt utilisateur (texte).
+        images: Liste de chaînes base64 JPEG.
+        model: Modèle à utiliser. Si None, utilise VISION_MODEL_NAME.
+        max_tokens: Nombre max de tokens pour la réponse.
+        temperature: Température de génération.
+        retries: Nombre de tentatives en cas d'erreur.
+
+    Returns:
+        Réponse du LLM.
+    """
+    client = get_client()
+    target_model = model or VISION_MODEL_NAME or MODEL_NAME
+
+    # Construire le contenu multimodal
+    user_content = [{"type": "text", "text": user_prompt}]
+    for img_b64 in images:
+        user_content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+        })
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+    last_error = None
+    for attempt in range(retries):
+        try:
+            kwargs = {
+                "model": target_model,
+                "messages": messages,
+                "temperature": temperature,
+            }
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+
+            response = client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content
+
+            try:
+                if hasattr(response, 'usage') and response.usage:
+                    from stats_manager import increment_stats
+                    increment_stats(tokens=response.usage.completion_tokens or 0)
+            except Exception:
+                pass
+
+            return content.strip() if content else ""
+
+        except Exception as e:
+            last_error = e
+            if attempt < retries - 1:
+                wait_time = 2 ** attempt
+                time.sleep(wait_time)
+
+    raise RuntimeError(
+        f"Échec de l'appel LLM vision avec le modèle {target_model} après {retries} tentatives. "
+        f"Dernière erreur : {last_error}"
+    )
+
+
+def call_llm_vision_json(
+    system_prompt: str,
+    user_prompt: str,
+    images: List[str],
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.5,
+    retries: int = 3,
+) -> dict:
+    """
+    Appel au LLM vision avec parsing JSON automatique et retry.
+
+    Returns:
+        Dict parsé depuis la réponse JSON du LLM.
+    """
+    json_system = system_prompt + (
+        "\n\nIMPORTANT: Tu DOIS répondre UNIQUEMENT avec un objet JSON valide. "
+        "Pas de texte avant ou après le JSON. Pas de bloc markdown."
+    )
+
+    last_raw = None
+    for attempt in range(retries):
+        try:
+            raw = call_llm_vision(json_system, user_prompt, images, model, max_tokens, temperature, retries=2)
+        except Exception as e:
+            print(f"LLM vision call failed (attempt {attempt + 1}/{retries}): {e}")
+            continue
+
+        last_raw = raw
+
+        # Tentative 1 : parsing direct
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+
+        # Tentative 2 : extraire JSON d'un bloc markdown ```json ... ```
+        json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Tentative 3 : trouver le premier { ... } ou [ ... ]
+        brace_match = re.search(r'(\{.*\}|\[.*\])', raw, re.DOTALL)
+        if brace_match:
+            try:
+                return json.loads(brace_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        print(f"JSON parse failed (vision attempt {attempt + 1}/{retries}), retrying LLM call...")
+
+    raise ValueError(
+        f"Impossible de parser la réponse JSON (vision) après {retries} tentatives.\n"
         f"Dernière réponse brute :\n{(last_raw or '')[:500]}"
     )
 

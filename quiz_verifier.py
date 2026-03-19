@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
-from llm_service import call_llm_json, count_tokens
+from llm_service import call_llm_json, count_tokens, MODEL_NAME
 from quiz_generator import Quiz, QuizQuestion
 from document_processor import TextChunk
 
@@ -185,6 +185,7 @@ def verify_quiz(
     model: Optional[str] = None,
     max_reformulations: int = 3,
     progress_callback: Optional[Callable] = None,
+    batch_mode: bool = False,
 ) -> Tuple[Quiz, List[QuestionVerificationResult]]:
     """
     Vérifie toutes les questions d'un quiz via le LLM.
@@ -192,6 +193,9 @@ def verify_quiz(
     Le LLM lit le document et tente de répondre. Si il échoue :
     - Reformulation (jusqu'à max_reformulations fois)
     - Suppression si toujours incorrect
+
+    Args:
+        batch_mode: Si True, la première passe de vérification est batchée.
 
     Returns:
         (quiz_nettoyé, résultats_de_vérification)
@@ -202,8 +206,70 @@ def verify_quiz(
 
     total = len(quiz.questions)
 
-    for idx, question in enumerate(quiz.questions):
+    # ─── BATCH : première passe de vérification ───────────────────────────
+    first_pass_results = {}  # idx → (llm_answers, reasoning)
+    if batch_mode and total > 1:
+        from batch_service import BatchRequest, run_batch_json
+
+        batch_requests = []
+        for idx, question in enumerate(quiz.questions):
+            num_correct = len(question.correct_answers)
+            choices_text = "\n".join(
+                f"  {label}. {text}" for label, text in question.choices.items()
+            )
+            sys_prompt = f"""Tu es un étudiant qui passe un examen QCM.
+Tu dois répondre à la question en te basant UNIQUEMENT sur le document fourni.
+
+RÈGLES :
+1. Lis attentivement le document
+2. Tu dois sélectionner exactement {num_correct} réponse(s)
+3. Justifie ton choix en citant le passage pertinent du document
+4. Réponds UNIQUEMENT avec un JSON valide
+
+FORMAT DE RÉPONSE (JSON strict) :
+{{
+    "selected_answers": ["A"],
+    "reasoning": "Explication de ton raisonnement basé sur le document..."
+}}"""
+            usr_prompt = f"""DOCUMENT SOURCE :
+---
+{source_text}
+---
+
+QUESTION :
+{question.question}
+
+CHOIX :
+{choices_text}
+
+Sélectionne exactement {num_correct} réponse(s) et explique ton raisonnement."""
+
+            batch_requests.append(BatchRequest(
+                custom_id=f"verify_{idx}",
+                system_prompt=sys_prompt,
+                user_prompt=usr_prompt,
+                model=model or MODEL_NAME,
+                temperature=0.2,
+            ))
+
         if progress_callback:
+            progress_callback(0, total)
+
+        batch_results = run_batch_json(
+            batch_requests,
+            progress_callback=lambda done, t: progress_callback(done, t) if progress_callback else None,
+        )
+
+        for custom_id, parsed in batch_results.items():
+            idx = int(custom_id.split("_")[1])
+            first_pass_results[idx] = (
+                parsed.get("selected_answers", []),
+                parsed.get("reasoning", ""),
+            )
+
+    # ─── Traitement par question ──────────────────────────────────────────
+    for idx, question in enumerate(quiz.questions):
+        if progress_callback and not batch_mode:
             progress_callback(idx, total)
 
         vr = QuestionVerificationResult(
@@ -215,12 +281,15 @@ def verify_quiz(
         current_question = question
         verified = False
 
-        # Tentative 0 = vérification initiale, tentatives 1..N = après reformulation
         for attempt_num in range(max_reformulations + 1):
             try:
-                llm_answers, reasoning = _verify_question_with_llm(
-                    current_question, source_text, model=model
-                )
+                # Utiliser le résultat batch pour la première passe si disponible
+                if attempt_num == 0 and idx in first_pass_results:
+                    llm_answers, reasoning = first_pass_results[idx]
+                else:
+                    llm_answers, reasoning = _verify_question_with_llm(
+                        current_question, source_text, model=model
+                    )
 
                 is_correct = sorted(llm_answers) == sorted(current_question.correct_answers)
 
@@ -248,7 +317,6 @@ def verify_quiz(
                     verified_questions.append(current_question)
                     break
 
-                # Si pas le dernier essai, reformuler
                 if attempt_num < max_reformulations:
                     logger.info("Q%d: reformulation (tentative %d)...", idx + 1, attempt_num + 1)
                     current_question = _reformulate_question(

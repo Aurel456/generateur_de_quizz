@@ -80,6 +80,26 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Bouton Rafraîchir** : Les participants peuvent rafraîchir la page après soumission pour voir leurs résultats immédiatement (compatible Docker).
 - **Stockage persistant** : Les sessions et résultats sont stockés en base SQLite.
 
+### 👁️ Mode Vision (PDF → Images)
+
+- **Modèle vision** : Utilise `Qwen3-VL-32B-Instruct-FP8` pour analyser les **images des pages PDF** (diagrammes, schémas, formules, tableaux visuels).
+- **Optimisation DPI automatique** : Le système calcule le DPI optimal pour respecter le budget de tokens du modèle vision (recherche binaire entre min/max DPI).
+- **Remplacement du texte** : En mode vision, les pages PDF sont envoyées comme images au modèle au lieu du texte extrait par pdfplumber.
+- **Rendu PyMuPDF** : Utilise `fitz` (PyMuPDF) pour le rendu des pages — aucune dépendance système (pas de poppler).
+- **Fallback automatique** : Les fichiers non-PDF (DOCX, PPTX, etc.) restent traités en mode texte classique.
+
+### ⚡ Traitement par lots (Batch API)
+
+- **API Batch OpenAI** : Soumet toutes les requêtes LLM indépendantes en un seul lot via `/v1/batches`.
+- **Accélération** : Génération de quizz multi-niveaux, exercices et vérification IA en parallèle au lieu de séquentiel.
+- **Suivi en temps réel** : Polling avec barre de progression pendant l'attente des résultats.
+- **Opérations batchées** :
+  - Génération de quizz (tous les chunks × niveaux de difficulté)
+  - Génération d'exercices (génération initiale ; vérification/correction reste séquentielle)
+  - Vérification IA des QCM (première passe ; reformulations restent séquentielles)
+  - Génération directe en mode libre (tous les niveaux de difficulté)
+- **Compatible vision** : Les requêtes batch peuvent inclure des images pour le modèle vision.
+
 ### 📊 Statistiques & Suivi Global
 
 - **Tableau de bord** : Suivi persistant du nombre total de questions et exercices générés, de documents traités et de tokens consommés (IA).
@@ -149,6 +169,10 @@ MODEL_CONTEXT_WINDOW=32000
 
 # Encodeur tiktoken (cl100k_base pour GPT-4, o200k_base pour GPT-4o)
 TIKTOKEN_ENCODING=cl100k_base
+
+# Modèle Vision (optionnel — même endpoint API)
+VISION_MODEL_NAME=Qwen3-VL-32B-Instruct-FP8
+VISION_CONTEXT_WINDOW=80000
 
 # Base de données SQLite pour les sessions partagées (optionnel)
 QUIZ_SESSIONS_DB=shared_data/quiz_sessions.db
@@ -290,9 +314,11 @@ graph TD
 
     subgraph Core [Traitement]
         DocProc[document_processor.py]
+        VisionProc[vision_processor.py]
         ChatMode[chat_mode.py]
         Chunking[Chunking Intelligent]
         DirectGen[Génération directe LLM]
+        BatchSvc[batch_service.py]
     end
 
     subgraph Logic [Modules IA]
@@ -321,6 +347,8 @@ graph TD
     Mode -- "Sessions" --> SessionsTab
 
     Upload --> DocProc
+    Upload -- "Vision activé" --> VisionProc
+    VisionProc -- "Images base64" --> Chunking
     DocProc --> Chunking
 
     Chat --> ChatMode
@@ -338,6 +366,10 @@ graph TD
     Chunking --> QuizGen
     Chunking --> ExGen
 
+    QuizGen -- "Batch mode" --> BatchSvc
+    ExGen -- "Batch mode" --> BatchSvc
+    QuizVerif -- "Batch 1ère passe" --> BatchSvc
+    BatchSvc -- "Résultats" --> QuizGen
     QuizGen -- "Génération via LLM" --> QuizVerif
     QuizVerif -- "Reformulation / Suppression" --> QuizGen
     QuizVerif -- "Vérifié" --> HTML
@@ -359,16 +391,18 @@ graph TD
 
 ## 🏗️ Architecture du projet
 
-- `app.py` : Interface utilisateur principale (Streamlit), sélecteur de mode (document/libre/sessions partagées), vérification IA des QCM.
-- `chat_mode.py` : Machine à états pour le mode libre (conversation LLM, génération de notions, génération directe de questions/exercices).
+- `app.py` : Interface utilisateur principale (Streamlit), sélecteur de mode (document/libre/sessions partagées), toggles batch/vision, vérification IA des QCM.
+- `chat_mode.py` : Machine à états pour le mode libre (conversation LLM, génération de notions, génération directe de questions/exercices, support batch).
 - `ui_components.py` : Composants UI réutilisables (stat cards, badges difficulté, sources).
 - `stats_manager.py` : Gestionnaire de sauvegarde persistante (JSON) pour le suivi des statistiques globales.
-- `document_processor.py` : Extraction de texte multi-format et découpage intelligent (support multi-documents).
-- `notion_detector.py` : Détection, édition et fusion des notions fondamentales similaires via LLM.
-- `llm_service.py` : Client API OpenAI, gestion des tokens, retry réseau, retry JSON, et support conversation multi-tours (`call_llm_chat`).
-- `quiz_generator.py` : Logique de création des QCM avec citations, difficulté, sources précises et **tags de notions**.
-- `quiz_verifier.py` : Vérification IA des réponses QCM — le LLM relit le document et tente de répondre comme un étudiant, avec **reformulation automatique** (jusqu'à 3 fois) et **suppression** des questions incorrectes.
-- `exercise_generator.py` : Création d'exercices par niveau de difficulté, **vérification pas à pas**, **auto-correction** via LLM et **tags de notions**.
+- `document_processor.py` : Extraction de texte multi-format et découpage intelligent (support multi-documents, mode vision PDF→images).
+- `notion_detector.py` : Détection, édition et fusion des notions fondamentales similaires via LLM (support vision).
+- `llm_service.py` : Client API OpenAI, gestion des tokens, retry réseau, retry JSON, support conversation multi-tours (`call_llm_chat`) et **appels vision multimodaux** (`call_llm_vision`, `call_llm_vision_json`).
+- `quiz_generator.py` : Logique de création des QCM avec citations, difficulté, sources précises, **tags de notions**, **batch mode** et **vision mode**.
+- `quiz_verifier.py` : Vérification IA des réponses QCM — le LLM relit le document et tente de répondre comme un étudiant, avec **reformulation automatique** (jusqu'à 3 fois), **suppression** des questions incorrectes et **batch première passe**.
+- `exercise_generator.py` : Création d'exercices par niveau de difficulté, **vérification pas à pas**, **auto-correction** via LLM, **tags de notions**, **batch mode** et **vision mode**.
+- `vision_processor.py` : Extraction d'images PDF via PyMuPDF (fitz), optimisation DPI automatique, calcul de tokens par page (modèle Qwen-VL patch-based).
+- `batch_service.py` : Service de traitement par lots via l'API Batch OpenAI — soumission JSONL, polling, téléchargement et parsing des résultats.
 - `quiz_exporter.py` : Export HTML interactif (Jinja2) et CSV enrichis (avec notions).
 - `session_store.py` : Backend SQLite pour les sessions de quizz partagées (création, soumission, scoring, analytics).
 - `analytics.py` : Dashboard analytics Plotly (graphiques par question, par notion, classement participants).
@@ -379,8 +413,10 @@ graph TD
 
 - `streamlit` : Interface Web.
 - `langchain`, `langgraph`, `langchain-openai`, `langchain-experimental` : Orchestration LLM et Agents.
-- `openai` : Client API standard.
-- `pdfplumber`, `python-docx`, `odfpy`, `python-pptx` : Extraction multi-format.
+- `openai` : Client API standard (chat completions + batch API).
+- `pdfplumber`, `python-docx`, `odfpy`, `python-pptx` : Extraction multi-format (texte).
+- `PyMuPDF` (fitz) : Rendu PDF→images pour le mode vision (pur Python, pas de dépendance système).
+- `Pillow` : Manipulation d'images et encodage base64 JPEG.
 - `tiktoken` : Tokenizer OpenAI rapide.
 - `jinja2` : Templating HTML.
 - `plotly` : Graphiques interactifs pour le dashboard analytics.
@@ -396,7 +432,8 @@ graph TD
 - **Chunking** : Deux modes sont disponibles : **Page par page** (recommandé pour la précision des sources) et **Par blocs de tokens** (pour une analyse large, jusqu'à 15 000 tokens).
 - **Tiktoken** : L'encodeur tiktoken est configurable via `TIKTOKEN_ENCODING` dans `.env`. Utilisez `cl100k_base` pour GPT-4 ou `o200k_base` pour GPT-4o.
 - **Qualité du contenu généré** : La pertinence des quizz et exercices dépend de la richesse du document fourni (ou de la conversation en mode libre), de la qualité des notions détectées, et de la familiarité du modèle avec le domaine. Tout contenu généré doit être relu et validé par un formateur avant utilisation pédagogique.
-- **Pas de vision des images** : Le modèle analyse uniquement le texte extrait des documents. Les images, schémas, graphiques et tableaux intégrés ne sont pas encore pris en compte — cette fonctionnalité est en cours de développement.
+- **Mode Vision** : Activez le toggle "Mode Vision" dans la barre latérale pour analyser les images des PDF avec `Qwen3-VL-32B-Instruct-FP8`. Le système optimise automatiquement le DPI pour respecter le budget de tokens. Les fichiers non-PDF restent traités en mode texte.
+- **Batch API** : Le toggle "Traitement par lots" accélère la génération en soumettant toutes les requêtes indépendantes via l'API Batch OpenAI (`/v1/batches`). Nécessite que votre serveur supporte cette route.
 
 ## 📄 Licence
 
