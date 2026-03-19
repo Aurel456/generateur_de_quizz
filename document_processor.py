@@ -535,7 +535,10 @@ def extract_and_chunk_vision(
     filename = getattr(file, "name", "").lower()
 
     try:
-        from vision_processor import extract_pages_as_base64, convert_office_to_pdf, OFFICE_EXTENSIONS
+        from vision_processor import (
+            extract_pages_as_base64, convert_office_to_pdf,
+            OFFICE_EXTENSIONS, extract_images_from_odf, encode_image, calculate_page_tokens,
+        )
 
         is_pdf = filename.endswith(".pdf")
         suffix = "." + filename.rsplit(".", 1)[-1] if "." in filename else ""
@@ -553,10 +556,26 @@ def extract_and_chunk_vision(
             file_bytes = file.read()
             file.seek(0)
             pdf_bytes = convert_office_to_pdf(file_bytes, filename)
-            if pdf_bytes is None:
+            if pdf_bytes is not None:
+                pdf_input = io.BytesIO(pdf_bytes)
+            elif suffix in (".odt", ".odp"):
+                # Fallback ODF : extraire les images du ZIP
+                odf_images = extract_images_from_odf(file_bytes)
+                if odf_images:
+                    page_data = []
+                    for i, img in enumerate(odf_images):
+                        b64 = encode_image(img)
+                        tokens = calculate_page_tokens(
+                            float(img.width) * 72.0 / 96.0,
+                            float(img.height) * 72.0 / 96.0,
+                            96,
+                        )
+                        page_data.append({"page": i + 1, "base64": b64, "tokens": tokens})
+                    return _vision_chunks_from_page_data(page_data, max_images_per_chunk)
+                return extract_and_chunk(file, mode="page")
+            else:
                 print(f"Conversion vision impossible pour {filename}, fallback texte.")
                 return extract_and_chunk(file, mode="page")
-            pdf_input = io.BytesIO(pdf_bytes)
 
         pdf_input.seek(0)
         page_data = extract_pages_as_base64(
@@ -632,7 +651,10 @@ def extract_and_chunk_vision_text(
     filename = getattr(file, "name", "").lower()
 
     try:
-        from vision_processor import smart_prepare_media, encode_image, convert_office_to_pdf, OFFICE_EXTENSIONS
+        from vision_processor import (
+            smart_prepare_media, encode_image, convert_office_to_pdf,
+            OFFICE_EXTENSIONS, extract_images_from_odf,
+        )
 
         is_pdf = filename.endswith(".pdf")
         suffix = "." + filename.rsplit(".", 1)[-1] if "." in filename else ""
@@ -652,6 +674,24 @@ def extract_and_chunk_vision_text(
             file.seek(0)
             pdf_bytes = convert_office_to_pdf(raw, filename)
             if pdf_bytes is None:
+                if suffix in (".odt", ".odp"):
+                    # Fallback ODF : texte odfpy + images du ZIP
+                    text_pages = _extract_from_odf(file)
+                    text_by_page = {p["page"]: p["text"] for p in text_pages}
+                    odf_images = extract_images_from_odf(raw)
+                    if odf_images or text_pages:
+                        images_b64 = [encode_image(img) for img in odf_images]
+                        text_parts = [
+                            f"[Page {p['page']}]\n{p['text']}" for p in text_pages if p["text"]
+                        ]
+                        combined_text = "\n\n".join(text_parts)
+                        return [TextChunk(
+                            text=combined_text,
+                            source_pages=[p["page"] for p in text_pages],
+                            token_count=count_tokens(combined_text),
+                            page_images=images_b64,
+                        )]
+                    return extract_and_chunk(file, mode="page")
                 print(f"Conversion vision+texte impossible pour {filename}, fallback texte.")
                 return extract_and_chunk(file, mode="page")
 

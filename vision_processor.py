@@ -73,7 +73,7 @@ def _convert_with_msoffice(input_path: Path, output_path: Path, suffix: str) -> 
     abs_in = str(input_path.resolve())
     abs_out = str(output_path.resolve())
 
-    if suffix in (".docx", ".doc"):
+    if suffix in (".docx", ".doc", ".odt"):
         ps_script = (
             f'$w = New-Object -ComObject Word.Application; '
             f'$w.Visible = $false; '
@@ -81,7 +81,7 @@ def _convert_with_msoffice(input_path: Path, output_path: Path, suffix: str) -> 
             f'$d.SaveAs([ref]"{abs_out}", [ref]17); '
             f'$d.Close(); $w.Quit()'
         )
-    elif suffix in (".pptx", ".ppt"):
+    elif suffix in (".pptx", ".ppt", ".odp"):
         ps_script = (
             f'$p = New-Object -ComObject PowerPoint.Application; '
             f'$pres = $p.Presentations.Open("{abs_in}", '
@@ -134,6 +134,38 @@ def convert_office_to_pdf(file_bytes: bytes, filename: str) -> Optional[bytes]:
 
     logger.warning(f"Conversion impossible pour {filename} — ni LibreOffice ni MS Office disponible.")
     return None
+
+
+def extract_images_from_odf(file_bytes: bytes) -> List[Image.Image]:
+    """
+    Extrait les images embarquées d'un fichier ODF (ODT/ODP) en lisant le ZIP.
+    Fallback pur Python quand la conversion PDF est impossible.
+
+    Returns:
+        Liste d'images PIL triées par nom de fichier.
+    """
+    import zipfile
+
+    images = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            # Les images sont dans le dossier Pictures/
+            img_names = sorted(
+                n for n in zf.namelist()
+                if n.startswith("Pictures/") and not n.endswith("/")
+            )
+            for name in img_names:
+                try:
+                    data = zf.read(name)
+                    img = Image.open(io.BytesIO(data))
+                    if img.mode != "RGB":
+                        img = img.convert("RGB")
+                    images.append(img)
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.warning(f"Erreur extraction images ODF : {e}")
+    return images
 
 
 def encode_image(img: Image.Image) -> str:

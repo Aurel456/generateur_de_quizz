@@ -211,6 +211,12 @@ def _get_cached(key: str, fn, *args):
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
+    sessions_label = "📡 Fermer Sessions" if st.session_state._show_sessions else "📡 Sessions Partagées"
+    if st.button(sessions_label, use_container_width=True, key="sessions_top_btn"):
+        st.session_state._show_sessions = not st.session_state._show_sessions
+        st.rerun()
+
+    st.divider()
     st.markdown("## 🎯 Mode")
     _radio_mode = st.radio(
         "Choisir le mode",
@@ -415,11 +421,6 @@ with st.sidebar:
     st.metric("Documents traités", global_stats["total_documents"])
     st.metric("Tokens générés (IA)", f"{global_stats['total_tokens']:,}")
 
-    st.divider()
-    sessions_label = "📡 Fermer Sessions" if st.session_state._show_sessions else "📡 Sessions Partagées"
-    if st.button(sessions_label, use_container_width=True):
-        st.session_state._show_sessions = not st.session_state._show_sessions
-        st.rerun()
 
 # ─── Traitement du PDF ──────────────────────────────────────────────────────────
 

@@ -385,9 +385,10 @@ def call_llm_vision(
     client = get_client()
     target_model = model or VISION_MODEL_NAME or MODEL_NAME
 
-    # Construire le contenu multimodal
+    # Construire le contenu multimodal avec séparation des pages
     user_content = [{"type": "text", "text": user_prompt}]
-    for img_b64 in images:
+    for i, img_b64 in enumerate(images):
+        user_content.append({"type": "text", "text": f"--- Page {i + 1} ---"})
         user_content.append({
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
