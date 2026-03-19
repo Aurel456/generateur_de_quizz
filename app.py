@@ -7,6 +7,11 @@ import streamlit as st
 import time
 
 from document_processor import extract_and_chunk_multiple, extract_and_chunk_multiple_vision, get_text_stats_multiple, count_tokens
+try:
+    from vision_processor import analyze_pdf_dpi, render_page_preview, estimate_tokens_for_dpi
+    _VISION_AVAILABLE = True
+except ImportError:
+    _VISION_AVAILABLE = False
 from llm_service import list_models
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
 from exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
@@ -275,9 +280,9 @@ with st.sidebar:
         st.markdown("## Options avancees")
 
         batch_mode = st.toggle(
-            "Traitement par lots (Batch API)",
+            "Traitement parallele",
             value=False,
-            help="Envoie toutes les requetes LLM independantes en un seul lot. Plus rapide pour les gros quizz."
+            help="Execute les requetes LLM independantes en parallele. Plus rapide pour les gros quizz."
         )
 
         vision_enabled = st.toggle(
@@ -384,11 +389,124 @@ with st.sidebar:
 # ─── Traitement du PDF ──────────────────────────────────────────────────────────
 
 if uploaded_files:
-    # Extraire les stats et chunks
-    # Identifier si les paramètres ont changé
+    # ─── Panneau Vision DPI ──────────────────────────────────────────────────
+    vision_dpi_override = None
+    if vision_enabled and _VISION_AVAILABLE:
+        # Trouver le premier fichier compatible vision (PDF ou Office)
+        from vision_processor import convert_office_to_pdf, OFFICE_EXTENSIONS
+        vision_extensions = {".pdf"} | OFFICE_EXTENSIONS
+        vision_files = [
+            f for f in uploaded_files
+            if any(getattr(f, "name", "").lower().endswith(ext) for ext in vision_extensions)
+        ]
+        if vision_files:
+            first_file = vision_files[0]
+            first_name = getattr(first_file, "name", "")
+
+            # Convertir en PDF si nécessaire (cache le résultat)
+            pdf_cache_key = f"_vision_pdf_bytes_{first_name}"
+            if st.session_state.get(pdf_cache_key) is None:
+                if first_name.lower().endswith(".pdf"):
+                    first_file.seek(0)
+                    st.session_state[pdf_cache_key] = first_file.read()
+                    first_file.seek(0)
+                else:
+                    first_file.seek(0)
+                    raw = first_file.read()
+                    first_file.seek(0)
+                    converted = convert_office_to_pdf(raw, first_name)
+                    if converted:
+                        st.session_state[pdf_cache_key] = converted
+                    else:
+                        st.session_state[pdf_cache_key] = None
+                        st.warning(
+                            f"Conversion vision impossible pour **{first_name}**. "
+                            f"Installez LibreOffice ou utilisez un PDF."
+                        )
+
+            pdf_bytes = st.session_state.get(pdf_cache_key)
+            if pdf_bytes:
+                import io as _io
+                pdf_io = _io.BytesIO(pdf_bytes)
+
+                # Analyse DPI (cache)
+                dpi_cache_key = f"_dpi_analysis_{first_name}"
+                if st.session_state.get(dpi_cache_key) is None:
+                    st.session_state[dpi_cache_key] = analyze_pdf_dpi(pdf_io)
+
+                dpi_info = st.session_state[dpi_cache_key]
+
+                if dpi_info:
+                    with st.expander("🔍 Parametres Vision (DPI & Apercu)", expanded=True):
+                        col_info, col_preview = st.columns([1, 1])
+
+                        with col_info:
+                            if not first_name.lower().endswith(".pdf"):
+                                st.info(f"📄 **{first_name}** converti en PDF pour le mode vision.")
+                            st.markdown(f"**DPI natif detecte :** `{dpi_info['native_dpi']}`")
+                            st.markdown(f"**DPI selectionne (auto) :** `{dpi_info['auto_dpi']}`")
+                            st.markdown(
+                                f"**Pages traitees :** {dpi_info['pages_processed']} / {dpi_info['num_pages']}"
+                            )
+                            st.markdown(f"**Tokens estimes (auto) :** `{dpi_info['total_tokens']:,}`")
+
+                            st.markdown("---")
+                            user_dpi = st.slider(
+                                "Ajuster le DPI",
+                                min_value=72,
+                                max_value=max(300, dpi_info["native_dpi"]),
+                                value=dpi_info["auto_dpi"],
+                                step=1,
+                                key="vision_dpi_slider",
+                                help="DPI plus eleve = meilleure qualite mais plus de tokens.",
+                            )
+
+                            # Estimer les tokens pour le DPI choisi
+                            user_tokens = estimate_tokens_for_dpi(
+                                dpi_info["page_sizes_pt"], user_dpi
+                            )
+                            from llm_service import VISION_CONTEXT_WINDOW
+                            budget = VISION_CONTEXT_WINDOW - 2000  # text_token_buffer
+
+                            if user_tokens > budget:
+                                st.warning(
+                                    f"Tokens estimes : **{user_tokens:,}** (budget : {budget:,}). "
+                                    f"Certaines pages seront tronquees."
+                                )
+                            else:
+                                st.success(f"Tokens estimes : **{user_tokens:,}** / {budget:,}")
+
+                            if user_dpi != dpi_info["auto_dpi"]:
+                                vision_dpi_override = user_dpi
+
+                        with col_preview:
+                            preview_dpi = user_dpi
+                            preview_page = 0
+                            if dpi_info["num_pages"] > 1:
+                                preview_page = st.number_input(
+                                    "Page a previsualiser",
+                                    min_value=1,
+                                    max_value=dpi_info["num_pages"],
+                                    value=1,
+                                    key="vision_preview_page",
+                                ) - 1
+
+                            pdf_io.seek(0)
+                            preview_img = render_page_preview(pdf_io, page_num=preview_page, dpi=preview_dpi)
+                            if preview_img:
+                                st.image(
+                                    preview_img,
+                                    caption=f"Page {preview_page + 1} — {preview_dpi} DPI ({preview_img.width}x{preview_img.height} px)",
+                                    use_container_width=True,
+                                )
+                            else:
+                                st.info("Apercu non disponible pour cette page.")
+
+    # ─── Extraire les stats et chunks ────────────────────────────────────────
     files_key = "_".join(sorted(f.name for f in uploaded_files))
-    current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}"
-    
+    vision_dpi_param = vision_dpi_override or "auto"
+    current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_dpi_param}"
+
     if st.session_state.pdf_stats is None or st.session_state.get("_last_params") != current_params:
         with st.spinner("📄 Analyse et découpage des documents en cours..."):
             # Si les fichiers ont changé, on recalcule les stats
@@ -398,15 +516,21 @@ if uploaded_files:
 
             # Recalculer les chunks (changement de fichier OU de mode)
             if vision_enabled:
-                st.session_state.chunks = extract_and_chunk_multiple_vision(uploaded_files)
+                vision_kwargs = {}
+                if vision_dpi_override:
+                    vision_kwargs["min_dpi"] = vision_dpi_override
+                    vision_kwargs["max_dpi"] = vision_dpi_override
+                st.session_state.chunks = extract_and_chunk_multiple_vision(
+                    uploaded_files, **vision_kwargs
+                )
             else:
                 st.session_state.chunks = extract_and_chunk_multiple(
                     uploaded_files, mode=read_mode, max_tokens=max_chunk_tokens
                 )
-            
+
             st.session_state._last_files_key = files_key
             st.session_state._last_params = current_params
-            
+
             # Reset les résultats précédents
             st.session_state.quiz = None
             st.session_state.exercises = None

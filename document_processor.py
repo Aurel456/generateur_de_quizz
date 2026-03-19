@@ -499,6 +499,23 @@ def extract_and_chunk_multiple(
 # ─── Mode Vision ──────────────────────────────────────────────────────────────
 
 
+def _vision_chunks_from_page_data(page_data: list, max_images_per_chunk: int) -> List[TextChunk]:
+    """Regroupe les page_data en TextChunks avec images."""
+    chunks = []
+    for i in range(0, len(page_data), max_images_per_chunk):
+        group = page_data[i:i + max_images_per_chunk]
+        pages = [p["page"] for p in group]
+        images = [p["base64"] for p in group]
+        total_tokens = sum(p["tokens"] for p in group)
+        chunks.append(TextChunk(
+            text=f"[Pages {pages[0]}-{pages[-1]} — {len(images)} image(s)]",
+            source_pages=pages,
+            token_count=total_tokens,
+            page_images=images,
+        ))
+    return chunks
+
+
 def extract_and_chunk_vision(
     file: BinaryIO,
     max_images_per_chunk: int = 3,
@@ -508,51 +525,53 @@ def extract_and_chunk_vision(
     text_token_buffer: int = 2000,
 ) -> List[TextChunk]:
     """
-    Mode vision : convertit les pages d'un PDF en images base64.
+    Mode vision : convertit les pages d'un document en images base64.
     Crée des TextChunk avec page_images (pas de texte extrait).
 
+    Supporte PDF nativement, DOCX/PPTX/ODT/ODP via conversion en PDF.
     Les pages sont groupées par paquets de max_images_per_chunk.
-    Pour les fichiers non-PDF, tombe sur l'extraction texte classique.
+    Fallback vers extraction texte si la conversion échoue.
     """
     filename = getattr(file, "name", "").lower()
 
-    # Seuls les PDF bénéficient du mode vision
-    if not filename.endswith(".pdf"):
-        return extract_and_chunk(file, mode="page")
-
     try:
-        from vision_processor import extract_pages_as_base64
+        from vision_processor import extract_pages_as_base64, convert_office_to_pdf, OFFICE_EXTENSIONS
 
-        file.seek(0)
+        is_pdf = filename.endswith(".pdf")
+        suffix = "." + filename.rsplit(".", 1)[-1] if "." in filename else ""
+        is_office = suffix in OFFICE_EXTENSIONS
+
+        if not is_pdf and not is_office:
+            return extract_and_chunk(file, mode="page")
+
+        # Préparer le flux PDF (natif ou converti)
+        if is_pdf:
+            pdf_input = file
+        else:
+            # Convertir DOCX/PPTX/ODT/ODP → PDF
+            file.seek(0)
+            file_bytes = file.read()
+            file.seek(0)
+            pdf_bytes = convert_office_to_pdf(file_bytes, filename)
+            if pdf_bytes is None:
+                print(f"Conversion vision impossible pour {filename}, fallback texte.")
+                return extract_and_chunk(file, mode="page")
+            pdf_input = io.BytesIO(pdf_bytes)
+
+        pdf_input.seek(0)
         page_data = extract_pages_as_base64(
-            file,
+            pdf_input,
             text_token_buffer=text_token_buffer,
             min_dpi=min_dpi,
             max_dpi=max_dpi,
             model_seq_len=model_seq_len,
         )
-        file.seek(0)
 
         if not page_data:
-            # Fallback vers extraction texte si aucune image
+            file.seek(0)
             return extract_and_chunk(file, mode="page")
 
-        # Grouper les pages en chunks
-        chunks = []
-        for i in range(0, len(page_data), max_images_per_chunk):
-            group = page_data[i:i + max_images_per_chunk]
-            pages = [p["page"] for p in group]
-            images = [p["base64"] for p in group]
-            total_tokens = sum(p["tokens"] for p in group)
-
-            chunks.append(TextChunk(
-                text=f"[Pages {pages[0]}-{pages[-1]} — {len(images)} image(s)]",
-                source_pages=pages,
-                token_count=total_tokens,
-                page_images=images,
-            ))
-
-        return chunks
+        return _vision_chunks_from_page_data(page_data, max_images_per_chunk)
 
     except ImportError:
         print("vision_processor non disponible, fallback vers extraction texte.")
