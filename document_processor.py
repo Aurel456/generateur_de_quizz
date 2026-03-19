@@ -537,7 +537,8 @@ def extract_and_chunk_vision(
     try:
         from vision_processor import (
             extract_pages_as_base64, convert_office_to_pdf,
-            OFFICE_EXTENSIONS, extract_images_from_odf, encode_image, calculate_page_tokens,
+            OFFICE_EXTENSIONS, extract_images_from_odf, encode_image,
+            calculate_page_tokens, render_odf_as_images,
         )
 
         is_pdf = filename.endswith(".pdf")
@@ -559,8 +560,11 @@ def extract_and_chunk_vision(
             if pdf_bytes is not None:
                 pdf_input = io.BytesIO(pdf_bytes)
             elif suffix in (".odt", ".odp"):
-                # Fallback ODF : extraire les images du ZIP
+                # Fallback ODF 1 : extraire les images embarquées du ZIP
                 odf_images = extract_images_from_odf(file_bytes)
+                if not odf_images:
+                    # Fallback ODF 2 : rendu PIL du texte en images
+                    odf_images = render_odf_as_images(file_bytes, filename)
                 if odf_images:
                     page_data = []
                     for i, img in enumerate(odf_images):
@@ -653,7 +657,7 @@ def extract_and_chunk_vision_text(
     try:
         from vision_processor import (
             smart_prepare_media, encode_image, convert_office_to_pdf,
-            OFFICE_EXTENSIONS, extract_images_from_odf,
+            OFFICE_EXTENSIONS, extract_images_from_odf, render_odf_as_images,
         )
 
         is_pdf = filename.endswith(".pdf")
@@ -675,10 +679,11 @@ def extract_and_chunk_vision_text(
             pdf_bytes = convert_office_to_pdf(raw, filename)
             if pdf_bytes is None:
                 if suffix in (".odt", ".odp"):
-                    # Fallback ODF : texte odfpy + images du ZIP
+                    # Fallback ODF : texte odfpy + images du ZIP ou rendu PIL
                     text_pages = _extract_from_odf(file)
-                    text_by_page = {p["page"]: p["text"] for p in text_pages}
                     odf_images = extract_images_from_odf(raw)
+                    if not odf_images:
+                        odf_images = render_odf_as_images(raw, filename)
                     if odf_images or text_pages:
                         images_b64 = [encode_image(img) for img in odf_images]
                         text_parts = [

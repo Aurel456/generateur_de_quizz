@@ -277,25 +277,7 @@ with st.sidebar:
 
         st.divider()
 
-<<<<<<< HEAD
-    # Sélection du modèle (masqué en mode Sessions)
-    selected_model = None
-    if app_mode != "📡 Sessions Partagées":
-        st.markdown("## 🤖 Modèle LLM")
-        available_models = list_models()
-        model_options = ["Gpt-oss-120b","Qwen3-VL-32B-Instruct-FP8"]  # [m.id for m in available_models] if available_models else ["gtp-oss-120b"]
-
-        selected_model = st.selectbox(
-            "Modèle LLM à sélectionner",
-            options=model_options,
-            index=0,
-            help="Choisissez le modèle IA à utiliser pour la génération."
-        )
-
-    # ─── Options avancées (Batch + Vision) ──────────────────────────────────
-=======
     # ─── Options avancées (Batch + Vision) — avant le sélecteur de modèle ───
->>>>>>> 1f567f397e74a34619215929535170eeff3db5a6
     batch_mode = False
     vision_enabled = False
     vision_text_mode = False
@@ -337,10 +319,11 @@ with st.sidebar:
             selected_model = VISION_MODEL_NAME
             st.info(f"Modele vision actif :\n`{VISION_MODEL_NAME}`")
         else:
-            model_options = "Gpt-oss-120b"
+            model_options = ["Gpt-oss-120b", "Qwen3-VL-32B-Instruct-FP8"]
             selected_model = st.selectbox(
                 "Modèle LLM à sélectionner",
                 options=model_options,
+                index=0,
                 help="Choisissez le modèle IA à utiliser pour la génération."
             )
 
