@@ -6,4 +6,4 @@ __pycache__/
 .env.example
 .vscode
 .claude
-.gitignore
+shared_data/global_stats.json
