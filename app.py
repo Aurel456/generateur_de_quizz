@@ -319,10 +319,11 @@ with st.sidebar:
             selected_model = VISION_MODEL_NAME
             st.info(f"Modele vision actif :\n`{VISION_MODEL_NAME}`")
         else:
-            model_options = "Gpt-oss-120b"
+            model_options = ["Gpt-oss-120b", "Qwen3-VL-32B-Instruct-FP8"]
             selected_model = st.selectbox(
                 "Modèle LLM à sélectionner",
                 options=model_options,
+                index=0,
                 help="Choisissez le modèle IA à utiliser pour la génération."
             )
 

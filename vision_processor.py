@@ -74,33 +74,40 @@ def _convert_with_msoffice(input_path: Path, output_path: Path, suffix: str) -> 
     abs_out = str(output_path.resolve())
 
     if suffix in (".docx", ".doc", ".odt"):
+        # wdFormatPDF = 17
         ps_script = (
             f'$w = New-Object -ComObject Word.Application; '
             f'$w.Visible = $false; '
+            f'try {{ '
             f'$d = $w.Documents.Open("{abs_in}"); '
             f'$d.SaveAs([ref]"{abs_out}", [ref]17); '
-            f'$d.Close(); $w.Quit()'
+            f'$d.Close() '
+            f'}} finally {{ $w.Quit() }}'
         )
     elif suffix in (".pptx", ".ppt", ".odp"):
+        # ppSaveAsPDF = 32, msoTrue = -1, msoFalse = 0
         ps_script = (
             f'$p = New-Object -ComObject PowerPoint.Application; '
-            f'$pres = $p.Presentations.Open("{abs_in}", '
-            f'[Microsoft.Office.Core.MsoTriState]::msoTrue, '
-            f'[Microsoft.Office.Core.MsoTriState]::msoFalse, '
-            f'[Microsoft.Office.Core.MsoTriState]::msoFalse); '
+            f'try {{ '
+            f'$pres = $p.Presentations.Open("{abs_in}", -1, 0, 0); '
             f'$pres.SaveAs("{abs_out}", 32); '
-            f'$pres.Close(); $p.Quit()'
+            f'$pres.Close() '
+            f'}} finally {{ $p.Quit() }}'
         )
     else:
         return False
 
     try:
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_script],
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
             capture_output=True, timeout=120,
         )
+        logger.info(f"COM conversion stdout: {result.stdout[:200] if result.stdout else ''}")
+        if result.stderr:
+            logger.warning(f"COM conversion stderr: {result.stderr[:500]}")
         return output_path.exists()
-    except (subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError) as e:
+        logger.warning(f"COM conversion error: {e}")
         return False
 
 
@@ -139,20 +146,23 @@ def convert_office_to_pdf(file_bytes: bytes, filename: str) -> Optional[bytes]:
 def extract_images_from_odf(file_bytes: bytes) -> List[Image.Image]:
     """
     Extrait les images embarquées d'un fichier ODF (ODT/ODP) en lisant le ZIP.
-    Fallback pur Python quand la conversion PDF est impossible.
+    Cherche dans tout le ZIP, pas uniquement dans Pictures/.
 
     Returns:
         Liste d'images PIL triées par nom de fichier.
     """
     import zipfile
 
+    IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".svg"}
     images = []
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-            # Les images sont dans le dossier Pictures/
+            # Chercher toutes les images dans le ZIP (Pictures/, media/, thumbnails, etc.)
             img_names = sorted(
                 n for n in zf.namelist()
-                if n.startswith("Pictures/") and not n.endswith("/")
+                if not n.endswith("/")
+                and any(n.lower().endswith(ext) for ext in IMAGE_EXTENSIONS)
+                and "thumbnail" not in n.lower()  # Ignorer les miniatures
             )
             for name in img_names:
                 try:
@@ -166,6 +176,143 @@ def extract_images_from_odf(file_bytes: bytes) -> List[Image.Image]:
     except Exception as e:
         logger.warning(f"Erreur extraction images ODF : {e}")
     return images
+
+
+def render_odf_as_images(
+    file_bytes: bytes,
+    filename: str,
+    width: int = 800,
+    height: int = 600,
+    font_size: int = 16,
+) -> List[Image.Image]:
+    """
+    Rendu pur Python des pages/slides ODF en images PIL.
+    Crée des images blanches avec le texte superposé.
+    Fallback quand ni LibreOffice ni MS Office ne sont disponibles.
+
+    Args:
+        file_bytes: Contenu du fichier ODF.
+        filename: Nom du fichier (pour détecter ODT vs ODP).
+        width: Largeur des images générées.
+        height: Hauteur des images générées.
+        font_size: Taille de police approximative.
+
+    Returns:
+        Liste d'images PIL, une par page/slide.
+    """
+    from PIL import ImageDraw, ImageFont
+
+    try:
+        from odf.opendocument import load as load_odf
+        from odf import text as odf_text, draw as odf_draw
+        from odf.teletype import extractText as odf_extractText
+    except ImportError:
+        logger.warning("odfpy non disponible pour render_odf_as_images")
+        return []
+
+    # Charger une police système
+    font = None
+    for font_path in [
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    ]:
+        try:
+            font = ImageFont.truetype(font_path, font_size)
+            break
+        except (IOError, OSError):
+            continue
+    if font is None:
+        font = ImageFont.load_default()
+
+    images = []
+    try:
+        doc = load_odf(io.BytesIO(file_bytes))
+        suffix = Path(filename).suffix.lower()
+
+        if suffix == ".odp":
+            # Présentation : une slide = une image
+            slides = doc.getElementsByType(odf_draw.Page)
+            for slide in slides:
+                slide_text = odf_extractText(slide).strip()
+                if not slide_text:
+                    slide_text = "(slide vide)"
+                img = _render_text_to_image(slide_text, width, height, font, font_size)
+                images.append(img)
+
+        elif suffix == ".odt":
+            # Document texte : on découpe en pages de ~30 lignes
+            all_paragraphs = []
+            for elem in (doc.getElementsByType(odf_text.P) + doc.getElementsByType(odf_text.H)):
+                t = odf_extractText(elem).strip()
+                if t:
+                    all_paragraphs.append(t)
+
+            if not all_paragraphs:
+                all_paragraphs = ["(document vide)"]
+
+            # Estimer les lignes par page (avec wrapping approximatif)
+            max_chars_per_line = max(width // (font_size * 0.6), 20)
+            max_lines_per_page = max((height - 40) // (font_size + 4), 5)
+
+            current_lines = []
+            for para in all_paragraphs:
+                # Wrapper le paragraphe en lignes
+                words = para.split()
+                line = ""
+                for word in words:
+                    test = f"{line} {word}".strip()
+                    if len(test) <= max_chars_per_line:
+                        line = test
+                    else:
+                        if line:
+                            current_lines.append(line)
+                        line = word
+                if line:
+                    current_lines.append(line)
+                current_lines.append("")  # ligne vide entre paragraphes
+
+                if len(current_lines) >= max_lines_per_page:
+                    page_text = "\n".join(current_lines[:max_lines_per_page])
+                    img = _render_text_to_image(page_text, width, height, font, font_size)
+                    images.append(img)
+                    current_lines = current_lines[max_lines_per_page:]
+
+            # Dernière page
+            if current_lines:
+                page_text = "\n".join(current_lines)
+                img = _render_text_to_image(page_text, width, height, font, font_size)
+                images.append(img)
+
+    except Exception as e:
+        logger.warning(f"Erreur render_odf_as_images : {e}")
+
+    return images
+
+
+def _render_text_to_image(
+    text_content: str,
+    width: int,
+    height: int,
+    font,
+    font_size: int,
+) -> Image.Image:
+    """Rend du texte sur une image blanche."""
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+
+    margin = 20
+    y = margin
+    line_height = font_size + 4
+
+    for line in text_content.split("\n"):
+        if y + line_height > height - margin:
+            break
+        draw.text((margin, y), line, fill="black", font=font)
+        y += line_height
+
+    return img
 
 
 def encode_image(img: Image.Image) -> str:
@@ -305,7 +452,7 @@ def smart_prepare_media(
 
         if num_pages == 0:
             doc.close()
-            return [], target_dpi, 0, native_dpi
+            return [], target_dpi, 0, 0
 
         # Rendu des pages avec PyMuPDF
         zoom = target_dpi / 72.0
@@ -318,7 +465,7 @@ def smart_prepare_media(
             pil_images.append(img)
 
         doc.close()
-        return pil_images, target_dpi, num_pages, native_dpi
+        return pil_images, target_dpi, num_pages, 0
 
     except Exception as e:
         try:
