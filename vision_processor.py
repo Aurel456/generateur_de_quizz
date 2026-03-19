@@ -220,8 +220,8 @@ def optimize_pdf_params(
 def smart_prepare_media(
     file_input: BinaryIO,
     text_token_buffer: int = 2000,
-    min_dpi: int = 72,
-    max_dpi: int = 300,
+    min_dpi: int = 65,
+    max_dpi: int = 80,
     model_seq_len: int = DEFAULT_MODEL_SEQ_LEN,
 ) -> Tuple[List[Image.Image], int, int, int]:
     """
@@ -261,9 +261,6 @@ def smart_prepare_media(
             return [], 0, 0, 0
 
     try:
-        native_dpi = get_pdf_native_resolution(doc, default_dpi=max_dpi)
-        effective_max_dpi = min(max_dpi, native_dpi)
-
         page_sizes_pt = []
         for page in doc:
             rect = page.rect
@@ -271,7 +268,7 @@ def smart_prepare_media(
 
         tokens_budget = max(model_seq_len - text_token_buffer, 0)
         target_dpi, num_pages = optimize_pdf_params(
-            page_sizes_pt, tokens_budget, min_dpi, effective_max_dpi
+            page_sizes_pt, tokens_budget, min_dpi, max_dpi
         )
 
         if num_pages == 0:
@@ -303,8 +300,8 @@ def smart_prepare_media(
 def analyze_pdf_dpi(
     file_input: BinaryIO,
     text_token_buffer: int = 2000,
-    min_dpi: int = 72,
-    max_dpi: int = 300,
+    min_dpi: int = 65,
+    max_dpi: int = 80,
     model_seq_len: int = DEFAULT_MODEL_SEQ_LEN,
 ) -> dict:
     """
@@ -333,16 +330,13 @@ def analyze_pdf_dpi(
         return {}
 
     try:
-        native_dpi = get_pdf_native_resolution(doc, default_dpi=max_dpi)
-        effective_max_dpi = min(max_dpi, native_dpi)
-
         page_sizes_pt = []
         for page in doc:
             page_sizes_pt.append((float(page.rect.width), float(page.rect.height)))
 
         tokens_budget = max(model_seq_len - text_token_buffer, 0)
         auto_dpi, pages_processed = optimize_pdf_params(
-            page_sizes_pt, tokens_budget, min_dpi, effective_max_dpi
+            page_sizes_pt, tokens_budget, min_dpi, max_dpi
         )
 
         total_tokens = sum(
@@ -353,7 +347,6 @@ def analyze_pdf_dpi(
         doc.close()
         return {
             "auto_dpi": auto_dpi,
-            "native_dpi": native_dpi,
             "num_pages": len(page_sizes_pt),
             "pages_processed": pages_processed,
             "total_tokens": total_tokens,
@@ -402,8 +395,8 @@ def estimate_tokens_for_dpi(
 def extract_pages_as_base64(
     file_input: BinaryIO,
     text_token_buffer: int = 2000,
-    min_dpi: int = 72,
-    max_dpi: int = 300,
+    min_dpi: int = 65,
+    max_dpi: int = 80,
     model_seq_len: int = DEFAULT_MODEL_SEQ_LEN,
 ) -> List[dict]:
     """

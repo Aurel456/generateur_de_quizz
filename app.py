@@ -6,13 +6,17 @@ import json
 import streamlit as st
 import time
 
-from document_processor import extract_and_chunk_multiple, extract_and_chunk_multiple_vision, get_text_stats_multiple, count_tokens
+from document_processor import (
+    extract_and_chunk_multiple, extract_and_chunk_multiple_vision,
+    extract_and_chunk_multiple_vision_text,
+    get_text_stats_multiple, count_tokens,
+)
 try:
     from vision_processor import analyze_pdf_dpi, render_page_preview, estimate_tokens_for_dpi
     _VISION_AVAILABLE = True
 except ImportError:
     _VISION_AVAILABLE = False
-from llm_service import list_models
+from llm_service import VISION_MODEL_NAME
 from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
 from exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
 from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
@@ -188,6 +192,8 @@ if "verification_results" not in st.session_state:
     st.session_state.verification_results = None
 if "_download_cache" not in st.session_state:
     st.session_state._download_cache = {}
+if "_show_sessions" not in st.session_state:
+    st.session_state._show_sessions = False
 
 
 def _invalidate_download_cache():
@@ -206,13 +212,20 @@ def _get_cached(key: str, fn, *args):
 
 with st.sidebar:
     st.markdown("## 🎯 Mode")
-    app_mode = st.radio(
+    _radio_mode = st.radio(
         "Choisir le mode",
-        ["📄 Depuis un document", "💬 Mode libre (IA)", "📡 Sessions Partagées"],
+        ["📄 Depuis un document", "💬 Mode libre (IA)"],
         horizontal=False,
         label_visibility="collapsed",
-        help="Mode document : uploadez des fichiers. Mode libre : conversez avec l'IA. Sessions : consultez les quizz partagés."
+        help="Mode document : uploadez des fichiers. Mode libre : conversez avec l'IA.",
+        key="_radio_app_mode",
     )
+    # Désactiver sessions si le radio change
+    if st.session_state.get("_last_radio_mode") != _radio_mode:
+        st.session_state._show_sessions = False
+        st.session_state._last_radio_mode = _radio_mode
+
+    app_mode = "📡 Sessions Partagées" if st.session_state._show_sessions else _radio_mode
 
     st.divider()
 
@@ -258,25 +271,11 @@ with st.sidebar:
 
         st.divider()
 
-    # Sélection du modèle (masqué en mode Sessions)
-    selected_model = None
-    if app_mode != "📡 Sessions Partagées":
-        st.markdown("## 🤖 Modèle LLM")
-        available_models = list_models()
-        model_options = "Gpt-oss-120b" # [m.id for m in available_models] if available_models else ["gtp-oss-120b"]
-
-        selected_model = st.selectbox(
-            "Modèle LLM à sélectionner",
-            options=model_options,
-            # index=5,
-            help="Choisissez le modèle IA à utiliser pour la génération."
-        )
-
-    # ─── Options avancées (Batch + Vision) ──────────────────────────────────
+    # ─── Options avancées (Batch + Vision) — avant le sélecteur de modèle ───
     batch_mode = False
     vision_enabled = False
+    vision_text_mode = False
     if app_mode != "📡 Sessions Partagées":
-        st.divider()
         st.markdown("## Options avancees")
 
         batch_mode = st.toggle(
@@ -286,10 +285,40 @@ with st.sidebar:
         )
 
         vision_enabled = st.toggle(
-            "Mode Vision (PDF → Images)",
+            "Mode Vision",
             value=False,
-            help="Analyse les images des pages PDF avec Qwen3-VL au lieu du texte extrait."
+            help="Analyse les pages du document comme images avec Qwen3-VL."
         )
+
+        if vision_enabled:
+            vision_sub = st.radio(
+                "Sous-mode vision",
+                ["Images seules", "Images + Texte"],
+                horizontal=True,
+                label_visibility="collapsed",
+                help=(
+                    "**Images seules** : envoie uniquement les images au modele vision.\n\n"
+                    "**Images + Texte** : envoie les images ET le texte extrait de chaque page."
+                ),
+            )
+            vision_text_mode = vision_sub == "Images + Texte"
+
+        st.divider()
+
+    # ─── Modèle LLM (auto-switché si vision activé) ──────────────────────────
+    selected_model = None
+    if app_mode != "📡 Sessions Partagées":
+        st.markdown("## 🤖 Modèle LLM")
+        if vision_enabled:
+            selected_model = VISION_MODEL_NAME
+            st.info(f"Modele vision actif :\n`{VISION_MODEL_NAME}`")
+        else:
+            model_options = "Gpt-oss-120b"
+            selected_model = st.selectbox(
+                "Modèle LLM à sélectionner",
+                options=model_options,
+                help="Choisissez le modèle IA à utiliser pour la génération."
+            )
 
     # ─── Sauvegarde / Chargement de session ─────────────────────────────────
     if app_mode != "📡 Sessions Partagées":
@@ -386,6 +415,12 @@ with st.sidebar:
     st.metric("Documents traités", global_stats["total_documents"])
     st.metric("Tokens générés (IA)", f"{global_stats['total_tokens']:,}")
 
+    st.divider()
+    sessions_label = "📡 Fermer Sessions" if st.session_state._show_sessions else "📡 Sessions Partagées"
+    if st.button(sessions_label, use_container_width=True):
+        st.session_state._show_sessions = not st.session_state._show_sessions
+        st.rerun()
+
 # ─── Traitement du PDF ──────────────────────────────────────────────────────────
 
 if uploaded_files:
@@ -443,7 +478,6 @@ if uploaded_files:
                         with col_info:
                             if not first_name.lower().endswith(".pdf"):
                                 st.info(f"📄 **{first_name}** converti en PDF pour le mode vision.")
-                            st.markdown(f"**DPI natif detecte :** `{dpi_info['native_dpi']}`")
                             st.markdown(f"**DPI selectionne (auto) :** `{dpi_info['auto_dpi']}`")
                             st.markdown(
                                 f"**Pages traitees :** {dpi_info['pages_processed']} / {dpi_info['num_pages']}"
@@ -451,14 +485,22 @@ if uploaded_files:
                             st.markdown(f"**Tokens estimes (auto) :** `{dpi_info['total_tokens']:,}`")
 
                             st.markdown("---")
+                            col_p1, col_p2 = st.columns(2)
+                            with col_p1:
+                                if st.button("Standard (65 DPI)", use_container_width=True, key="dpi_preset_65"):
+                                    st.session_state["vision_dpi_slider"] = 65
+                            with col_p2:
+                                if st.button("Haute res (80 DPI)", use_container_width=True, key="dpi_preset_80"):
+                                    st.session_state["vision_dpi_slider"] = 80
+
                             user_dpi = st.slider(
                                 "Ajuster le DPI",
-                                min_value=72,
-                                max_value=max(300, dpi_info["native_dpi"]),
-                                value=dpi_info["auto_dpi"],
+                                min_value=40,
+                                max_value=150,
+                                value=st.session_state.get("vision_dpi_slider", dpi_info["auto_dpi"]),
                                 step=1,
                                 key="vision_dpi_slider",
-                                help="DPI plus eleve = meilleure qualite mais plus de tokens.",
+                                help="Standard 65 DPI (~450 tokens/page). Haute resolution 80 DPI (schemas complexes).",
                             )
 
                             # Estimer les tokens pour le DPI choisi
@@ -505,7 +547,7 @@ if uploaded_files:
     # ─── Extraire les stats et chunks ────────────────────────────────────────
     files_key = "_".join(sorted(f.name for f in uploaded_files))
     vision_dpi_param = vision_dpi_override or "auto"
-    current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_dpi_param}"
+    current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_text_mode}_{vision_dpi_param}"
 
     if st.session_state.pdf_stats is None or st.session_state.get("_last_params") != current_params:
         with st.spinner("📄 Analyse et découpage des documents en cours..."):
@@ -520,9 +562,14 @@ if uploaded_files:
                 if vision_dpi_override:
                     vision_kwargs["min_dpi"] = vision_dpi_override
                     vision_kwargs["max_dpi"] = vision_dpi_override
-                st.session_state.chunks = extract_and_chunk_multiple_vision(
-                    uploaded_files, **vision_kwargs
-                )
+                if vision_text_mode:
+                    st.session_state.chunks = extract_and_chunk_multiple_vision_text(
+                        uploaded_files, **vision_kwargs
+                    )
+                else:
+                    st.session_state.chunks = extract_and_chunk_multiple_vision(
+                        uploaded_files, **vision_kwargs
+                    )
             else:
                 st.session_state.chunks = extract_and_chunk_multiple(
                     uploaded_files, mode=read_mode, max_tokens=max_chunk_tokens
