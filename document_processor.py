@@ -518,9 +518,9 @@ def _vision_chunks_from_page_data(page_data: list, max_images_per_chunk: int) ->
 
 def extract_and_chunk_vision(
     file: BinaryIO,
-    max_images_per_chunk: int = 3,
-    min_dpi: int = 72,
-    max_dpi: int = 300,
+    max_images_per_chunk: int = 50,
+    min_dpi: int = 65,
+    max_dpi: int = 80,
     model_seq_len: int = 80000,
     text_token_buffer: int = 2000,
 ) -> List[TextChunk]:
@@ -584,9 +584,9 @@ def extract_and_chunk_vision(
 
 def extract_and_chunk_multiple_vision(
     files: List[BinaryIO],
-    max_images_per_chunk: int = 3,
-    min_dpi: int = 72,
-    max_dpi: int = 300,
+    max_images_per_chunk: int = 50,
+    min_dpi: int = 65,
+    max_dpi: int = 80,
     model_seq_len: int = 80000,
     text_token_buffer: int = 2000,
 ) -> List[TextChunk]:
@@ -601,6 +601,138 @@ def extract_and_chunk_multiple_vision(
         chunks = extract_and_chunk_vision(
             file,
             max_images_per_chunk=max_images_per_chunk,
+            min_dpi=min_dpi,
+            max_dpi=max_dpi,
+            model_seq_len=model_seq_len,
+            text_token_buffer=text_token_buffer,
+        )
+        for chunk in chunks:
+            chunk.source_document = doc_name
+        all_chunks.extend(chunks)
+        file.seek(0)
+    return all_chunks
+
+
+def extract_and_chunk_vision_text(
+    file: BinaryIO,
+    max_pages_per_chunk: int = 50,
+    min_dpi: int = 65,
+    max_dpi: int = 80,
+    model_seq_len: int = 80000,
+    text_token_buffer: int = 2000,
+) -> List[TextChunk]:
+    """
+    Mode vision + texte : chaque chunk contient le texte extrait (pdfplumber)
+    ET les images rendues (fitz) des mêmes pages.
+
+    Chaque page contribue une entrée "[Page N]\\n{texte}" au champ text
+    et une image base64 à page_images.
+    Les pages sont groupées par max_pages_per_chunk.
+    """
+    filename = getattr(file, "name", "").lower()
+
+    try:
+        from vision_processor import smart_prepare_media, encode_image, convert_office_to_pdf, OFFICE_EXTENSIONS
+
+        is_pdf = filename.endswith(".pdf")
+        suffix = "." + filename.rsplit(".", 1)[-1] if "." in filename else ""
+        is_office = suffix in OFFICE_EXTENSIONS
+
+        if not is_pdf and not is_office:
+            return extract_and_chunk(file, mode="page")
+
+        # Obtenir les bytes PDF (natif ou converti)
+        if is_pdf:
+            file.seek(0)
+            pdf_bytes = file.read()
+            file.seek(0)
+        else:
+            file.seek(0)
+            raw = file.read()
+            file.seek(0)
+            pdf_bytes = convert_office_to_pdf(raw, filename)
+            if pdf_bytes is None:
+                print(f"Conversion vision+texte impossible pour {filename}, fallback texte.")
+                return extract_and_chunk(file, mode="page")
+
+        pdf_io = io.BytesIO(pdf_bytes)
+
+        # 1. Extraire le texte page par page via pdfplumber
+        pdf_io.seek(0)
+        text_pages = _extract_from_pdf(pdf_io)
+        text_by_page = {p["page"]: p["text"] for p in text_pages}
+
+        # 2. Rendre les images via smart_prepare_media
+        pdf_io.seek(0)
+        images, target_dpi, num_pages, _ = smart_prepare_media(
+            pdf_io,
+            text_token_buffer=text_token_buffer,
+            min_dpi=min_dpi,
+            max_dpi=max_dpi,
+            model_seq_len=model_seq_len,
+        )
+
+        if not images:
+            file.seek(0)
+            return extract_and_chunk(file, mode="page")
+
+        # 3. Combiner texte + image par page
+        combined_pages = []
+        for i, img in enumerate(images):
+            page_num = i + 1
+            combined_pages.append({
+                "page": page_num,
+                "text": text_by_page.get(page_num, ""),
+                "base64": encode_image(img),
+            })
+
+        # 4. Chunking par max_pages_per_chunk
+        chunks = []
+        for i in range(0, len(combined_pages), max_pages_per_chunk):
+            group = combined_pages[i:i + max_pages_per_chunk]
+            pages = [p["page"] for p in group]
+            images_b64 = [p["base64"] for p in group]
+            text_parts = [
+                f"[Page {p['page']}]\n{p['text']}"
+                for p in group if p["text"]
+            ]
+            combined_text = "\n\n".join(text_parts)
+            token_count = count_tokens(combined_text)
+
+            chunks.append(TextChunk(
+                text=combined_text,
+                source_pages=pages,
+                token_count=token_count,
+                page_images=images_b64,
+            ))
+
+        return chunks
+
+    except ImportError:
+        print("vision_processor non disponible, fallback vers extraction texte.")
+        return extract_and_chunk(file, mode="page")
+    except Exception as e:
+        print(f"Erreur extraction vision+texte : {e}, fallback vers extraction texte.")
+        file.seek(0)
+        return extract_and_chunk(file, mode="page")
+
+
+def extract_and_chunk_multiple_vision_text(
+    files: List[BinaryIO],
+    max_pages_per_chunk: int = 50,
+    min_dpi: int = 65,
+    max_dpi: int = 80,
+    model_seq_len: int = 80000,
+    text_token_buffer: int = 2000,
+) -> List[TextChunk]:
+    """Pipeline vision+texte multi-documents."""
+    all_chunks = []
+    for file in files:
+        file.seek(0)
+        doc_name = getattr(file, "name", "inconnu")
+        chunks = extract_and_chunk_vision_text(
+            file,
+            max_pages_per_chunk=max_pages_per_chunk,
             min_dpi=min_dpi,
             max_dpi=max_dpi,
             model_seq_len=model_seq_len,
