@@ -319,7 +319,7 @@ with st.sidebar:
             selected_model = VISION_MODEL_NAME
             st.info(f"Modele vision actif :\n`{VISION_MODEL_NAME}`")
         else:
-            model_options = ["Gpt-oss-120b", "Qwen3-VL-32B-Instruct-FP8"]
+            model_options = ["Gpt-oss-120b","Gpt-oss-20b", "Qwen3-VL-32B-Instruct-FP8"]
             selected_model = st.selectbox(
                 "Modèle LLM à sélectionner",
                 options=model_options,
@@ -487,18 +487,21 @@ if uploaded_files:
                             st.markdown(f"**Tokens estimes (auto) :** `{dpi_info['total_tokens']:,}`")
 
                             st.markdown("---")
-                            col_p1, col_p2 = st.columns(2)
+                            col_p1, col_p2, col_p3 = st.columns(3)
                             with col_p1:
+                                if st.button("Rapide (50 DPI)", width='stretch', key="dpi_preset_50"):
+                                    st.session_state["vision_dpi_slider"] = 50
+                            with col_p2:
                                 if st.button("Standard (65 DPI)", width='stretch', key="dpi_preset_65"):
                                     st.session_state["vision_dpi_slider"] = 65
-                            with col_p2:
+                            with col_p3:
                                 if st.button("Haute res (80 DPI)", width='stretch', key="dpi_preset_80"):
                                     st.session_state["vision_dpi_slider"] = 80
 
                             user_dpi = st.slider(
                                 "Ajuster le DPI",
                                 min_value=40,
-                                max_value=150,
+                                max_value=90,
                                 value=st.session_state.get("vision_dpi_slider", dpi_info["auto_dpi"]),
                                 step=1,
                                 key="vision_dpi_slider",
@@ -655,7 +658,6 @@ if uploaded_files:
             progress_bar = st.progress(0, text="🧠 Démarrage...")
             try:
                 _notion_start = time.time()
-
                 def notion_progress(current, total):
                     if total > 0:
                         pct = current / total
