@@ -178,141 +178,161 @@ def extract_images_from_odf(file_bytes: bytes) -> List[Image.Image]:
     return images
 
 
-def render_odf_as_images(
-    file_bytes: bytes,
-    filename: str,
-    width: int = 800,
-    height: int = 600,
-    font_size: int = 16,
-) -> List[Image.Image]:
+def _extract_text_from_odf_xml(file_bytes: bytes, filename: str) -> List[str]:
     """
-    Rendu pur Python des pages/slides ODF en images PIL.
-    Crée des images blanches avec le texte superposé.
-    Fallback quand ni LibreOffice ni MS Office ne sont disponibles.
+    Parse le content.xml d'un fichier ODF (ZIP) avec ElementTree.
+    N'utilise PAS odfpy ni defusedxml (évite le bug pyexpat/DLL).
 
-    Args:
-        file_bytes: Contenu du fichier ODF.
-        filename: Nom du fichier (pour détecter ODT vs ODP).
-        width: Largeur des images générées.
-        height: Hauteur des images générées.
-        font_size: Taille de police approximative.
-
-    Returns:
-        Liste d'images PIL, une par page/slide.
+    Pour ODT : retourne une liste avec un seul élément (tout le texte).
+    Pour ODP : retourne une liste de textes, un par slide.
     """
-    from PIL import ImageDraw, ImageFont
+    import zipfile
+    from lxml.etree import fromstring
+
+    # Namespaces ODF
+    NS = {
+        "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
+        "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
+        "draw": "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0",
+        "presentation": "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0",
+        "svg": "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0",
+    }
 
     try:
-        from odf.opendocument import load as load_odf
-        from odf import text as odf_text, draw as odf_draw
-        from odf.teletype import extractText as odf_extractText
-    except ImportError:
-        logger.warning("odfpy non disponible pour render_odf_as_images")
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            content_xml = zf.read("content.xml")
+    except Exception as e:
+        logger.warning(f"Impossible de lire content.xml dans {filename}: {e}")
         return []
 
-    # Charger une police système
-    font = None
-    for font_path in [
-        "C:/Windows/Fonts/arial.ttf",
-        "C:/Windows/Fonts/segoeui.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    ]:
-        try:
-            font = ImageFont.truetype(font_path, font_size)
-            break
-        except (IOError, OSError):
-            continue
-    if font is None:
-        font = ImageFont.load_default()
-
-    images = []
     try:
-        doc = load_odf(io.BytesIO(file_bytes))
-        suffix = Path(filename).suffix.lower()
-
-        if suffix == ".odp":
-            # Présentation : une slide = une image
-            slides = doc.getElementsByType(odf_draw.Page)
-            for slide in slides:
-                slide_text = odf_extractText(slide).strip()
-                if not slide_text:
-                    slide_text = "(slide vide)"
-                img = _render_text_to_image(slide_text, width, height, font, font_size)
-                images.append(img)
-
-        elif suffix == ".odt":
-            # Document texte : on découpe en pages de ~30 lignes
-            all_paragraphs = []
-            for elem in (doc.getElementsByType(odf_text.P) + doc.getElementsByType(odf_text.H)):
-                t = odf_extractText(elem).strip()
-                if t:
-                    all_paragraphs.append(t)
-
-            if not all_paragraphs:
-                all_paragraphs = ["(document vide)"]
-
-            # Estimer les lignes par page (avec wrapping approximatif)
-            max_chars_per_line = max(width // (font_size * 0.6), 20)
-            max_lines_per_page = max((height - 40) // (font_size + 4), 5)
-
-            current_lines = []
-            for para in all_paragraphs:
-                # Wrapper le paragraphe en lignes
-                words = para.split()
-                line = ""
-                for word in words:
-                    test = f"{line} {word}".strip()
-                    if len(test) <= max_chars_per_line:
-                        line = test
-                    else:
-                        if line:
-                            current_lines.append(line)
-                        line = word
-                if line:
-                    current_lines.append(line)
-                current_lines.append("")  # ligne vide entre paragraphes
-
-                if len(current_lines) >= max_lines_per_page:
-                    page_text = "\n".join(current_lines[:max_lines_per_page])
-                    img = _render_text_to_image(page_text, width, height, font, font_size)
-                    images.append(img)
-                    current_lines = current_lines[max_lines_per_page:]
-
-            # Dernière page
-            if current_lines:
-                page_text = "\n".join(current_lines)
-                img = _render_text_to_image(page_text, width, height, font, font_size)
-                images.append(img)
-
+        root = fromstring(content_xml)
     except Exception as e:
-        logger.warning(f"Erreur render_odf_as_images : {e}")
+        logger.warning(f"Impossible de parser content.xml: {e}")
+        return []
 
-    return images
+    suffix = Path(filename).suffix.lower()
+
+    def _iter_text(element) -> str:
+        """Récupère tout le texte d'un élément et ses enfants."""
+        parts = []
+        if element.text:
+            parts.append(element.text)
+        for child in element:
+            parts.append(_iter_text(child))
+            if child.tail:
+                parts.append(child.tail)
+        return "".join(parts)
+
+    if suffix == ".odp":
+        # Présentation : chercher les draw:page dans office:presentation
+        pages = root.findall(".//draw:page", NS)
+        if not pages:
+            # Fallback: chercher tout élément avec le tag contenant 'page'
+            pages = [e for e in root.iter() if "page" in e.tag.lower() and "master" not in e.tag.lower()]
+        result = []
+        for page in pages:
+            texts = []
+            # Extraire le texte de tous les text:p et text:h dans la page
+            for elem in page.iter():
+                tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+                if tag in ("p", "h", "span", "list-item"):
+                    t = _iter_text(elem).strip()
+                    if t:
+                        texts.append(t)
+            # Dédupliquer (les <p> imbriqués dans <span> etc.)
+            seen = set()
+            unique = []
+            for t in texts:
+                if t not in seen:
+                    seen.add(t)
+                    unique.append(t)
+            result.append("\n".join(unique) if unique else " ")
+        return result
+    else:
+        # ODT : extraire tous les paragraphes et titres du body
+        body = root.find(".//office:body/office:text", NS)
+        if body is None:
+            body = root  # fallback
+        paragraphs = []
+        for elem in body.iter():
+            tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+            if tag in ("p", "h"):
+                t = _iter_text(elem).strip()
+                if t:
+                    paragraphs.append(t)
+        if paragraphs:
+            return ["\n\n".join(paragraphs)]
+        return []
 
 
-def _render_text_to_image(
-    text_content: str,
-    width: int,
-    height: int,
-    font,
-    font_size: int,
-) -> Image.Image:
-    """Rend du texte sur une image blanche."""
-    img = Image.new("RGB", (width, height), "white")
-    draw = ImageDraw.Draw(img)
+def render_odf_to_pdf(file_bytes: bytes, filename: str) -> Optional[bytes]:
+    """
+    Convertit un fichier ODF (ODT/ODP) en PDF via ElementTree (texte) + fitz (rendu PDF).
+    Fallback pur Python quand ni LibreOffice ni MS Office ne sont disponibles.
+    N'utilise PAS odfpy — parse directement le content.xml du ZIP.
 
-    margin = 20
-    y = margin
-    line_height = font_size + 4
+    Le PDF généré contient le texte avec wrapping automatique via fitz.insert_textbox().
+    Pour ODP : une page paysage par slide.
+    Pour ODT : pages A4 avec le texte intégral, multi-pages automatique.
 
-    for line in text_content.split("\n"):
-        if y + line_height > height - margin:
-            break
-        draw.text((margin, y), line, fill="black", font=font)
-        y += line_height
+    Returns:
+        Bytes du PDF, ou None si la conversion échoue.
+    """
+    suffix = Path(filename).suffix.lower()
 
-    return img
+    pages_text = _extract_text_from_odf_xml(file_bytes, filename)
+
+    if not pages_text:
+        return None
+
+    # Créer le PDF avec fitz
+    pdf_doc = fitz.open()
+
+    if suffix == ".odp":
+        page_w, page_h = 960, 540  # 16:9 paysage en points
+        fontsize = 14
+    else:
+        page_w, page_h = 595, 842  # A4 portrait
+        fontsize = 11
+
+    margin = 40
+
+    for page_text in pages_text:
+        remaining = page_text
+        while remaining:
+            page = pdf_doc.new_page(width=page_w, height=page_h)
+            rect = fitz.Rect(margin, margin, page_w - margin, page_h - margin)
+            # insert_textbox retourne le surplus de texte qui ne rentre pas
+            rc = page.insert_textbox(
+                rect, remaining,
+                fontsize=fontsize,
+                fontname="helv",
+                align=0,  # left-align
+            )
+            if rc >= 0:
+                # Tout le texte a été inséré
+                break
+            # rc < 0 : overflow — estimer combien de texte rentre par page
+            # On prend environ 80% du texte et on passe au suivant
+            chars_per_page = max(int(len(remaining) * 0.7), 100)
+            # Trouver une coupure propre (fin de ligne ou de mot)
+            cut = remaining.rfind("\n", 0, chars_per_page)
+            if cut < 100:
+                cut = remaining.rfind(" ", 0, chars_per_page)
+            if cut < 50:
+                cut = chars_per_page
+            remaining = remaining[cut:].lstrip()
+
+    try:
+        pdf_bytes = pdf_doc.tobytes()
+        pdf_doc.close()
+        logger.info(f"Rendu ODF→PDF réussi pour {filename} ({len(pages_text)} section(s))")
+        return pdf_bytes
+    except Exception as e:
+        logger.warning(f"Erreur lors de la génération du PDF : {e}")
+        pdf_doc.close()
+        return None
 
 
 def encode_image(img: Image.Image) -> str:

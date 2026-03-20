@@ -14,9 +14,13 @@ import pdfplumber
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 from docx import Document as DocxDocument
 from pptx import Presentation
-from odf.opendocument import load as load_odf
-from odf import text, draw, table
-from odf.teletype import extractText
+try:
+    from odf.opendocument import load as load_odf
+    from odf import text, draw, table
+    from odf.teletype import extractText
+    _ODFPY_AVAILABLE = True
+except (ImportError, Exception):
+    _ODFPY_AVAILABLE = False
 
 from llm_service import count_tokens, _encoder
 
@@ -139,11 +143,127 @@ def _extract_from_odf(file: BinaryIO) -> List[dict]:
     - ODT : tente de respecter les sauts de page (hard & soft)
     - ODP : une slide = une "page"
     - Retour : liste de {"page": int, "text": str}
+
+    Essaie d'abord odfpy, puis lxml en fallback (bug pyexpat sur certains envs).
+    """
+    if _ODFPY_AVAILABLE:
+        result = _extract_from_odf_odfpy(file)
+        if result:
+            return result
+    # Fallback lxml
+    file.seek(0)
+    return _extract_from_odf_lxml(file)
+
+
+def _extract_from_odf_lxml(file: BinaryIO) -> List[dict]:
+    """
+    Extraction ODF via lxml + zipfile (pas de dépendance odfpy/defusedxml/expat).
+    Parse directement le content.xml du fichier ODF (ZIP).
+    """
+    import zipfile
+    from lxml.etree import fromstring
+
+    NS = {
+        "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
+        "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
+        "draw": "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0",
+        "table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
+        "fo": "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0",
+        "style": "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
+    }
+
+    raw = file.read()
+    file.seek(0)
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            content_xml = zf.read("content.xml")
+    except Exception as e:
+        print(f"Erreur lecture ODF ZIP : {e}")
+        return []
+
+    try:
+        root = fromstring(content_xml)
+    except Exception as e:
+        print(f"Erreur parsing content.xml : {e}")
+        return []
+
+    def _iter_text(element) -> str:
+        parts = []
+        if element.text:
+            parts.append(element.text)
+        for child in element:
+            parts.append(_iter_text(child))
+            if child.tail:
+                parts.append(child.tail)
+        return "".join(parts)
+
+    pages = []
+
+    # ─── 1. Présentation (ODP) ───
+    slides = root.findall(".//draw:page", NS)
+    if slides:
+        for i, slide in enumerate(slides, 1):
+            texts = []
+            for elem in slide.iter():
+                tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+                if tag in ("p", "h"):
+                    t = _iter_text(elem).strip()
+                    if t:
+                        texts.append(t)
+            slide_text = "\n".join(texts) if texts else ""
+            slide_text = re.sub(r'\s{2,}', ' ', slide_text)
+            slide_text = re.sub(r'\n\s*\n+', '\n\n', slide_text)
+            if slide_text.strip():
+                pages.append({"page": i, "text": slide_text.strip()})
+        if pages:
+            return pages
+
+    # ─── 2. Tableur (ODS) ───
+    table_elems = root.findall(".//table:table", NS)
+    if table_elems:
+        for i, tbl in enumerate(table_elems, 1):
+            table_text = []
+            for row in tbl.findall(".//table:table-row", NS):
+                row_cells = []
+                for cell in row.findall(".//table:table-cell", NS):
+                    cell_text = _iter_text(cell).strip()
+                    if cell_text:
+                        row_cells.append(cell_text)
+                if row_cells:
+                    table_text.append(" | ".join(row_cells))
+            if table_text:
+                pages.append({"page": i, "text": "\n".join(table_text)})
+        if pages:
+            return pages
+
+    # ─── 3. Document texte (ODT) ───
+    body = root.find(".//office:body/office:text", NS)
+    if body is None:
+        body = root
+
+    all_paragraphs = []
+    for elem in body.iter():
+        tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+        if tag in ("p", "h"):
+            t = _iter_text(elem).strip()
+            if t:
+                all_paragraphs.append(t)
+
+    if all_paragraphs:
+        pages.append({"page": 1, "text": "\n\n".join(all_paragraphs)})
+
+    return pages
+
+
+def _extract_from_odf_odfpy(file: BinaryIO) -> List[dict]:
+    """
+    Extraction ODF via odfpy (version originale).
     """
     pages = []
     try:
         doc = load_odf(file)
-        file.seek(0)  # au cas où
+        file.seek(0)
 
         # ───────────────────────────────────────────────
         # 1. Cas présentation → un slide = une page
@@ -151,7 +271,6 @@ def _extract_from_odf(file: BinaryIO) -> List[dict]:
         slide_elements = doc.getElementsByType(draw.Page)
         if slide_elements:
             for i, slide in enumerate(slide_elements, 1):
-                # On prend tout le texte de la slide (formes, notes, etc.)
                 slide_text = extractText(slide).strip()
                 slide_text = re.sub(r'\s{2,}', ' ', slide_text)
                 slide_text = re.sub(r'\n\s*\n+', '\n\n', slide_text)
@@ -184,89 +303,19 @@ def _extract_from_odf(file: BinaryIO) -> List[dict]:
                 return pages
 
         # ───────────────────────────────────────────────
-        # 3. Cas texte (ODT) → on essaie de détecter les sauts de page
+        # 3. Cas texte (ODT)
         # ───────────────────────────────────────────────
-        current_page = []
-        page_number = 1
-
-        def flush_current_page():
-            nonlocal page_number
-            if current_page:
-                text_block = "\n\n".join(current_page).strip()
-                text_block = re.sub(r'\s{3,}', ' ', text_block)
-                text_block = re.sub(r'\n\s*\n{2,}', '\n\n', text_block)
-                if text_block:
-                    pages.append({"page": page_number, "text": text_block})
-                    page_number += 1
-            current_page.clear()
-
-        # On parcourt tous les éléments text:p et text:h
+        all_paragraphs = []
         for elem in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
-            # ─── Détection saut de page AVANT ───────────────────────
-            style_name = elem.getAttribute("stylename") or elem.getAttribute("style-name")
-            if style_name:
-                style = doc.getStyleByName(style_name)
-                if style:
-                    pp = style.getElementsByType(text.ParagraphProperties)
-                    if pp:
-                        br_before = pp[0].getAttribute("breakbefore") or pp[0].getAttribute("page-break-before")
-                        if br_before and br_before.lower() in ("page", "always"):
-                            flush_current_page()
-
-            # ─── Extraction du texte du paragraphe ──────────────────
-            para_text = extractText(elem).strip()
-            if not para_text:
-                continue
-
-            # On regarde s'il y a des soft-page-breaks à l'intérieur
-            # (c'est rare dans les <text:p>, mais possible dans les spans)
-            children = elem.childNodes
-            has_soft_break = any(
-                isinstance(n, text.SoftPageBreak) or
-                (hasattr(n, "tagName") and "soft-page-break" in n.tagName.lower())
-                for n in children if hasattr(n, "tagName")
-            )
-
-            if has_soft_break:
-                # Approximation : on flush avant le soft break
-                current_page.append(para_text)
-                flush_current_page()
-            else:
-                current_page.append(para_text)
-
-            # ─── Détection saut de page APRÈS ───────────────────────
-            if style_name and style:
-                pp = style.getElementsByType(text.ParagraphProperties)
-                if pp:
-                    br_after = pp[0].getAttribute("breakafter") or pp[0].getAttribute("page-break-after")
-                    if br_after and br_after.lower() in ("page", "always"):
-                        flush_current_page()
-
-        # Ne pas oublier la dernière page
-        flush_current_page()
-
-        # Fallback ultra-simple si on n'a rien trouvé
-        if not pages:
-            all_paragraphs = []
-            for elem in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
-                t = extractText(elem).strip()
-                if t:
-                    all_paragraphs.append(t)
-            if all_paragraphs:
-                pages.append({
-                    "page": 1,
-                    "text": "\n\n".join(all_paragraphs)
-                })
+            t = extractText(elem).strip()
+            if t:
+                all_paragraphs.append(t)
+        if all_paragraphs:
+            pages.append({"page": 1, "text": "\n\n".join(all_paragraphs)})
 
     except Exception as e:
-        print(f"Erreur extraction ODF/ODT : {e}")
-        # Fallback ultime : texte brut
-        try:
-            raw_text = extractText(doc).strip()
-            if raw_text:
-                pages = [{"page": 1, "text": raw_text}]
-        except:
-            pass
+        print(f"Erreur extraction ODF (odfpy) : {e}")
+        file.seek(0)
 
     return pages
     
@@ -538,7 +587,7 @@ def extract_and_chunk_vision(
         from vision_processor import (
             extract_pages_as_base64, convert_office_to_pdf,
             OFFICE_EXTENSIONS, extract_images_from_odf, encode_image,
-            calculate_page_tokens, render_odf_as_images,
+            calculate_page_tokens, render_odf_to_pdf,
         )
 
         is_pdf = filename.endswith(".pdf")
@@ -560,11 +609,22 @@ def extract_and_chunk_vision(
             if pdf_bytes is not None:
                 pdf_input = io.BytesIO(pdf_bytes)
             elif suffix in (".odt", ".odp"):
-                # Fallback ODF 1 : extraire les images embarquées du ZIP
+                # Fallback ODF 1 : rendu odfpy+fitz → PDF → images
+                odf_pdf = render_odf_to_pdf(file_bytes, filename)
+                if odf_pdf:
+                    pdf_input = io.BytesIO(odf_pdf)
+                    pdf_input.seek(0)
+                    page_data = extract_pages_as_base64(
+                        pdf_input,
+                        text_token_buffer=text_token_buffer,
+                        min_dpi=min_dpi,
+                        max_dpi=max_dpi,
+                        model_seq_len=model_seq_len,
+                    )
+                    if page_data:
+                        return _vision_chunks_from_page_data(page_data, max_images_per_chunk)
+                # Fallback ODF 2 : extraire les images embarquées du ZIP
                 odf_images = extract_images_from_odf(file_bytes)
-                if not odf_images:
-                    # Fallback ODF 2 : rendu PIL du texte en images
-                    odf_images = render_odf_as_images(file_bytes, filename)
                 if odf_images:
                     page_data = []
                     for i, img in enumerate(odf_images):
@@ -657,7 +717,7 @@ def extract_and_chunk_vision_text(
     try:
         from vision_processor import (
             smart_prepare_media, encode_image, convert_office_to_pdf,
-            OFFICE_EXTENSIONS, extract_images_from_odf, render_odf_as_images,
+            OFFICE_EXTENSIONS, extract_images_from_odf, render_odf_to_pdf,
         )
 
         is_pdf = filename.endswith(".pdf")
@@ -677,26 +737,27 @@ def extract_and_chunk_vision_text(
             raw = file.read()
             file.seek(0)
             pdf_bytes = convert_office_to_pdf(raw, filename)
+            if pdf_bytes is None and suffix in (".odt", ".odp"):
+                # Fallback ODF 1 : rendu odfpy+fitz → PDF
+                pdf_bytes = render_odf_to_pdf(raw, filename)
+            if pdf_bytes is None and suffix in (".odt", ".odp"):
+                # Fallback ODF 2 : texte odfpy + images du ZIP
+                text_pages = _extract_from_odf(file)
+                odf_images = extract_images_from_odf(raw)
+                if odf_images or text_pages:
+                    images_b64 = [encode_image(img) for img in odf_images]
+                    text_parts = [
+                        f"[Page {p['page']}]\n{p['text']}" for p in text_pages if p["text"]
+                    ]
+                    combined_text = "\n\n".join(text_parts)
+                    return [TextChunk(
+                        text=combined_text,
+                        source_pages=[p["page"] for p in text_pages],
+                        token_count=count_tokens(combined_text),
+                        page_images=images_b64,
+                    )]
+                return extract_and_chunk(file, mode="page")
             if pdf_bytes is None:
-                if suffix in (".odt", ".odp"):
-                    # Fallback ODF : texte odfpy + images du ZIP ou rendu PIL
-                    text_pages = _extract_from_odf(file)
-                    odf_images = extract_images_from_odf(raw)
-                    if not odf_images:
-                        odf_images = render_odf_as_images(raw, filename)
-                    if odf_images or text_pages:
-                        images_b64 = [encode_image(img) for img in odf_images]
-                        text_parts = [
-                            f"[Page {p['page']}]\n{p['text']}" for p in text_pages if p["text"]
-                        ]
-                        combined_text = "\n\n".join(text_parts)
-                        return [TextChunk(
-                            text=combined_text,
-                            source_pages=[p["page"] for p in text_pages],
-                            token_count=count_tokens(combined_text),
-                            page_images=images_b64,
-                        )]
-                    return extract_and_chunk(file, mode="page")
                 print(f"Conversion vision+texte impossible pour {filename}, fallback texte.")
                 return extract_and_chunk(file, mode="page")
 
