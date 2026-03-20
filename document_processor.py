@@ -567,7 +567,7 @@ def _vision_chunks_from_page_data(page_data: list, max_images_per_chunk: int) ->
 
 def extract_and_chunk_vision(
     file: BinaryIO,
-    max_images_per_chunk: int = 50,
+    max_images_per_chunk: int = 10,
     min_dpi: int = 65,
     max_dpi: int = 80,
     model_seq_len: int = 80000,
@@ -667,7 +667,7 @@ def extract_and_chunk_vision(
 
 def extract_and_chunk_multiple_vision(
     files: List[BinaryIO],
-    max_images_per_chunk: int = 50,
+    max_images_per_chunk: int = 10,
     min_dpi: int = 65,
     max_dpi: int = 80,
     model_seq_len: int = 80000,

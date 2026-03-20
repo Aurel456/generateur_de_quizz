@@ -212,7 +212,7 @@ def _get_cached(key: str, fn, *args):
 
 with st.sidebar:
     sessions_label = "📡 Fermer Sessions" if st.session_state._show_sessions else "📡 Sessions Partagées"
-    if st.button(sessions_label, use_container_width=True, key="sessions_top_btn"):
+    if st.button(sessions_label, width='stretch', key="sessions_top_btn"):
         st.session_state._show_sessions = not st.session_state._show_sessions
         st.rerun()
 
@@ -489,10 +489,10 @@ if uploaded_files:
                             st.markdown("---")
                             col_p1, col_p2 = st.columns(2)
                             with col_p1:
-                                if st.button("Standard (65 DPI)", use_container_width=True, key="dpi_preset_65"):
+                                if st.button("Standard (65 DPI)", width='stretch', key="dpi_preset_65"):
                                     st.session_state["vision_dpi_slider"] = 65
                             with col_p2:
-                                if st.button("Haute res (80 DPI)", use_container_width=True, key="dpi_preset_80"):
+                                if st.button("Haute res (80 DPI)", width='stretch', key="dpi_preset_80"):
                                     st.session_state["vision_dpi_slider"] = 80
 
                             user_dpi = st.slider(
@@ -541,7 +541,7 @@ if uploaded_files:
                                 st.image(
                                     preview_img,
                                     caption=f"Page {preview_page + 1} — {preview_dpi} DPI ({preview_img.width}x{preview_img.height} px)",
-                                    use_container_width=True,
+                                    width='stretch',
                                 )
                             else:
                                 st.info("Apercu non disponible pour cette page.")
@@ -943,7 +943,7 @@ if uploaded_files:
             if st.button(
                 "🔍 Vérifier les réponses par l'IA",
                 type="secondary",
-                use_container_width=True,
+                width='stretch',
                 key="verify_quiz_btn",
             ):
                 verify_bar = st.progress(0, text="Vérification en cours...")
