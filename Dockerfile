@@ -10,6 +10,11 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     libgomp1 \
     curl \
+    libreoffice-core \
+    libreoffice-writer \
+    libreoffice-impress \
+    libreoffice-calc \
+    --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Définissez le répertoire de travail dans le conteneur
