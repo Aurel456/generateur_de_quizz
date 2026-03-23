@@ -698,7 +698,7 @@ def extract_and_chunk_multiple_vision(
 
 def extract_and_chunk_vision_text(
     file: BinaryIO,
-    max_pages_per_chunk: int = 50,
+    max_pages_per_chunk: int = 10,
     min_dpi: int = 65,
     max_dpi: int = 80,
     model_seq_len: int = 80000,
@@ -825,7 +825,7 @@ def extract_and_chunk_vision_text(
 
 def extract_and_chunk_multiple_vision_text(
     files: List[BinaryIO],
-    max_pages_per_chunk: int = 50,
+    max_pages_per_chunk: int = 10,
     min_dpi: int = 65,
     max_dpi: int = 80,
     model_seq_len: int = 80000,
