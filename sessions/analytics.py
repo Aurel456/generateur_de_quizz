@@ -8,7 +8,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
-from session_store import get_session_analytics, list_sessions, deactivate_session
+from sessions.session_store import get_session_analytics, list_sessions, deactivate_session
 
 
 def render_analytics_dashboard(session_code: str):

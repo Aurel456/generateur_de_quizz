@@ -6,33 +6,33 @@ import json
 import streamlit as st
 import time
 
-from document_processor import (
+from processing.document_processor import (
     extract_and_chunk_multiple, extract_and_chunk_multiple_vision,
     extract_and_chunk_multiple_vision_text,
     get_text_stats_multiple, count_tokens,
 )
 try:
-    from vision_processor import analyze_pdf_dpi, render_page_preview, estimate_tokens_for_dpi
+    from processing.vision_processor import analyze_pdf_dpi, render_page_preview, estimate_tokens_for_dpi
     _VISION_AVAILABLE = True
 except ImportError:
     _VISION_AVAILABLE = False
-from llm_service import VISION_MODEL_NAME
-from quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
-from exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
-from quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
-from notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
-from ui_components import render_stat_card, render_source_info, render_difficulty_badge
-from stats_manager import load_stats, increment_stats
-from chat_mode import (
+from core.llm_service import VISION_MODEL_NAME
+from generation.quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
+from generation.exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
+from export.quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
+from generation.notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
+from ui.ui_components import render_stat_card, render_source_info, render_difficulty_badge
+from core.stats_manager import load_stats, increment_stats
+from generation.chat_mode import (
     ChatSession, ChatState, init_session, process_user_message,
     extract_generation_config, generate_quiz_direct, generate_exercises_direct,
 )
-from session_store import (
+from sessions.session_store import (
     create_session as create_quiz_session, deactivate_session,
     list_sessions, get_session as get_quiz_session,
 )
-from analytics import render_analytics_dashboard, render_session_selector
-from quiz_verifier import verify_quiz, QuestionVerificationResult
+from sessions.analytics import render_analytics_dashboard, render_session_selector
+from generation.quiz_verifier import verify_quiz, QuestionVerificationResult
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
 

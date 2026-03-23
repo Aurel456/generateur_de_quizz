@@ -9,9 +9,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
-from llm_service import call_llm_json, count_tokens, MODEL_NAME
-from quiz_generator import Quiz, QuizQuestion
-from document_processor import TextChunk
+from core.llm_service import call_llm_json, count_tokens, MODEL_NAME
+from generation.quiz_generator import Quiz, QuizQuestion
+from processing.document_processor import TextChunk
 
 logger = logging.getLogger(__name__)
 

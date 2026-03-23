@@ -6,11 +6,11 @@ import string
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from llm_service import call_llm_json, call_llm_vision_json, count_tokens, MODEL_CONTEXT_WINDOW
-from document_processor import TextChunk
+from core.llm_service import call_llm_json, call_llm_vision_json, count_tokens, MODEL_CONTEXT_WINDOW
+from processing.document_processor import TextChunk
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from notion_detector import Notion
+    from generation.notion_detector import Notion
 
 
 @dataclass

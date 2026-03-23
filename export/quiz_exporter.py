@@ -7,10 +7,10 @@ import io
 import csv
 from jinja2 import Template
 
-from quiz_generator import Quiz
+from generation.quiz_generator import Quiz
 
-# Chemin du template
-TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+# Chemin du template (remonter d'un niveau depuis export/ vers la racine du projet)
+TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 TEMPLATE_FILE = os.path.join(TEMPLATE_DIR, "quiz_template.html")
 
 

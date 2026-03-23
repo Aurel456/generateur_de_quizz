@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
-from llm_service import call_llm_json, call_llm_vision_json
+from core.llm_service import call_llm_json, call_llm_vision_json
 
 logger = logging.getLogger(__name__)
 

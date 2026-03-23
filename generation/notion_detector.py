@@ -8,8 +8,8 @@ clés identifiés dans les documents. Elles guident la génération de quizz et 
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 
-from llm_service import call_llm_json, call_llm_vision_json, call_llm
-from document_processor import TextChunk
+from core.llm_service import call_llm_json, call_llm_vision_json, call_llm
+from processing.document_processor import TextChunk
 
 
 @dataclass

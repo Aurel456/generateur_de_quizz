@@ -13,10 +13,10 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from llm_service import call_llm_chat, call_llm_chat_json
-from notion_detector import Notion
-from quiz_generator import Quiz, QuizQuestion
-from exercise_generator import Exercise
+from core.llm_service import call_llm_chat, call_llm_chat_json
+from generation.notion_detector import Notion
+from generation.quiz_generator import Quiz, QuizQuestion
+from generation.exercise_generator import Exercise
 
 
 class ChatState(str, Enum):

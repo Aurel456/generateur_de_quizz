@@ -7,7 +7,7 @@ Accessible via URL : http://host:port/quiz_session?code=ABC123
 import json
 import streamlit as st
 
-from session_store import get_session, submit_result
+from sessions.session_store import get_session, submit_result
 
 st.set_page_config(
     page_title="Quizz en ligne",

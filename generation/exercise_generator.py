@@ -16,7 +16,7 @@ from langchain_openai import ChatOpenAI
 from langchain_experimental.tools import PythonREPLTool
 from langgraph.prebuilt import create_react_agent
 
-from llm_service import (
+from core.llm_service import (
     call_llm_json,
     call_llm_vision_json,
     count_tokens,
@@ -26,7 +26,7 @@ from llm_service import (
     VISION_MODEL_NAME,
     MODEL_CONTEXT_WINDOW,
 )
-from document_processor import TextChunk
+from processing.document_processor import TextChunk
 
 # Timeout pour l'exécution sandbox (en secondes)
 SANDBOX_TIMEOUT = 30

@@ -22,7 +22,7 @@ try:
 except (ImportError, Exception):
     _ODFPY_AVAILABLE = False
 
-from llm_service import count_tokens, _encoder
+from core.llm_service import count_tokens, _encoder
 
 
 @dataclass
