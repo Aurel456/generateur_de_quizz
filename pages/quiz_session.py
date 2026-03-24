@@ -7,7 +7,7 @@ Accessible via URL : http://host:port/quiz_session?code=ABC123
 import json
 import streamlit as st
 
-from sessions.session_store import get_session, submit_result
+from sessions.session_store import get_session, submit_result, get_next_subset
 
 st.set_page_config(
     page_title="Quizz en ligne",
@@ -77,7 +77,7 @@ if not session.is_active:
     st.stop()
 
 quiz_data = json.loads(session.quiz_json)
-questions = quiz_data.get("questions", [])
+is_pool_session = bool(session.pool_json)
 
 # ─── Session state ───────────────────────────────────────────────────────────
 
@@ -87,15 +87,10 @@ if "submitted" not in st.session_state:
     st.session_state.submitted = False
 if "result" not in st.session_state:
     st.session_state.result = None
+if "pool_subset" not in st.session_state:
+    st.session_state.pool_subset = None  # Questions subset for pool sessions
 
 # ─── Identification du participant ────────────────────────────────────────────
-
-st.markdown(f"""
-<div class="quiz-header">
-    <h1>📝 {session.title}</h1>
-    <p style="color: #a0a0b8;">{len(questions)} questions</p>
-</div>
-""", unsafe_allow_html=True)
 
 if not st.session_state.submitted:
     participant_name = st.text_input(
@@ -106,8 +101,30 @@ if not st.session_state.submitted:
     st.session_state.participant_name = participant_name
 
     if not participant_name:
+        st.markdown(f"""
+        <div class="quiz-header">
+            <h1>📝 {session.title}</h1>
+        </div>
+        """, unsafe_allow_html=True)
         st.info("Entrez votre nom pour accéder au quizz.")
         st.stop()
+
+    # Charger le sous-ensemble pour les sessions pool
+    if is_pool_session and st.session_state.pool_subset is None:
+        with st.spinner("Préparation de votre quizz personnalisé…"):
+            st.session_state.pool_subset = get_next_subset(session_code, participant_name)
+
+    questions = st.session_state.pool_subset if is_pool_session else quiz_data.get("questions", [])
+
+    pool_size = len(json.loads(session.pool_json)) if is_pool_session else None
+    pool_label = f" (pool de {pool_size})" if pool_size else ""
+
+    st.markdown(f"""
+    <div class="quiz-header">
+        <h1>📝 {session.title}</h1>
+        <p style="color: #a0a0b8;">{len(questions)} questions{pool_label}</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.divider()
 
@@ -169,7 +186,10 @@ if not st.session_state.submitted:
 
     if st.button("📤 Soumettre mes réponses", type="primary", width='stretch', disabled=not all_answered):
         with st.spinner("Envoi des résultats..."):
-            result = submit_result(session_code, participant_name, answers)
+            result = submit_result(
+                session_code, participant_name, answers,
+                questions_override=questions if is_pool_session else None,
+            )
             if result:
                 st.session_state.submitted = True
                 st.session_state.result = result
@@ -183,6 +203,12 @@ if not st.session_state.submitted:
 
 else:
     # ─── Affichage des résultats ──────────────────────────────────────────────
+
+    # Pour les résultats, on reconstruit la liste de questions affichées
+    if is_pool_session and st.session_state.pool_subset is not None:
+        questions = st.session_state.pool_subset
+    else:
+        questions = quiz_data.get("questions", [])
 
     result = st.session_state.result
     if result:
@@ -244,11 +270,31 @@ else:
 
         # Boutons de refaire et rafraîchir
         st.divider()
+
+        # Bouton de relance pour sessions pool si sous le seuil
+        if is_pool_session:
+            threshold = session.pass_threshold or 0.7
+            threshold_pct = threshold * 100
+            if pct < threshold_pct:
+                st.warning(
+                    f"Score insuffisant ({pct:.0f}% < {threshold_pct:.0f}% requis). "
+                    "Vous pouvez réessayer avec de nouvelles questions."
+                )
+                if st.button("🔁 Réessayer avec de nouvelles questions", type="primary", width='stretch'):
+                    st.session_state.submitted = False
+                    st.session_state.result = None
+                    st.session_state.pool_subset = None  # Force refresh of subset
+                    st.rerun()
+            else:
+                st.success(f"✅ Seuil atteint ({pct:.0f}% ≥ {threshold_pct:.0f}%). Félicitations !")
+
         col_redo, col_refresh = st.columns(2)
         with col_redo:
-            if st.button("🔄 Refaire le quizz", width='stretch'):
+            redo_label = "🔄 Refaire le quizz" if not is_pool_session else "🔄 Recommencer depuis le début"
+            if st.button(redo_label, width='stretch'):
                 st.session_state.submitted = False
                 st.session_state.result = None
+                st.session_state.pool_subset = None
                 st.rerun()
         with col_refresh:
             if st.button("🔃 Rafraîchir la page", width='stretch'):

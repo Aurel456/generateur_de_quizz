@@ -21,6 +21,7 @@ class Notion:
     source_pages: List[int] = field(default_factory=list)
     enabled: bool = True
     category: str = ""
+    question_count: int = 0  # Nombre de questions générées couvrant cette notion
 
 
 def _build_detection_prompt_incremental(
@@ -61,6 +62,7 @@ RÈGLES :
 4. Chaque notion doit avoir un titre concis et une description claire
 5. Cite le document source et les pages où la notion apparaît
 6. Ordonne les notions par importance pédagogique
+7. Pour chaque notion, attribue une catégorie thématique (ex: "Fondements", "Procédures", "Calculs", "Cas particuliers", "Définitions") qui regroupe logiquement les notions selon la structure du document.
 
 FORMAT DE RÉPONSE (JSON strict) :
 {{
@@ -69,7 +71,8 @@ FORMAT DE RÉPONSE (JSON strict) :
             "title": "Titre concis de la notion",
             "description": "Description claire de la notion en 1-3 phrases",
             "source_document": "nom_du_fichier.pdf",
-            "source_pages": [1, 2, 3]
+            "source_pages": [1, 2, 3],
+            "category": "Fondements"
         }}
     ]
 }}"""
@@ -96,6 +99,7 @@ def _parse_notions_response(result: dict) -> List[Notion]:
                 source_document=n_data.get("source_document", ""),
                 source_pages=n_data.get("source_pages", []),
                 enabled=True,
+                category=n_data.get("category", ""),
             )
             notions.append(notion)
         except (KeyError, TypeError):

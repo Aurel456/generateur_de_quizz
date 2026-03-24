@@ -16,8 +16,8 @@ try:
     _VISION_AVAILABLE = True
 except ImportError:
     _VISION_AVAILABLE = False
-from core.llm_service import VISION_MODEL_NAME
-from generation.quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS
+from core.llm_service import VISION_MODEL_NAME, call_llm_chat
+from generation.quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS, QUIZ_DEFAULT_PERSONA, QUIZ_FIXED_RULES_DISPLAY
 from generation.exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
 from export.quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
 from generation.notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
@@ -28,11 +28,12 @@ from generation.chat_mode import (
     extract_generation_config, generate_quiz_direct, generate_exercises_direct,
 )
 from sessions.session_store import (
-    create_session as create_quiz_session, deactivate_session,
-    list_sessions, get_session as get_quiz_session,
+    create_session as create_quiz_session, create_pool_session,
+    deactivate_session, list_sessions, get_session as get_quiz_session,
 )
 from sessions.analytics import render_analytics_dashboard, render_session_selector
 from generation.quiz_verifier import verify_quiz, QuestionVerificationResult
+from generation.question_editor import improve_question_with_llm
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
 
@@ -182,6 +183,8 @@ if "pdf_stats" not in st.session_state:
     st.session_state.pdf_stats = None
 if "difficulty_prompts" not in st.session_state:
     st.session_state.difficulty_prompts = DIFFICULTY_PROMPTS.copy()
+if "quiz_persona" not in st.session_state:
+    st.session_state.quiz_persona = QUIZ_DEFAULT_PERSONA
 if "notions" not in st.session_state:
     st.session_state.notions = None
 if "exercise_prompts" not in st.session_state:
@@ -194,6 +197,12 @@ if "_download_cache" not in st.session_state:
     st.session_state._download_cache = {}
 if "_show_sessions" not in st.session_state:
     st.session_state._show_sessions = False
+if "guide_chat_messages" not in st.session_state:
+    st.session_state.guide_chat_messages = []
+if "_editing_question_idx" not in st.session_state:
+    st.session_state._editing_question_idx = None
+if "_ai_assist_instruction" not in st.session_state:
+    st.session_state._ai_assist_instruction = {}
 
 
 def _invalidate_download_cache():
@@ -215,6 +224,8 @@ with st.sidebar:
     if st.button(sessions_label, width='stretch', key="sessions_top_btn"):
         st.session_state._show_sessions = not st.session_state._show_sessions
         st.rerun()
+
+    st.page_link("pages/work_session.py", label="🛠️ Ateliers Formateurs", icon=None)
 
     st.divider()
     st.markdown("## 🎯 Mode")
@@ -618,8 +629,8 @@ if uploaded_files:
 
     # ─── Helper pour afficher une ligne de notion ───────────────────────────────
 
-    def _render_notion_row(idx, notion):
-        col_check, col_text, col_del = st.columns([0.5, 8, 1])
+    def _render_notion_row(idx, notion, question_counts=None):
+        col_check, col_text, col_count, col_del = st.columns([0.5, 7.5, 1.5, 1])
         with col_check:
             new_enabled = st.checkbox(
                 "act", value=notion.enabled, key=f"notion_check_{idx}", label_visibility="collapsed"
@@ -638,6 +649,19 @@ if uploaded_files:
                 f"<span style='color: #a0a0b8; font-size: 0.85em;'>{notion.description}{source_info}</span></div>",
                 unsafe_allow_html=True
             )
+        with col_count:
+            if question_counts is not None:
+                count = question_counts.get(notion.title, 0)
+                if count == 0:
+                    st.markdown(
+                        "<span style='color:#e07b39; font-size:0.8em;'>0 questions ⚠️</span>",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(
+                        f"<span style='color:#4caf50; font-size:0.8em;'>{count} question{'s' if count > 1 else ''} ✅</span>",
+                        unsafe_allow_html=True
+                    )
         with col_del:
             if st.button("🗑️", key=f"notion_del_{idx}", help="Supprimer cette notion"):
                 st.session_state.notions.pop(idx)
@@ -645,7 +669,7 @@ if uploaded_files:
 
     # ─── Onglets Quizz / Exercices ──────────────────────────────────────────────
 
-    tab_notions, tab_quiz, tab_exercises, tab_preview = st.tabs(["📚 Notions Fondamentales", "🎯 Quizz QCM", "🧮 Exercices", "👁️ Aperçu texte"])
+    tab_notions, tab_quiz, tab_exercises, tab_preview, tab_guide = st.tabs(["📚 Notions Fondamentales", "🎯 Quizz QCM", "🧮 Exercices", "👁️ Aperçu texte", "❓ Guide"])
 
     # ═══ ONGLET NOTIONS FONDAMENTALES ════════════════════════════════════════════
 
@@ -705,8 +729,35 @@ if uploaded_files:
 
             st.divider()
 
+            # Calculer le comptage de questions par notion
+            notion_question_counts = {}
+            _current_quiz = st.session_state.get("quiz")
+            if _current_quiz is not None and _current_quiz.questions:
+                for q in _current_quiz.questions:
+                    for n_title in q.related_notions:
+                        notion_question_counts[n_title] = notion_question_counts.get(n_title, 0) + 1
+            show_counts = bool(notion_question_counts)
+
+            if show_counts:
+                uncovered = sum(1 for n in notions if n.enabled and notion_question_counts.get(n.title, 0) == 0)
+                if uncovered:
+                    st.warning(f"⚠️ {uncovered} notion(s) active(s) sans questions générées.")
+
+            # Affichage groupé par catégorie
+            from collections import defaultdict
+            notions_by_cat = defaultdict(list)
             for idx, notion in enumerate(notions):
-                _render_notion_row(idx, notion)
+                cat = notion.category or "Général"
+                notions_by_cat[cat].append((idx, notion))
+
+            if len(notions_by_cat) > 1:
+                for cat, cat_notions in notions_by_cat.items():
+                    st.markdown(f"**{cat}**")
+                    for idx, notion in cat_notions:
+                        _render_notion_row(idx, notion, notion_question_counts if show_counts else None)
+            else:
+                for idx, notion in enumerate(notions):
+                    _render_notion_row(idx, notion, notion_question_counts if show_counts else None)
 
             st.divider()
 
@@ -776,32 +827,67 @@ if uploaded_files:
                 help="Nombre de réponses proposées par question (A à G)."
             )
 
-            num_correct = st.slider(
-                "Nombre de bonnes réponses par question",
-                min_value=1,
-                max_value=num_choices - 1,
-                value=1,
-                help="Combien de réponses correctes parmi les choix."
+            correct_mode = st.radio(
+                "Nombre de bonnes réponses",
+                ["Fixe", "Variable (1 à N)"],
+                horizontal=True,
+                help="Fixe : même nombre pour toutes les questions. Variable : le LLM choisit entre 1 et N-1 bonnes réponses par question.",
+            )
+            variable_correct = correct_mode == "Variable (1 à N)"
+            if not variable_correct:
+                num_correct = st.slider(
+                    "Nombre exact de bonnes réponses",
+                    min_value=1,
+                    max_value=num_choices - 1,
+                    value=1,
+                    help="Combien de réponses correctes parmi les choix."
+                )
+            else:
+                num_correct = 1  # valeur par défaut ignorée en mode variable
+
+            notion_mixing = st.toggle(
+                "Mélanger plusieurs notions par question",
+                value=True,
+                help="Activé : le LLM peut combiner plusieurs notions dans une même question. Désactivé : chaque question porte sur une seule notion.",
             )
 
         # 📝 Édition des prompts
-        with st.expander("📝 Personnaliser les Prompts de Difficulté"):
-            st.info("Modifiez les instructions envoyées à l'IA pour chaque niveau de difficulté.")
+        with st.expander("📝 Personnaliser les Prompts"):
+            st.markdown("**1️⃣ Personnalité de l'expert** *(modifiable)*")
+            st.caption("Définit le rôle et le style de l'IA pour toutes les questions.")
+            col_persona, col_reset = st.columns([5, 1])
+            with col_persona:
+                st.session_state.quiz_persona = st.text_area(
+                    "Persona",
+                    value=st.session_state.quiz_persona,
+                    height=80,
+                    label_visibility="collapsed",
+                )
+            with col_reset:
+                if st.button("↺ Reset", key="reset_persona", help="Restaurer le persona par défaut"):
+                    st.session_state.quiz_persona = QUIZ_DEFAULT_PERSONA
+                    st.rerun()
+
+            st.markdown("**2️⃣ Instructions par niveau de difficulté** *(modifiable)*")
+            st.caption("Ces instructions précisent à l'IA le type de questions à générer pour chaque niveau.")
             st.session_state.difficulty_prompts["facile"] = st.text_area(
-                "Prompt Facile", 
+                "🟢 Facile",
                 value=st.session_state.difficulty_prompts["facile"],
                 height=100
             )
             st.session_state.difficulty_prompts["moyen"] = st.text_area(
-                "Prompt Moyen", 
+                "🟡 Moyen",
                 value=st.session_state.difficulty_prompts["moyen"],
                 height=100
             )
             st.session_state.difficulty_prompts["difficile"] = st.text_area(
-                "Prompt Difficile", 
+                "🔴 Difficile",
                 value=st.session_state.difficulty_prompts["difficile"],
                 height=100
             )
+
+            st.markdown("**3️⃣ Règles fixes** 🔒 *(non modifiables — garantissent la qualité et le parsing)*")
+            st.code(QUIZ_FIXED_RULES_DISPLAY, language=None)
 
         # Bouton de génération
         if st.button("🚀 Générer le Quizz", type="primary", width='stretch'):
@@ -840,6 +926,9 @@ if uploaded_files:
                     notions=active_notions,
                     batch_mode=batch_mode,
                     vision_mode=vision_enabled,
+                    variable_correct=variable_correct,
+                    persona=st.session_state.quiz_persona,
+                    notion_mixing=notion_mixing,
                 )
                 st.session_state.quiz = quiz
                 st.session_state.verification_results = None
@@ -865,35 +954,117 @@ if uploaded_files:
                 # Badge difficulté
                 diff_label = q.difficulty_level or "moyen"
                 diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
-                expander_title = f"{diff_emoji} **Q{i+1}.** {q.question}"
+                expander_title = f"{diff_emoji} **Q{i+1}.** {q.question[:100]}{'…' if len(q.question) > 100 else ''}"
+                is_editing = (st.session_state._editing_question_idx == i)
 
-                with st.expander(expander_title, expanded=(i < 3)):
-                    # Badge difficulté en haut
-                    render_difficulty_badge(diff_label)
+                with st.expander(expander_title, expanded=(i < 3 or is_editing)):
+                    if is_editing:
+                        # ── Mode édition ────────────────────────────────────
+                        st.markdown("#### ✏️ Édition de la question")
 
-                    # Tags notions
-                    if q.related_notions:
-                        tags_html = " ".join(
-                            f'<span style="background:rgba(108,99,255,0.15);color:#6c63ff;'
-                            f'padding:0.2rem 0.6rem;border-radius:12px;font-size:0.8rem;'
-                            f'margin-right:0.3rem;display:inline-block;margin-bottom:0.3rem;">{n}</span>'
-                            for n in q.related_notions
+                        edit_question = st.text_area(
+                            "Énoncé", value=q.question, key=f"edit_q_{i}", height=80,
                         )
-                        st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
+                        st.markdown("**Choix de réponse**")
+                        edit_choices = {}
+                        for label, text in q.choices.items():
+                            edit_choices[label] = st.text_input(
+                                f"Choix {label}", value=text, key=f"edit_choice_{i}_{label}",
+                            )
+                        edit_correct = st.multiselect(
+                            "Bonne(s) réponse(s)",
+                            options=list(q.choices.keys()),
+                            default=q.correct_answers,
+                            key=f"edit_correct_{i}",
+                        )
+                        edit_explanation = st.text_area(
+                            "Explication", value=q.explanation, key=f"edit_exp_{i}", height=80,
+                        )
+                        edit_citation = st.text_input(
+                            "Citation source", value=q.citation, key=f"edit_cit_{i}",
+                        )
 
-                    for label, text in q.choices.items():
-                        is_correct = label in q.correct_answers
-                        icon = "✅" if is_correct else "⬜"
-                        st.markdown(f"**{icon} {label}.** {text}")
+                        col_save, col_cancel, col_delete = st.columns([2, 2, 1])
+                        with col_save:
+                            if st.button("💾 Sauvegarder", key=f"save_q_{i}", type="primary"):
+                                from dataclasses import replace as dc_replace
+                                quiz.questions[i] = dc_replace(
+                                    q,
+                                    question=edit_question,
+                                    choices=edit_choices,
+                                    correct_answers=edit_correct,
+                                    explanation=edit_explanation,
+                                    citation=edit_citation,
+                                )
+                                st.session_state._editing_question_idx = None
+                                _invalidate_download_cache()
+                                st.rerun()
+                        with col_cancel:
+                            if st.button("✖️ Annuler", key=f"cancel_q_{i}"):
+                                st.session_state._editing_question_idx = None
+                                st.rerun()
+                        with col_delete:
+                            if st.button("🗑️", key=f"delete_q_{i}", help="Supprimer cette question"):
+                                quiz.questions.pop(i)
+                                st.session_state._editing_question_idx = None
+                                _invalidate_download_cache()
+                                st.rerun()
 
-                    if q.explanation:
-                        st.info(f"💡 **Explication :** {q.explanation}")
+                        st.divider()
+                        st.markdown("**🤖 Assistance IA**")
+                        ai_instr = st.text_input(
+                            "Instruction pour l'IA",
+                            placeholder="Ex: Rends l'explication plus concise, ajoute un distracteur plausible…",
+                            key=f"ai_instr_{i}",
+                        )
+                        if st.button("🤖 Améliorer par IA", key=f"ai_improve_{i}", disabled=not ai_instr):
+                            with st.spinner("L'IA améliore la question…"):
+                                # Chercher le texte source dans les chunks
+                                src_text = ""
+                                if st.session_state.chunks:
+                                    for chunk in st.session_state.chunks:
+                                        if q.source_pages and chunk.source_pages and set(q.source_pages) & set(chunk.source_pages):
+                                            src_text = chunk.text
+                                            break
+                                try:
+                                    improved = improve_question_with_llm(
+                                        quiz.questions[i], ai_instr, source_text=src_text,
+                                    )
+                                    quiz.questions[i] = improved
+                                    st.session_state._editing_question_idx = None
+                                    _invalidate_download_cache()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erreur IA : {e}")
+                    else:
+                        # ── Mode lecture ─────────────────────────────────────
+                        render_difficulty_badge(diff_label)
 
-                    if q.citation:
-                        st.markdown(f"📝 **Citation :** *\"{q.citation}\"*")
+                        if q.related_notions:
+                            tags_html = " ".join(
+                                f'<span style="background:rgba(108,99,255,0.15);color:#6c63ff;'
+                                f'padding:0.2rem 0.6rem;border-radius:12px;font-size:0.8rem;'
+                                f'margin-right:0.3rem;display:inline-block;margin-bottom:0.3rem;">{n}</span>'
+                                for n in q.related_notions
+                            )
+                            st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
 
-                    # Source enrichie
-                    render_source_info(q.source_document, q.source_pages)
+                        for label, text in q.choices.items():
+                            is_correct = label in q.correct_answers
+                            icon = "✅" if is_correct else "⬜"
+                            st.markdown(f"**{icon} {label}.** {text}")
+
+                        if q.explanation:
+                            st.info(f"💡 **Explication :** {q.explanation}")
+
+                        if q.citation:
+                            st.markdown(f"📝 **Citation :** *\"{q.citation}\"*")
+
+                        render_source_info(q.source_document, q.source_pages)
+
+                        if st.button("✏️ Éditer", key=f"edit_btn_{i}"):
+                            st.session_state._editing_question_idx = i
+                            st.rerun()
 
             # ─── Vérification IA des réponses ──────────────────────────────
             st.divider()
@@ -1024,9 +1195,34 @@ if uploaded_files:
                 value=quiz.title,
                 key="share_quiz_title",
             )
+
+            total_q = len(quiz.questions)
+            use_pool = st.toggle(
+                "Mode pool (sous-ensemble par participant)",
+                value=False,
+                key="share_use_pool",
+                help=f"Le pool complet contient {total_q} questions. Chaque participant en voit un sous-ensemble tiré aléatoirement.",
+            )
+            if use_pool and total_q > 1:
+                pool_col1, pool_col2 = st.columns(2)
+                with pool_col1:
+                    subset_size = st.number_input(
+                        "Questions par passage",
+                        min_value=1, max_value=total_q, value=min(20, total_q),
+                        key="share_subset_size",
+                        help="Nombre de questions présentées à chaque participant à chaque passage.",
+                    )
+                with pool_col2:
+                    pass_threshold_pct = st.slider(
+                        "Seuil de réussite (%)",
+                        min_value=0, max_value=100, value=70, step=5,
+                        key="share_pass_threshold",
+                        help="Score minimum pour valider la session. En dessous, le participant peut réessayer avec de nouvelles questions.",
+                    )
+                st.caption(f"Pool : {total_q} questions — Passage : {subset_size} questions — Seuil : {pass_threshold_pct}%")
+
             if st.button("📤 Créer une session partagée", type="secondary", width='stretch'):
                 try:
-                    # Sérialiser le quiz pour le stockage
                     quiz_data = {
                         "title": quiz.title,
                         "difficulty": quiz.difficulty,
@@ -1046,10 +1242,19 @@ if uploaded_files:
                             {"title": n.title, "description": n.description, "enabled": n.enabled}
                             for n in st.session_state.notions
                         ]
-                    session_obj = create_quiz_session(quiz_data, notions_data, share_title)
-                    st.success(f"Session créée ! Code : **{session_obj.session_code}**")
+                    if use_pool and total_q > 1:
+                        session_obj = create_pool_session(
+                            quiz_data, notions_data, share_title,
+                            subset_size=int(st.session_state.get("share_subset_size", min(20, total_q))),
+                            pass_threshold=st.session_state.get("share_pass_threshold", 70) / 100,
+                        )
+                        st.success(f"Session pool créée ! Code : **{session_obj.session_code}**")
+                        st.caption(f"Chaque participant verra {session_obj.subset_size} questions sur {total_q}.")
+                    else:
+                        session_obj = create_quiz_session(quiz_data, notions_data, share_title)
+                        st.success(f"Session créée ! Code : **{session_obj.session_code}**")
                     st.code(f"Code de session : {session_obj.session_code}", language=None)
-                    st.caption("Les participants peuvent accéder au quizz via l'onglet 'Quiz Session' dans la barre latérale ou en ajoutant `?code=" + session_obj.session_code + "` à l'URL de la page quiz_session.")
+                    st.caption("Les participants accèdent au quizz via la page quiz_session avec `?code=" + session_obj.session_code + "`.")
                 except Exception as e:
                     st.error(f"Erreur : {e}")
 
@@ -1079,10 +1284,28 @@ if uploaded_files:
         if total_ex == 0:
             st.warning("⚠️ Sélectionnez au moins un exercice.")
 
-        st.info(
-            "🔬 Chaque exercice a une **réponse numérique vérifiable**. "
-            "Un agent IA exécute du code Python pour confirmer la correction."
+        exercise_type_label = st.radio(
+            "Type d'exercice",
+            ["Calcul numérique", "Questions à trou", "Cas pratique"],
+            horizontal=True,
+            help="Calcul : réponse numérique vérifiable par code Python. À trou : compléter des blancs. Cas pratique : scénario avec sous-questions.",
         )
+        exercise_type_map = {
+            "Calcul numérique": "calcul",
+            "Questions à trou": "trou",
+            "Cas pratique": "cas_pratique",
+        }
+        exercise_type = exercise_type_map[exercise_type_label]
+
+        if exercise_type == "calcul":
+            st.info(
+                "🔬 Chaque exercice a une **réponse numérique vérifiable**. "
+                "Un agent IA exécute du code Python pour confirmer la correction."
+            )
+        elif exercise_type == "trou":
+            st.info("📝 Des phrases à compléter avec les termes manquants. Vérification manuelle recommandée.")
+        else:
+            st.info("📋 Un scénario avec plusieurs sous-questions. Vérification manuelle recommandée.")
 
         # 📝 Édition des prompts d'exercice (partie éditable uniquement)
         with st.expander("📝 Personnaliser les Prompts d'Exercice"):
@@ -1151,6 +1374,7 @@ if uploaded_files:
                     custom_exercise_prompts=st.session_state.exercise_prompts,
                     batch_mode=batch_mode,
                     vision_mode=vision_enabled,
+                    exercise_type=exercise_type,
                 )
                 st.session_state.exercises = exercises
                 _invalidate_download_cache()
@@ -1201,29 +1425,45 @@ if uploaded_files:
                     st.markdown("#### 📝 Énoncé")
                     st.markdown(ex.statement)
 
-                    # Réponse
-                    st.markdown(f"#### 🎯 Réponse attendue : `{ex.expected_answer}`")
+                    # Affichage selon le type d'exercice
+                    ex_type = getattr(ex, "exercise_type", "calcul")
 
-                    # Étapes de résolution
-                    if ex.steps:
-                        st.markdown(f"#### 📊 Résolution ({ex.num_steps} étapes)")
-                        for j, step in enumerate(ex.steps):
-                            st.markdown(f"**{j+1}.** {step}")
+                    if ex_type == "trou":
+                        # Questions à trou : afficher les blancs et réponses
+                        blanks = getattr(ex, "blanks", [])
+                        if blanks:
+                            st.markdown("#### ✏️ Réponses attendues")
+                            for b in blanks:
+                                st.markdown(f"**Blanc {b.get('position', '?')} :** `{b.get('answer', '')}` — *{b.get('context', '')}*")
+                    elif ex_type == "cas_pratique":
+                        # Cas pratique : afficher les sous-questions
+                        sub_qs = getattr(ex, "sub_questions", [])
+                        if sub_qs:
+                            st.markdown("#### ❓ Sous-questions & Réponses")
+                            for j, sq in enumerate(sub_qs):
+                                st.markdown(f"**Q{j+1} :** {sq.get('question', '')}")
+                                st.markdown(f"> {sq.get('answer', '')}")
+                    else:
+                        # Calcul numérique
+                        st.markdown(f"#### 🎯 Réponse attendue : `{ex.expected_answer}`")
 
-                    # Correction IA
+                        if ex.steps:
+                            st.markdown(f"#### 📊 Résolution ({ex.num_steps} étapes)")
+                            for j, step in enumerate(ex.steps):
+                                st.markdown(f"**{j+1}.** {step}")
+
+                        if ex.verification_output:
+                            with st.expander("📋 Détails de la vérification", expanded=not ex.verified):
+                                st.text(ex.verification_output)
+
+                        if ex.verification_code:
+                            with st.expander("🔍 Code de vérification"):
+                                st.code(ex.verification_code, language="python")
+
+                    # Correction IA (tous types)
                     if ex.correction:
                         st.markdown("#### 🤖 Correction IA")
                         st.markdown(ex.correction)
-
-                    # Détails de la vérification (expand auto si erreur)
-                    if ex.verification_output:
-                        with st.expander("📋 Détails de la vérification", expanded=not ex.verified):
-                            st.text(ex.verification_output)
-
-                    # Code de vérification
-                    if ex.verification_code:
-                        with st.expander("🔍 Code de vérification"):
-                            st.code(ex.verification_code, language="python")
 
                     # Source enrichie
                     render_source_info(ex.source_document, ex.source_pages)
@@ -1292,6 +1532,227 @@ if uploaded_files:
         
         if total_pages_preview > 1:
             st.caption(f"Affichage des chunks {start_idx + 1} à {end_idx} sur {len(chunks)}")
+
+    # ═══ ONGLET GUIDE FORMATEUR ══════════════════════════════════════════════════
+
+    GUIDE_SYSTEM_PROMPT = """Tu es un assistant pédagogique intégré au Générateur de Quizz & Exercices IA.
+Tu aides les formateurs à utiliser l'outil efficacement, à interpréter les résultats, et à adopter les meilleures pratiques pédagogiques.
+
+CONTEXTE DE L'OUTIL :
+- L'application génère des QCM et exercices à partir de documents (PDF, DOCX, PPTX, ODT, TXT) ou en mode libre par conversation.
+- Pipeline : Upload document → Extraction texte → Détection notions fondamentales → Génération QCM / Exercices → Export / Session partagée.
+- Le formateur peut intervenir à chaque étape : activer/désactiver des notions, personnaliser les prompts, ajuster la difficulté, vérifier les questions par IA, éditer manuellement.
+- Les sessions partagées permettent aux étudiants de passer le quizz en ligne avec un code d'accès. Le formateur voit les résultats en temps réel dans l'onglet Analytics.
+- La vérification IA (onglet Quizz > Vérification) détecte les questions ambiguës et peut les reformuler automatiquement.
+- Les niveaux de difficulté (Facile / Moyen / Difficile) génèrent des questions distinctes sans doublons entre niveaux.
+- Le nombre de bonnes réponses peut être fixe ou variable selon la configuration.
+- Les notions fondamentales guident la génération : une notion désactivée n'est pas couverte par les questions.
+
+RÈGLES DE RÉPONSE :
+- Tu n'as PAS accès aux documents uploadés ni aux sessions en cours.
+- Réponds en français, de façon concise et pratique.
+- Si une question dépasse le périmètre de l'outil, dis-le clairement.
+- Cite les onglets ou fonctionnalités de l'interface quand c'est utile (ex: "dans l'onglet Notions", "via le bouton Vérification IA")."""
+
+    with tab_guide:
+        st.markdown("## ❓ Guide formateur")
+        st.caption("Comment fonctionne l'outil, où intervenir, et FAQ.")
+
+        # ── Schéma du pipeline ──────────────────────────────────────────────────
+        st.markdown("### 🔄 Pipeline de génération")
+        st.markdown("""
+```
+📄 Document(s)
+    │
+    ▼
+🔍 Extraction texte + découpage en chunks
+    │
+    ▼
+📚 Détection des notions fondamentales  ◄── [Formateur] Activer / Désactiver / Éditer les notions
+    │
+    ├──► 🎯 Génération QCM              ◄── [Formateur] Configurer difficulté, prompts, nombre de réponses
+    │         │
+    │         ▼
+    │    🤖 Vérification IA (optionnel) ◄── [Formateur] Valider ou reformuler les questions ambiguës
+    │         │
+    │         ▼
+    │    ✏️ Édition manuelle (optionnel)◄── [Formateur] Modifier, supprimer, améliorer par IA
+    │         │
+    │         ▼
+    │    📤 Export (HTML / CSV)
+    │         │
+    │         ▼
+    │    📡 Session partagée            ◄── [Formateur] Partager le code aux étudiants
+    │         │
+    │         ▼
+    │    📊 Analytics                   ◄── [Formateur] Analyser résultats, identifier lacunes
+    │
+    └──► 🧮 Génération exercices        ◄── [Formateur] Choisir type (calcul / trou / cas pratique)
+```
+""")
+
+        st.divider()
+
+        # ── Points d'intervention formateur ────────────────────────────────────
+        st.markdown("### 🎯 Où intervenir en tant que formateur ?")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("""
+**📚 Onglet Notions**
+- Activer / désactiver des notions pour cibler la génération
+- Éditer une notion via instruction LLM
+- Fusionner les notions similaires
+- Voir combien de questions couvrent chaque notion
+
+**🎯 Onglet Quizz**
+- Configurer le nombre de questions par niveau
+- Choisir difficulté fixe ou variable en bonnes réponses
+- Personnaliser le persona de l'expert et les instructions par niveau
+- Lancer la vérification IA après génération
+- Éditer manuellement une question ou demander une amélioration IA
+""")
+        with col2:
+            st.markdown("""
+**🧮 Onglet Exercices**
+- Choisir le type : calcul numérique, questions à trou, cas pratique
+- Personnaliser les instructions par niveau
+- Vérification automatique du code Python (exercices calcul)
+
+**📊 Onglet Analytics**
+- Voir les taux de réussite par question et par notion
+- Identifier les notions les moins bien maîtrisées
+- Consulter le classement des participants
+
+**📡 Sessions partagées (sidebar)**
+- Créer une session avec code d'accès
+- Suivre en temps réel les réponses des participants
+""")
+
+        st.divider()
+
+        # ── FAQ statique ────────────────────────────────────────────────────────
+        st.markdown("### 💬 Questions fréquentes")
+
+        faq_items = [
+            (
+                "Pourquoi certaines questions sont-elles imprécises ou mal formulées ?",
+                """Le LLM génère des questions à partir des passages du document mais peut produire des formulations vagues ou des explications incorrectes, surtout sur des documents techniques complexes.
+
+**Recommandations :**
+- Activez la **Vérification IA** après génération (onglet Quizz) — elle détecte et reformule automatiquement les questions ambiguës.
+- Utilisez l'**édition manuelle** pour corriger les cas restants.
+- Améliorez les instructions de difficulté dans l'expander "Personnaliser les prompts" pour orienter le style des questions."""
+            ),
+            (
+                "Comment éviter les doublons entre les niveaux Facile / Moyen / Difficile ?",
+                """En v3, l'anti-duplication est actif par défaut : les questions déjà générées (Facile) sont transmises au LLM lors de la génération du niveau suivant (Moyen, puis Difficile), avec l'instruction explicite de ne pas les dupliquer.
+
+Si vous constatez encore des doublons, réduisez le nombre de questions par niveau ou augmentez la diversité des notions activées."""
+            ),
+            (
+                "Combien de questions générer pour une bonne couverture ?",
+                """Une règle pratique : **2 à 3 questions par notion active** par niveau de difficulté.
+
+Utilisez le **compteur de questions par notion** dans l'onglet Notions (badge coloré à côté de chaque notion) : les notions avec 0 question affichent une alerte ⚠️.
+
+Pour une formation de 2 heures, 15 à 25 questions QCM constituent un quizz équilibré."""
+            ),
+            (
+                "Les documents uploadés sont-ils envoyés à un serveur distant ?",
+                """Cela dépend de la configuration de votre API LLM (fichier `.env`) :
+- Si `OPENAI_API_BASE` pointe vers un modèle **local** (ex: LM Studio, Ollama), les données restent sur votre machine.
+- Si vous utilisez une API cloud (OpenAI, Anthropic…), les extraits de texte sont envoyés à ce service.
+
+Les documents eux-mêmes ne sont jamais stockés de façon permanente — seul le texte extrait est utilisé le temps de la session."""
+            ),
+            (
+                "Comment fonctionne la vérification IA des QCM ?",
+                """La vérification IA (bouton dans l'onglet Quizz) analyse chaque question selon plusieurs critères :
+- La bonne réponse est-elle correcte et sourçable dans le texte ?
+- L'explication est-elle cohérente avec la réponse ?
+- La formulation est-elle claire et non ambiguë ?
+
+Si une question est jugée incorrecte, l'IA tente jusqu'à 3 reformulations. Si elle ne parvient pas à corriger, la question est marquée "à vérifier manuellement"."""
+            ),
+            (
+                "À quoi servent les notions fondamentales ?",
+                """Les notions sont les concepts clés identifiés dans le document (définitions, théorèmes, méthodes…). Elles servent à :
+- **Guider la génération** : le LLM reçoit la liste des notions actives et doit s'assurer que chaque question en couvre au moins une.
+- **Traçer les questions** : chaque question indique les notions qu'elle couvre (badges violets).
+- **Mesurer la couverture** : l'Analytics montre quelles notions sont les mieux maîtrisées par les étudiants.
+
+Désactivez les notions hors-scope avant de générer pour éviter les questions hors-sujet."""
+            ),
+            (
+                "Comment fonctionne le mode 'Variable (1 à N bonnes réponses)' ?",
+                """En mode Variable, le LLM choisit librement le nombre de bonnes réponses (1 à N-1) selon la nature de la question, ce qui rend le quizz moins prévisible.
+
+L'interface participant s'adapte automatiquement : bouton radio pour 1 seule réponse, cases à cocher pour plusieurs.
+
+Recommandation : utilisez le mode Variable pour les niveaux Moyen et Difficile, et Fixe (1 bonne réponse) pour le niveau Facile."""
+            ),
+            (
+                "Quelle est la différence entre les types d'exercices ?",
+                """- **Calcul numérique** : exercice avec étapes de résolution, code Python vérifié automatiquement, valeurs numériques exactes attendues.
+- **Questions à trou** : phrase ou définition avec des blancs à compléter — idéal pour mémoriser les termes clés.
+- **Cas pratique** : scénario réaliste avec plusieurs sous-questions — adapté à l'évaluation de la compréhension contextuelle.
+
+La vérification Python automatique ne s'applique qu'aux exercices de type Calcul."""
+            ),
+            (
+                "Comment interpréter les analytics après une session ?",
+                """L'onglet Analytics affiche :
+- **Taux de réussite par question** (barres) : les questions avec < 50% de réussite méritent une révision ou une reformulation.
+- **Couverture par notion** (radar) : les notions en creux sont celles sur lesquelles les étudiants ont le plus de lacunes — priorisez-les en révision.
+- **Classement participants** : permet d'identifier les étudiants en difficulté pour un accompagnement ciblé."""
+            ),
+            (
+                "Peut-on réutiliser un quizz pour plusieurs sessions ?",
+                """Oui. Après génération, utilisez le bouton **"📤 Exporter (HTML / CSV)"** pour sauvegarder le quizz, puis recréez une session partagée à chaque utilisation via le bouton **"📡 Créer une session partagée"**.
+
+Chaque session a son propre code et ses propres résultats, indépendants des sessions précédentes."""
+            ),
+        ]
+
+        for question, answer in faq_items:
+            with st.expander(f"❓ {question}"):
+                st.markdown(answer)
+
+        st.divider()
+
+        # ── Chatbot Assistant formateur ─────────────────────────────────────────
+        st.markdown("### 🤖 Assistant formateur")
+        st.caption("Posez vos questions sur l'utilisation de l'outil, les bonnes pratiques pédagogiques ou l'interprétation des résultats.")
+
+        # Afficher l'historique du chatbot guide
+        for msg in st.session_state.guide_chat_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        if guide_input := st.chat_input("Votre question sur l'outil…", key="guide_chat_input"):
+            st.session_state.guide_chat_messages.append({"role": "user", "content": guide_input})
+            with st.chat_message("user"):
+                st.markdown(guide_input)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Réflexion…"):
+                    api_messages = [{"role": "system", "content": GUIDE_SYSTEM_PROMPT}] + [
+                        {"role": m["role"], "content": m["content"]}
+                        for m in st.session_state.guide_chat_messages
+                    ]
+                    try:
+                        response = call_llm_chat(api_messages, temperature=0.5)
+                    except Exception as e:
+                        response = f"Erreur lors de la génération de la réponse : {e}"
+                    st.markdown(response)
+
+            st.session_state.guide_chat_messages.append({"role": "assistant", "content": response})
+
+        if st.session_state.guide_chat_messages:
+            if st.button("🗑️ Effacer la conversation", key="guide_clear_chat"):
+                st.session_state.guide_chat_messages = []
+                st.rerun()
 
 elif app_mode == "💬 Mode libre (IA)":
     # ═══ MODE LIBRE (CHAT LLM) ════════════════════════════════════════════════

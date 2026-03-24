@@ -36,6 +36,23 @@ class Quiz:
     metadata: dict = field(default_factory=dict)
 
 
+# Persona par défaut — modifiable par l'utilisateur dans l'interface
+QUIZ_DEFAULT_PERSONA = (
+    "Tu es un expert en pédagogie et en création de quizz éducatifs. "
+    "Tu maîtrises le domaine couvert par les documents fournis et tu sais formuler "
+    "des questions précises, claires et pédagogiquement pertinentes."
+)
+
+# Règles fixes affichées en lecture seule dans l'interface (pour information)
+QUIZ_FIXED_RULES_DISPLAY = """RÈGLES FIXES (non modifiables — garantissent la qualité et le parsing) :
+• Nombre de choix et de bonnes réponses : configuré dans les paramètres
+• Les questions doivent être AUTONOMES (répondables sans le document source)
+• Chaque explication doit inclure une CITATION exacte du texte source
+• INTERDIT : "selon le texte", "d'après le document", "dans le passage"...
+• Formulations précises uniquement — pas de "Quel est le principal...", "Parmi les suivants..."
+• Ne jamais mentionner le nombre de bonnes réponses dans l'énoncé
+• Format de réponse : JSON strict avec champs question/choices/correct_answers/explanation/citation/source_page/related_notions"""
+
 # Mapping difficulté → instructions pour le LLM
 DIFFICULTY_PROMPTS = {
     "facile": (
@@ -68,7 +85,11 @@ def _build_quiz_prompt(
     choice_labels: List[str],
     difficulty_prompts: Optional[Dict[str, str]] = None,
     notions_text: str = "",
-    source_document: str = ""
+    source_document: str = "",
+    existing_questions: Optional[List[str]] = None,
+    variable_correct: bool = False,
+    persona: str = "",
+    notion_mixing: bool = True,
 ) -> tuple:
     """Construit le prompt système et utilisateur pour la génération de quizz."""
     
@@ -80,7 +101,8 @@ def _build_quiz_prompt(
     if notions_text:
         notions_block = f"""\n\n{notions_text}\nLes questions doivent prioritairement couvrir ces notions fondamentales."""
     
-    system_prompt = f"""Tu es un expert en pédagogie et en création de quizz éducatifs.
+    active_persona = persona.strip() if persona.strip() else QUIZ_DEFAULT_PERSONA
+    system_prompt = f"""{active_persona}
 Tu dois générer exactement {num_questions} questions QCM (Questions à Choix Multiples).
 
 CONTEXTE IMPORTANT :
@@ -90,9 +112,11 @@ uniquement grâce aux connaissances acquises pendant la formation, SANS avoir le
 
 RÈGLES STRICTES :
 1. Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})
-2. Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)
+2. {"Varie le nombre de bonnes réponses entre 1 et " + str(num_choices - 1) + " selon la question. Certaines questions ont 1 seule bonne réponse, d'autres en ont 2 ou plus. Ne mentionne JAMAIS le nombre de bonnes réponses dans l'énoncé de la question." if variable_correct else f"Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)"}
 3. {diff_instruction}
-4. Chaque question doit inclure une explication de la réponse avec une CITATION exacte du texte source
+4. Chaque question doit inclure une explication de la réponse avec une CITATION exacte du texte source.
+   L'explication doit être factuelle et ne jamais affirmer quelque chose qui n'est pas directement
+   supporté par le texte source.
 5. Les questions doivent être variées et couvrir différentes parties du texte
 6. Les choix de réponse doivent être du même type et de longueur similaire
 7. Pour chaque question, précise la PAGE EXACTE de la source
@@ -100,9 +124,19 @@ RÈGLES STRICTES :
 9. INTERDIT : N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document",
    "dans le passage", "le texte mentionne", "l'auteur affirme", etc.
    Chaque question doit être auto-suffisante et fournir tout le contexte nécessaire dans son énoncé.
-{"10. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions." if notions_text else ""}
-{notions_block}
+10. FORMULATION PRÉCISE : Chaque question doit avoir un énoncé non-ambigu et spécifique.
+    Évite les formulations vagues comme "Quel est le principal...", "Parmi les suivants, lequel...",
+    "Quelle est la meilleure...". Préfère des questions précises avec un contexte clair.
+    Le nombre de bonnes réponses ne doit jamais figurer dans l'énoncé (ne pas écrire "Quelles sont
+    les 2 raisons..." si num_correct=2 — le nombre de réponses attendues est déjà indiqué à l'étudiant).
+{"11. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions." if notions_text else ""}
+{"12. NOTIONS PAR QUESTION : Chaque question doit couvrir UNE SEULE notion à la fois. Le champ 'related_notions' doit contenir exactement 1 élément. Ne mélange pas plusieurs notions dans une même question." if (notions_text and not notion_mixing) else ""}
+{notions_block}{f"""
 
+QUESTIONS DÉJÀ GÉNÉRÉES — À NE PAS DUPLIQUER :
+Les questions suivantes ont déjà été générées pour ce quizz. Tes nouvelles questions doivent porter sur des sujets différents et ne pas être similaires à celles-ci :
+{chr(10).join(f"{i+1}. {q}" for i, q in enumerate(existing_questions))}
+""" if existing_questions else ""}
 FORMAT DE RÉPONSE (JSON strict) :
 {{
     "questions": [
@@ -177,6 +211,10 @@ def generate_quiz_from_chunk(
     model: Optional[str] = None,
     notions_text: str = "",
     vision_mode: bool = False,
+    existing_questions: Optional[List[str]] = None,
+    variable_correct: bool = False,
+    persona: str = "",
+    notion_mixing: bool = True,
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -185,7 +223,9 @@ def generate_quiz_from_chunk(
 
     system_prompt, user_prompt = _build_quiz_prompt(
         chunk.text, difficulty, num_questions, num_choices, num_correct, choice_labels,
-        difficulty_prompts, notions_text=notions_text, source_document=chunk.source_document
+        difficulty_prompts, notions_text=notions_text, source_document=chunk.source_document,
+        existing_questions=existing_questions, variable_correct=variable_correct,
+        persona=persona, notion_mixing=notion_mixing,
     )
 
     # Appel au LLM (vision ou texte)
@@ -232,6 +272,9 @@ def generate_quiz(
     notions: Optional[list] = None,
     batch_mode: bool = False,
     vision_mode: bool = False,
+    variable_correct: bool = False,
+    persona: str = "",
+    notion_mixing: bool = True,
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -270,84 +313,106 @@ def generate_quiz(
     # Préparer le texte des notions
     notions_text = ""
     if notions:
-        from notion_detector import notions_to_prompt_text
+        from generation.notion_detector import notions_to_prompt_text
         notions_text = notions_to_prompt_text(notions)
 
-    # Construire la liste de tâches (diff_name, chunk, n_questions)
-    tasks = []
+    # Construire les tâches groupées par niveau de difficulté (pour l'anti-doublons)
+    tasks_by_diff: Dict[str, List[tuple]] = {}
     for diff_name, diff_count in difficulty_counts.items():
         if diff_count <= 0:
             continue
         qpc = _distribute_questions(chunks, diff_count)
-        for chunk, n_q in zip(chunks, qpc):
-            if n_q > 0:
-                tasks.append((diff_name, chunk, n_q))
+        tasks_by_diff[diff_name] = [(chunk, n_q) for chunk, n_q in zip(chunks, qpc) if n_q > 0]
 
-    total_steps = len(tasks)
+    total_steps = sum(len(t) for t in tasks_by_diff.values())
+    step_idx = 0
 
-    # ─── MODE BATCH ────────────────────────────────────────────────────────
+    # ─── MODE BATCH (par niveau séquentiel pour l'anti-doublons) ───────────
     if batch_mode and total_steps > 1:
-        from batch_service import BatchRequest, run_batch_json
-        from llm_service import VISION_MODEL_NAME, MODEL_NAME
+        from generation.batch_service import BatchRequest, run_batch_json
+        from core.llm_service import VISION_MODEL_NAME, MODEL_NAME
 
-        batch_requests = []
-        task_map = {}  # custom_id → (chunk, diff_name)
+        for diff_name, diff_tasks in tasks_by_diff.items():
+            # Questions déjà accumulées des niveaux précédents
+            accumulated_q_texts = [q.question for q in all_questions] if all_questions else None
 
-        for idx, (diff_name, chunk, n_q) in enumerate(tasks):
-            system_prompt, user_prompt = _build_quiz_prompt(
-                chunk.text, diff_name, n_q, num_choices, num_correct, choice_labels,
-                difficulty_prompts, notions_text=notions_text, source_document=chunk.source_document,
+            batch_requests = []
+            task_map = {}
+
+            for idx, (chunk, n_q) in enumerate(diff_tasks):
+                system_prompt, user_prompt = _build_quiz_prompt(
+                    chunk.text, diff_name, n_q, num_choices, num_correct, choice_labels,
+                    difficulty_prompts, notions_text=notions_text,
+                    source_document=chunk.source_document,
+                    existing_questions=accumulated_q_texts,
+                    variable_correct=variable_correct,
+                    persona=persona, notion_mixing=notion_mixing,
+                )
+                custom_id = f"quiz_{diff_name}_{idx}"
+                images = chunk.page_images if (vision_mode and chunk.page_images) else None
+                target_model = (VISION_MODEL_NAME or model or MODEL_NAME) if (vision_mode and images) else (model or MODEL_NAME)
+
+                batch_requests.append(BatchRequest(
+                    custom_id=custom_id,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    model=target_model,
+                    temperature=0.6,
+                    images=images,
+                ))
+                task_map[custom_id] = (chunk, diff_name)
+
+            if progress_callback:
+                progress_callback(step_idx, total_steps)
+
+            results = run_batch_json(
+                batch_requests,
+                progress_callback=lambda done, _total, s=step_idx: (
+                    progress_callback(s + done, total_steps) if progress_callback else None
+                ),
             )
-            custom_id = f"quiz_{diff_name}_{idx}"
-            images = chunk.page_images if (vision_mode and chunk.page_images) else None
-            target_model = (VISION_MODEL_NAME or model or MODEL_NAME) if (vision_mode and images) else (model or MODEL_NAME)
 
-            batch_requests.append(BatchRequest(
-                custom_id=custom_id,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                model=target_model,
-                temperature=0.6,
-                images=images,
-            ))
-            task_map[custom_id] = (chunk, diff_name)
+            for custom_id, parsed_json in results.items():
+                chunk, diff_name_res = task_map.get(custom_id, (None, None))
+                if chunk is None:
+                    continue
+                questions = _parse_quiz_questions(parsed_json, chunk, diff_name_res)
+                all_questions.extend(questions)
 
-        if progress_callback:
-            progress_callback(0, total_steps)
-
-        results = run_batch_json(
-            batch_requests,
-            progress_callback=lambda done, total: progress_callback(done, total) if progress_callback else None,
-        )
-
-        for custom_id, parsed_json in results.items():
-            chunk, diff_name = task_map.get(custom_id, (None, None))
-            if chunk is None:
-                continue
-            questions = _parse_quiz_questions(parsed_json, chunk, diff_name)
-            all_questions.extend(questions)
+            step_idx += len(diff_tasks)
 
     # ─── MODE SÉQUENTIEL ───────────────────────────────────────────────────
     else:
-        for step_idx, (diff_name, chunk, n_q) in enumerate(tasks):
-            if progress_callback:
-                progress_callback(step_idx + 1, total_steps)
-            try:
-                questions = generate_quiz_from_chunk(
-                    chunk=chunk,
-                    difficulty=diff_name,
-                    num_questions=n_q,
-                    num_choices=num_choices,
-                    num_correct=num_correct,
-                    difficulty_prompts=difficulty_prompts,
-                    model=model,
-                    notions_text=notions_text,
-                    vision_mode=vision_mode,
-                )
-                all_questions.extend(questions)
-            except Exception as e:
-                print(f"Erreur sur chunk ({diff_name}): {e}")
-                continue
+        for diff_name, diff_tasks in tasks_by_diff.items():
+            # Questions déjà accumulées des niveaux précédents
+            accumulated_q_texts = [q.question for q in all_questions] if all_questions else None
+
+            for chunk, n_q in diff_tasks:
+                step_idx += 1
+                if progress_callback:
+                    progress_callback(step_idx, total_steps)
+                try:
+                    questions = generate_quiz_from_chunk(
+                        chunk=chunk,
+                        difficulty=diff_name,
+                        num_questions=n_q,
+                        num_choices=num_choices,
+                        num_correct=num_correct,
+                        difficulty_prompts=difficulty_prompts,
+                        model=model,
+                        notions_text=notions_text,
+                        vision_mode=vision_mode,
+                        existing_questions=accumulated_q_texts,
+                        variable_correct=variable_correct,
+                        persona=persona,
+                        notion_mixing=notion_mixing,
+                    )
+                    all_questions.extend(questions)
+                    # Mettre à jour la liste pour les chunks suivants du même niveau
+                    accumulated_q_texts = [q.question for q in all_questions]
+                except Exception as e:
+                    print(f"Erreur sur chunk ({diff_name}): {e}")
+                    continue
 
     if progress_callback:
         progress_callback(total_steps, total_steps)
@@ -360,6 +425,7 @@ def generate_quiz(
             "difficulty_counts": difficulty_counts,
             "num_choices": num_choices,
             "num_correct_per_question": num_correct,
+            "variable_correct": variable_correct,
             "total_questions_generated": len(all_questions),
             "model": model
         }

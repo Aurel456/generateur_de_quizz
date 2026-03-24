@@ -52,6 +52,114 @@ EXERCISE_JSON_FORMAT = """FORMAT DE RÉPONSE (JSON strict) :
     ]
 }}"""
 
+EXERCISE_JSON_FORMAT_TROU = """FORMAT DE RÉPONSE (JSON strict) :
+{{
+    "exercises": [
+        {{
+            "statement": "Texte de l'exercice avec des blancs indiqués par _____. Ex: Le délai de _____ est de _____ jours.",
+            "blanks": [
+                {{"position": 1, "answer": "recours", "context": "Le délai de [BLANC] est de _____ jours."}},
+                {{"position": 2, "answer": "30", "context": "Le délai de _____ est de [BLANC] jours."}}
+            ],
+            "correction": "Correction détaillée expliquant chaque réponse...",
+            "citation": "Citation exacte du passage du texte qui inspire l'exercice...",
+            "source_page": 1,
+            "related_notions": ["Titre notion 1"]
+        }}
+    ]
+}}"""
+
+EXERCISE_JSON_FORMAT_CAS_PRATIQUE = """FORMAT DE RÉPONSE (JSON strict) :
+{{
+    "exercises": [
+        {{
+            "statement": "Contexte complet du cas pratique (situation, données, contexte réglementaire si applicable)...",
+            "sub_questions": [
+                {{"question": "Question 1 ?", "answer": "Réponse développée à la question 1..."}},
+                {{"question": "Question 2 ?", "answer": "Réponse développée à la question 2..."}}
+            ],
+            "correction": "Correction globale et commentaires pédagogiques sur l'ensemble du cas...",
+            "citation": "Citation exacte du passage du texte qui inspire le cas...",
+            "source_page": 1,
+            "related_notions": ["Titre notion 1", "Titre notion 2"]
+        }}
+    ]
+}}"""
+
+_COMMON_RULES_TROU = """
+CONTEXTE IMPORTANT :
+Les étudiants suivent une formation mais ne possèdent PAS le document source au moment de l'exercice.
+Chaque exercice doit être AUTONOME.
+INTERDIT ABSOLU dans l'énoncé : toute référence au document source.
+
+RÈGLES POUR LES QUESTIONS À TROU :
+1. L'énoncé est une ou plusieurs phrases avec des blancs matérialisés par _____
+2. Chaque blanc correspond à un terme, une valeur ou une notion clé du cours
+3. Il doit y avoir entre 2 et 5 blancs par exercice
+4. Les blancs doivent porter sur des informations importantes, pas des détails anecdotiques
+5. Le champ "context" de chaque blanc montre la phrase avec [BLANC] à la place du terme manquant
+6. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte
+7. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes
+{{notions_block}}"""
+
+_COMMON_RULES_CAS_PRATIQUE = """
+CONTEXTE IMPORTANT :
+Les étudiants suivent une formation mais ne possèdent PAS le document source au moment de l'exercice.
+Chaque exercice doit être AUTONOME — l'énoncé fournit toutes les données nécessaires.
+INTERDIT ABSOLU dans l'énoncé : toute référence au document source.
+
+RÈGLES POUR LES CAS PRATIQUES :
+1. Le cas pratique présente une situation concrète réaliste (personne, entreprise, dossier, scénario)
+2. L'énoncé fournit toutes les informations nécessaires pour répondre
+3. Il doit y avoir entre 2 et 4 sous-questions progressives
+4. Les sous-questions doivent demander une analyse, un calcul ou une prise de position argumentée
+5. La correction de chaque sous-question doit être complète et pédagogique
+6. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte
+7. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes
+{{notions_block}}"""
+
+DEFAULT_EXERCISE_PROMPTS_TROU = {
+    "facile": (
+        "Tu es un expert pédagogique qui crée des exercices FACILES de type 'questions à trou'.\n"
+        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
+        + _COMMON_RULES_TROU.replace("{{notions_block}}", "{notions_block}") + "\n"
+        "NIVEAU FACILE : Les blancs portent sur des définitions simples, des termes clés ou des valeurs directement mentionnées dans le texte.\n"
+    ),
+    "moyen": (
+        "Tu es un expert pédagogique qui crée des exercices de niveau MOYEN de type 'questions à trou'.\n"
+        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
+        + _COMMON_RULES_TROU.replace("{{notions_block}}", "{notions_block}") + "\n"
+        "NIVEAU MOYEN : Les blancs portent sur des concepts importants, des conditions ou des articulations logiques du cours.\n"
+    ),
+    "difficile": (
+        "Tu es un expert pédagogique qui crée des exercices DIFFICILES de type 'questions à trou'.\n"
+        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
+        + _COMMON_RULES_TROU.replace("{{notions_block}}", "{notions_block}") + "\n"
+        "NIVEAU DIFFICILE : Les blancs portent sur des nuances, des exceptions, des conditions précises ou des articulations complexes entre notions.\n"
+    ),
+}
+
+DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE = {
+    "facile": (
+        "Tu es un expert pédagogique qui crée des CAS PRATIQUES FACILES.\n"
+        "Tu dois créer exactement {num_exercises} cas pratique(s) basé(s) sur le texte fourni.\n"
+        + _COMMON_RULES_CAS_PRATIQUE.replace("{{notions_block}}", "{notions_block}") + "\n"
+        "NIVEAU FACILE : Le cas est simple, les informations nécessaires sont évidentes, les sous-questions portent sur l'application directe d'une règle ou d'un principe.\n"
+    ),
+    "moyen": (
+        "Tu es un expert pédagogique qui crée des CAS PRATIQUES de niveau MOYEN.\n"
+        "Tu dois créer exactement {num_exercises} cas pratique(s) basé(s) sur le texte fourni.\n"
+        + _COMMON_RULES_CAS_PRATIQUE.replace("{{notions_block}}", "{notions_block}") + "\n"
+        "NIVEAU MOYEN : Le cas nécessite d'analyser la situation, d'identifier la règle applicable et de l'appliquer en plusieurs étapes.\n"
+    ),
+    "difficile": (
+        "Tu es un expert pédagogique qui crée des CAS PRATIQUES DIFFICILES.\n"
+        "Tu dois créer exactement {num_exercises} cas pratique(s) basé(s) sur le texte fourni.\n"
+        + _COMMON_RULES_CAS_PRATIQUE.replace("{{notions_block}}", "{notions_block}") + "\n"
+        "NIVEAU DIFFICILE : Le cas est complexe, implique plusieurs notions croisées, des situations ambiguës ou des exceptions à identifier. Les sous-questions demandent argumentation et synthèse.\n"
+    ),
+}
+
 _COMMON_RULES = """
 CONTEXTE IMPORTANT :
 Les étudiants suivent une formation mais ne possèdent PAS le document source au moment de l'exercice.
@@ -121,11 +229,11 @@ DEFAULT_EXERCISE_PROMPT = DEFAULT_EXERCISE_PROMPTS["moyen"]
 class Exercise:
     """Un exercice avec sa correction vérifiée."""
     statement: str  # Énoncé de l'exercice
-    expected_answer: str  # Réponse attendue (numérique)
+    expected_answer: str  # Réponse attendue (numérique, pour type "calcul")
     steps: List[str] = field(default_factory=list)  # Étapes de résolution
     num_steps: int = 0  # Nombre d'étapes
     correction: str = ""  # Correction détaillée par IA
-    verification_code: str = ""  # Code Python de vérification
+    verification_code: str = ""  # Code Python de vérification (type "calcul" uniquement)
     verified: bool = False  # La réponse a-t-elle été vérifiée ?
     verification_output: str = ""  # Sortie de la vérification
     source_pages: List[int] = field(default_factory=list)
@@ -133,6 +241,9 @@ class Exercise:
     citation: str = ""
     difficulty_level: str = "moyen"  # facile / moyen / difficile
     related_notions: List[str] = field(default_factory=list)  # Titres des notions couvertes
+    exercise_type: str = "calcul"  # "calcul" | "trou" | "cas_pratique"
+    blanks: List[dict] = field(default_factory=list)  # Pour type "trou"
+    sub_questions: List[dict] = field(default_factory=list)  # Pour type "cas_pratique"
 
 
 def _get_langchain_llm(model: Optional[str] = None):
@@ -152,6 +263,7 @@ def _build_exercise_prompt(
     source_document: str = "",
     difficulty: str = "moyen",
     custom_exercise_prompts: Optional[dict] = None,
+    exercise_type: str = "calcul",
 ) -> tuple:
     """Construit le prompt pour la génération d'exercices."""
 
@@ -159,7 +271,20 @@ def _build_exercise_prompt(
     if notions_text:
         notions_block = f"\n\n{notions_text}\nLes exercices doivent tester la maîtrise pratique de ces notions fondamentales."
 
-    prompts = custom_exercise_prompts or DEFAULT_EXERCISE_PROMPTS
+    # Sélection des prompts et du format JSON selon le type
+    if exercise_type == "trou":
+        prompts = DEFAULT_EXERCISE_PROMPTS_TROU
+        json_format = EXERCISE_JSON_FORMAT_TROU
+        type_label = "questions à trou (compléter les blancs)"
+    elif exercise_type == "cas_pratique":
+        prompts = DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE
+        json_format = EXERCISE_JSON_FORMAT_CAS_PRATIQUE
+        type_label = "cas pratiques"
+    else:
+        prompts = custom_exercise_prompts or DEFAULT_EXERCISE_PROMPTS
+        json_format = EXERCISE_JSON_FORMAT
+        type_label = "exercices numériques"
+
     instructions = prompts.get(difficulty, prompts.get("moyen", ""))
 
     # Injecter les variables dynamiques dans la partie éditable
@@ -167,15 +292,14 @@ def _build_exercise_prompt(
     instructions = instructions.replace("{notions_block}", notions_block)
 
     # Assembler avec le bloc JSON fixe
-    system_prompt = instructions.rstrip() + "\n\n" + EXERCISE_JSON_FORMAT
+    system_prompt = instructions.rstrip() + "\n\n" + json_format
 
     doc_context = f" (document : {source_document})" if source_document else ""
     user_prompt = (
         f"Voici le texte source{doc_context} :\n\n---\n{text}\n---\n\n"
-        f"Crée exactement {num_exercises} exercice(s) de niveau {difficulty} avec des réponses numériques vérifiables.\n"
-        f"Rappel : l'énoncé doit être auto-suffisant et le code de vérification doit reproduire INTÉGRALEMENT les calculs.\n"
+        f"Crée exactement {num_exercises} {type_label} de niveau {difficulty}.\n"
         f"IMPORTANT : l'énoncé NE DOIT PAS faire référence au texte source. "
-        f"Intègre directement les données dans l'énoncé sans mentionner 'le texte', 'le document', etc."
+        f"L'exercice doit être auto-suffisant."
     )
 
     return system_prompt, user_prompt
@@ -447,6 +571,7 @@ def _parse_exercises(
     result: dict,
     chunk: TextChunk,
     difficulty: str,
+    exercise_type: str = "calcul",
 ) -> List[Exercise]:
     """Parse le JSON retourné par le LLM en liste d'Exercise (sans vérification)."""
     exercises = []
@@ -458,19 +583,51 @@ def _parse_exercises(
             else:
                 source_pages = chunk.source_pages
 
-            exercise = Exercise(
-                statement=ex_data["statement"],
-                expected_answer=str(ex_data["expected_answer"]),
-                steps=ex_data.get("steps", []),
-                num_steps=len(ex_data.get("steps", [])),
-                correction=ex_data.get("correction", ""),
-                verification_code=ex_data.get("verification_code", ""),
-                source_pages=source_pages,
-                source_document=chunk.source_document,
-                citation=ex_data.get("citation", ""),
-                difficulty_level=difficulty,
-                related_notions=ex_data.get("related_notions", []),
-            )
+            if exercise_type == "trou":
+                exercise = Exercise(
+                    statement=ex_data["statement"],
+                    expected_answer="",
+                    blanks=ex_data.get("blanks", []),
+                    correction=ex_data.get("correction", ""),
+                    source_pages=source_pages,
+                    source_document=chunk.source_document,
+                    citation=ex_data.get("citation", ""),
+                    difficulty_level=difficulty,
+                    related_notions=ex_data.get("related_notions", []),
+                    exercise_type="trou",
+                    verified=True,
+                    verification_output="Vérification manuelle recommandée.",
+                )
+            elif exercise_type == "cas_pratique":
+                exercise = Exercise(
+                    statement=ex_data["statement"],
+                    expected_answer="",
+                    sub_questions=ex_data.get("sub_questions", []),
+                    correction=ex_data.get("correction", ""),
+                    source_pages=source_pages,
+                    source_document=chunk.source_document,
+                    citation=ex_data.get("citation", ""),
+                    difficulty_level=difficulty,
+                    related_notions=ex_data.get("related_notions", []),
+                    exercise_type="cas_pratique",
+                    verified=True,
+                    verification_output="Vérification manuelle recommandée.",
+                )
+            else:
+                exercise = Exercise(
+                    statement=ex_data["statement"],
+                    expected_answer=str(ex_data.get("expected_answer", "")),
+                    steps=ex_data.get("steps", []),
+                    num_steps=len(ex_data.get("steps", [])),
+                    correction=ex_data.get("correction", ""),
+                    verification_code=ex_data.get("verification_code", ""),
+                    source_pages=source_pages,
+                    source_document=chunk.source_document,
+                    citation=ex_data.get("citation", ""),
+                    difficulty_level=difficulty,
+                    related_notions=ex_data.get("related_notions", []),
+                    exercise_type="calcul",
+                )
             exercises.append(exercise)
         except (KeyError, TypeError):
             continue
@@ -478,7 +635,12 @@ def _parse_exercises(
 
 
 def _verify_and_correct_exercise(exercise: Exercise, model: Optional[str] = None) -> Exercise:
-    """Vérifie un exercice par exécution directe, corrige via LLM si échec."""
+    """Vérifie un exercice par exécution directe, corrige via LLM si échec.
+    Pour les types 'trou' et 'cas_pratique', la vérification automatique est ignorée."""
+    if exercise.exercise_type != "calcul":
+        # Pas de vérification Python pour ces types
+        return exercise
+
     exercise = _verify_exercise_direct(exercise)
     if not exercise.verified and exercise.verification_code:
         initial_output = exercise.verification_output
@@ -501,6 +663,7 @@ def generate_exercises_from_chunk(
     custom_exercise_prompts: Optional[dict] = None,
     difficulty: str = "moyen",
     vision_mode: bool = False,
+    exercise_type: str = "calcul",
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
@@ -511,6 +674,7 @@ def generate_exercises_from_chunk(
         source_document=chunk.source_document,
         difficulty=difficulty,
         custom_exercise_prompts=custom_exercise_prompts,
+        exercise_type=exercise_type,
     )
 
     exercises = []
@@ -522,7 +686,7 @@ def generate_exercises_from_chunk(
             else:
                 result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.5)
 
-            parsed = _parse_exercises(result, chunk, difficulty)
+            parsed = _parse_exercises(result, chunk, difficulty, exercise_type=exercise_type)
 
             for exercise in parsed:
                 exercise = _verify_and_correct_exercise(exercise, model=model)
@@ -549,6 +713,7 @@ def generate_exercises(
     custom_exercise_prompts: Optional[dict] = None,
     batch_mode: bool = False,
     vision_mode: bool = False,
+    exercise_type: str = "calcul",
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks, avec support des niveaux de difficulté.
@@ -579,7 +744,7 @@ def generate_exercises(
     # Préparer le texte des notions
     notions_text = ""
     if notions:
-        from notion_detector import notions_to_prompt_text
+        from generation.notion_detector import notions_to_prompt_text
         notions_text = notions_to_prompt_text(notions)
 
     # Pré-calculer toutes les tâches (difficulté, chunk, n_exercices)
@@ -605,7 +770,7 @@ def generate_exercises(
 
     # ─── MODE BATCH ────────────────────────────────────────────────────────
     if batch_mode and total_steps > 1:
-        from batch_service import BatchRequest, run_batch_json
+        from generation.batch_service import BatchRequest, run_batch_json
 
         batch_requests = []
         task_map = {}  # custom_id → (chunk, diff_name, n_ex)
@@ -616,6 +781,7 @@ def generate_exercises(
                 source_document=chunk.source_document,
                 difficulty=diff_name,
                 custom_exercise_prompts=custom_exercise_prompts,
+                exercise_type=exercise_type,
             )
             custom_id = f"exercise_{diff_name}_{idx}"
             images = chunk.page_images if (vision_mode and chunk.page_images) else None
@@ -644,7 +810,7 @@ def generate_exercises(
             chunk, diff_name, n_ex = task_map.get(custom_id, (None, None, None))
             if chunk is None:
                 continue
-            parsed = _parse_exercises(parsed_json, chunk, diff_name)
+            parsed = _parse_exercises(parsed_json, chunk, diff_name, exercise_type=exercise_type)
             for exercise in parsed[:n_ex]:
                 exercise = _verify_and_correct_exercise(exercise, model=model)
                 all_exercises.append(exercise)
@@ -660,6 +826,7 @@ def generate_exercises(
                     custom_exercise_prompts=custom_exercise_prompts,
                     difficulty=diff_name,
                     vision_mode=vision_mode,
+                    exercise_type=exercise_type,
                 )
                 all_exercises.extend(exercises)
             except Exception as e:
