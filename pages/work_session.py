@@ -252,6 +252,48 @@ with st.expander("➕ Ajouter une question manuellement"):
         update_work_session_draft(ws.work_code, quiz_data, editor_name or "?")
         st.rerun()
 
+# ─── Importer / fusionner un quizz depuis une session ────────────────────────
+
+st.divider()
+with st.expander("🔗 Importer des questions depuis une session existante"):
+    from sessions.session_store import get_session as _get_session
+    import_code = st.text_input("Code de la session à importer", key="ws_import_code", placeholder="Ex: K8S42X")
+    if st.button("📥 Importer", disabled=not import_code, key="ws_import_btn"):
+        source_session = _get_session(import_code.strip().upper())
+        if source_session is None:
+            st.error(f"Session introuvable : {import_code}")
+        else:
+            import_data = json.loads(source_session.quiz_json)
+            imported_qs = import_data.get("questions", [])
+            if source_session.pool_json:
+                imported_qs = json.loads(source_session.pool_json)
+            if not imported_qs:
+                st.warning("Cette session ne contient aucune question.")
+            else:
+                questions.extend(imported_qs)
+                quiz_data["questions"] = questions
+                update_work_session_draft(ws.work_code, quiz_data, editor_name or "?")
+                st.success(f"✅ {len(imported_qs)} question(s) importées. Total : {len(questions)}")
+                st.rerun()
+
+with st.expander("🔀 Fusionner depuis un autre atelier"):
+    merge_code = st.text_input("Code de l'atelier à fusionner", key="ws_merge_code", placeholder="Ex: AB1234")
+    if st.button("🔀 Fusionner", disabled=not merge_code, key="ws_merge_btn"):
+        merge_ws = get_work_session(merge_code.strip().upper())
+        if merge_ws is None:
+            st.error(f"Atelier introuvable : {merge_code}")
+        else:
+            merge_data = json.loads(merge_ws.draft_quiz_json)
+            merge_qs = merge_data.get("questions", [])
+            if not merge_qs:
+                st.warning("Cet atelier ne contient aucune question.")
+            else:
+                questions.extend(merge_qs)
+                quiz_data["questions"] = questions
+                update_work_session_draft(ws.work_code, quiz_data, editor_name or "?")
+                st.success(f"✅ {len(merge_qs)} question(s) fusionnées depuis l'atelier {merge_code.strip().upper()}. Total : {len(questions)}")
+                st.rerun()
+
 st.divider()
 
 # ─── Publication ─────────────────────────────────────────────────────────────

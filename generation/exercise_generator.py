@@ -86,6 +86,69 @@ EXERCISE_JSON_FORMAT_CAS_PRATIQUE = """FORMAT DE RÉPONSE (JSON strict) :
     ]
 }}"""
 
+# ── Persona par défaut (éditable par le formateur) ───────────────────────────
+
+EXERCISE_DEFAULT_PERSONA = (
+    "Tu es un expert en pédagogie et en création d'exercices éducatifs. "
+    "Tu maîtrises le domaine couvert par les documents fournis et tu sais "
+    "concevoir des exercices clairs, progressifs et pédagogiquement pertinents."
+)
+
+# ── Règles fixes par type (non éditables, affichées en lecture seule) ────────
+
+EXERCISE_FIXED_RULES_CALCUL = """CONTEXTE IMPORTANT :
+Les étudiants ne possèdent PAS le document source au moment de l'exercice.
+Chaque exercice doit être AUTONOME, fournir toutes les données nécessaires dans son énoncé.
+INTERDIT ABSOLU dans l'énoncé : toute référence au document source.
+
+RÈGLES (appliquées automatiquement) :
+1. Réponse numérique claire et vérifiable
+2. Énoncé clair, complet et auto-suffisant
+3. Résolution décomposée en étapes numérotées
+4. Code Python reproduisant intégralement les calculs depuis les données de départ
+5. Le code NE DOIT PAS se contenter de poser result = <valeur_finale>
+6. Variable 'result' pour le résultat final
+7. Page exacte et citation du passage source
+8. print() pour chaque étape intermédiaire
+9. 'related_notions' avec les titres exacts des notions couvertes"""
+
+EXERCISE_FIXED_RULES_TROU = """CONTEXTE IMPORTANT :
+Les étudiants ne possèdent PAS le document source au moment de l'exercice.
+Chaque exercice doit être AUTONOME.
+INTERDIT ABSOLU dans l'énoncé : toute référence au document source.
+
+RÈGLES (appliquées automatiquement) :
+1. Blancs matérialisés par _____ dans l'énoncé
+2. Chaque blanc = un terme, une valeur ou une notion clé
+3. Entre 2 et 5 blancs par exercice
+4. Blancs sur des informations importantes, pas anecdotiques
+5. Champ "context" avec [BLANC] à la place du terme manquant
+6. Page exacte et citation du passage source
+7. 'related_notions' avec les titres exacts des notions couvertes"""
+
+EXERCISE_FIXED_RULES_CAS_PRATIQUE = """CONTEXTE IMPORTANT :
+Les étudiants ne possèdent PAS le document source au moment de l'exercice.
+Chaque exercice doit être AUTONOME — l'énoncé fournit toutes les données nécessaires.
+INTERDIT ABSOLU dans l'énoncé : toute référence au document source.
+
+RÈGLES (appliquées automatiquement) :
+1. Situation concrète réaliste (personne, entreprise, dossier, scénario)
+2. Toutes les informations nécessaires dans l'énoncé
+3. Entre 2 et 4 sous-questions progressives
+4. Analyse, calcul ou argumentation demandée
+5. Correction complète et pédagogique par sous-question
+6. Page exacte et citation du passage source
+7. 'related_notions' avec les titres exacts des notions couvertes"""
+
+# Dict pour accéder aux règles fixes par type
+EXERCISE_FIXED_RULES_BY_TYPE = {
+    "calcul": EXERCISE_FIXED_RULES_CALCUL,
+    "trou": EXERCISE_FIXED_RULES_TROU,
+    "cas_pratique": EXERCISE_FIXED_RULES_CAS_PRATIQUE,
+}
+
+# ── Règles internes complètes (injectées dans le prompt, non éditables) ─────
+
 _COMMON_RULES_TROU = """
 CONTEXTE IMPORTANT :
 Les étudiants suivent une formation mais ne possèdent PAS le document source au moment de l'exercice.
@@ -100,7 +163,7 @@ RÈGLES POUR LES QUESTIONS À TROU :
 5. Le champ "context" de chaque blanc montre la phrase avec [BLANC] à la place du terme manquant
 6. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte
 7. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes
-{{notions_block}}"""
+{notions_block}"""
 
 _COMMON_RULES_CAS_PRATIQUE = """
 CONTEXTE IMPORTANT :
@@ -116,49 +179,7 @@ RÈGLES POUR LES CAS PRATIQUES :
 5. La correction de chaque sous-question doit être complète et pédagogique
 6. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte
 7. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes
-{{notions_block}}"""
-
-DEFAULT_EXERCISE_PROMPTS_TROU = {
-    "facile": (
-        "Tu es un expert pédagogique qui crée des exercices FACILES de type 'questions à trou'.\n"
-        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
-        + _COMMON_RULES_TROU.replace("{{notions_block}}", "{notions_block}") + "\n"
-        "NIVEAU FACILE : Les blancs portent sur des définitions simples, des termes clés ou des valeurs directement mentionnées dans le texte.\n"
-    ),
-    "moyen": (
-        "Tu es un expert pédagogique qui crée des exercices de niveau MOYEN de type 'questions à trou'.\n"
-        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
-        + _COMMON_RULES_TROU.replace("{{notions_block}}", "{notions_block}") + "\n"
-        "NIVEAU MOYEN : Les blancs portent sur des concepts importants, des conditions ou des articulations logiques du cours.\n"
-    ),
-    "difficile": (
-        "Tu es un expert pédagogique qui crée des exercices DIFFICILES de type 'questions à trou'.\n"
-        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
-        + _COMMON_RULES_TROU.replace("{{notions_block}}", "{notions_block}") + "\n"
-        "NIVEAU DIFFICILE : Les blancs portent sur des nuances, des exceptions, des conditions précises ou des articulations complexes entre notions.\n"
-    ),
-}
-
-DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE = {
-    "facile": (
-        "Tu es un expert pédagogique qui crée des CAS PRATIQUES FACILES.\n"
-        "Tu dois créer exactement {num_exercises} cas pratique(s) basé(s) sur le texte fourni.\n"
-        + _COMMON_RULES_CAS_PRATIQUE.replace("{{notions_block}}", "{notions_block}") + "\n"
-        "NIVEAU FACILE : Le cas est simple, les informations nécessaires sont évidentes, les sous-questions portent sur l'application directe d'une règle ou d'un principe.\n"
-    ),
-    "moyen": (
-        "Tu es un expert pédagogique qui crée des CAS PRATIQUES de niveau MOYEN.\n"
-        "Tu dois créer exactement {num_exercises} cas pratique(s) basé(s) sur le texte fourni.\n"
-        + _COMMON_RULES_CAS_PRATIQUE.replace("{{notions_block}}", "{notions_block}") + "\n"
-        "NIVEAU MOYEN : Le cas nécessite d'analyser la situation, d'identifier la règle applicable et de l'appliquer en plusieurs étapes.\n"
-    ),
-    "difficile": (
-        "Tu es un expert pédagogique qui crée des CAS PRATIQUES DIFFICILES.\n"
-        "Tu dois créer exactement {num_exercises} cas pratique(s) basé(s) sur le texte fourni.\n"
-        + _COMMON_RULES_CAS_PRATIQUE.replace("{{notions_block}}", "{notions_block}") + "\n"
-        "NIVEAU DIFFICILE : Le cas est complexe, implique plusieurs notions croisées, des situations ambiguës ou des exceptions à identifier. Les sous-questions demandent argumentation et synthèse.\n"
-    ),
-}
+{notions_block}"""
 
 _COMMON_RULES = """
 CONTEXTE IMPORTANT :
@@ -182,42 +203,46 @@ RÈGLES :
 7. Pour chaque exercice, précise la PAGE EXACTE de la source
 8. Inclus une CITATION exacte du passage du texte qui inspire l'exercice
 9. Le code doit afficher chaque étape intermédiaire avec print() pour permettre la vérification pas à pas
-   Exemple : print(f'Étape 1 — donnee_1 = {donnee_1}') ; print(f'Étape 2 — calcul = {calcul}')
+   Exemple : print(f'Étape 1 — donnee_1 = {{donnee_1}}') ; print(f'Étape 2 — calcul = {{calcul}}')
 10. Pour chaque exercice, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes. Utilise les titres tels qu'ils apparaissent dans la liste des notions.
-{{notions_block}}"""
+{notions_block}"""
 
-# Prompts éditables par difficulté (sans le bloc JSON fixe)
+# ── Instructions par difficulté (éditables par le formateur) ─────────────────
+
+DEFAULT_EXERCISE_PROMPTS_TROU = {
+    "facile": "NIVEAU FACILE : Les blancs portent sur des définitions simples, des termes clés ou des valeurs directement mentionnées dans le texte.",
+    "moyen": "NIVEAU MOYEN : Les blancs portent sur des concepts importants, des conditions ou des articulations logiques du cours.",
+    "difficile": "NIVEAU DIFFICILE : Les blancs portent sur des nuances, des exceptions, des conditions précises ou des articulations complexes entre notions.",
+}
+
+DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE = {
+    "facile": "NIVEAU FACILE : Le cas est simple, les informations nécessaires sont évidentes, les sous-questions portent sur l'application directe d'une règle ou d'un principe.",
+    "moyen": "NIVEAU MOYEN : Le cas nécessite d'analyser la situation, d'identifier la règle applicable et de l'appliquer en plusieurs étapes.",
+    "difficile": "NIVEAU DIFFICILE : Le cas est complexe, implique plusieurs notions croisées, des situations ambiguës ou des exceptions à identifier. Les sous-questions demandent argumentation et synthèse.",
+}
+
 DEFAULT_EXERCISE_PROMPTS = {
     "facile": (
-        "Tu es un expert pédagogique qui crée des exercices FACILES d'application numérique directe.\n"
-        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
-        + _COMMON_RULES.replace("{{notions_block}}", "{notions_block}") + "\n"
         "NIVEAU FACILE — Application numérique directe :\n"
         "- Application DIRECTE d'une formule ou d'un concept en une étape principale\n"
         "- Toutes les données numériques sont explicitement fournies dans l'énoncé\n"
         "- Calcul simple, sans raisonnement multi-étapes complexe\n"
-        "- Idéal pour vérifier la maîtrise d'une formule ou d'une définition\n"
+        "- Idéal pour vérifier la maîtrise d'une formule ou d'une définition"
     ),
     "moyen": (
-        "Tu es un expert pédagogique qui crée des exercices de niveau MOYEN nécessitant plusieurs étapes de raisonnement.\n"
-        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
-        + _COMMON_RULES.replace("{{notions_block}}", "{notions_block}") + "\n"
         "NIVEAU MOYEN — Raisonnement multi-étapes :\n"
         "- Nécessite plusieurs étapes de calcul ou de raisonnement enchaînées\n"
         "- Peut combiner plusieurs formules ou concepts\n"
         "- Les données sont fournies mais leur traitement demande de la réflexion\n"
-        "- Application de connaissances à une situation concrète\n"
+        "- Application de connaissances à une situation concrète"
     ),
     "difficile": (
-        "Tu es un expert pédagogique qui crée des exercices DIFFICILES de niveau études supérieures.\n"
-        "Tu dois créer exactement {num_exercises} exercice(s) basé(s) sur le texte fourni.\n"
-        + _COMMON_RULES.replace("{{notions_block}}", "{notions_block}") + "\n"
         "NIVEAU DIFFICILE — Résolution complexe, niveau études supérieures :\n"
         "- Nécessite un raisonnement complexe et multi-niveaux\n"
         "- Combine plusieurs domaines ou concepts avancés\n"
         "- Résolution non triviale avec des subtilités ou pièges\n"
         "- Demande une analyse approfondie et une maîtrise solide des concepts\n"
-        "- Peut inclure des modélisations, optimisations ou démonstrations\n"
+        "- Peut inclure des modélisations, optimisations ou démonstrations"
     ),
 }
 
@@ -264,35 +289,53 @@ def _build_exercise_prompt(
     difficulty: str = "moyen",
     custom_exercise_prompts: Optional[dict] = None,
     exercise_type: str = "calcul",
+    persona: str = "",
 ) -> tuple:
-    """Construit le prompt pour la génération d'exercices."""
+    """
+    Construit le prompt pour la génération d'exercices.
+
+    Assemblage : persona + "Crée N exercice(s)..." + règles fixes par type + instructions
+    de difficulté (éditables) + format JSON.
+    """
 
     notions_block = ""
     if notions_text:
         notions_block = f"\n\n{notions_text}\nLes exercices doivent tester la maîtrise pratique de ces notions fondamentales."
 
-    # Sélection des prompts et du format JSON selon le type
+    # Persona active
+    active_persona = persona.strip() if persona and persona.strip() else EXERCISE_DEFAULT_PERSONA
+
+    # Sélection des ressources selon le type
     if exercise_type == "trou":
-        prompts = DEFAULT_EXERCISE_PROMPTS_TROU
+        prompts = custom_exercise_prompts or DEFAULT_EXERCISE_PROMPTS_TROU
+        common_rules = _COMMON_RULES_TROU
         json_format = EXERCISE_JSON_FORMAT_TROU
         type_label = "questions à trou (compléter les blancs)"
     elif exercise_type == "cas_pratique":
-        prompts = DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE
+        prompts = custom_exercise_prompts or DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE
+        common_rules = _COMMON_RULES_CAS_PRATIQUE
         json_format = EXERCISE_JSON_FORMAT_CAS_PRATIQUE
         type_label = "cas pratiques"
     else:
         prompts = custom_exercise_prompts or DEFAULT_EXERCISE_PROMPTS
+        common_rules = _COMMON_RULES
         json_format = EXERCISE_JSON_FORMAT
         type_label = "exercices numériques"
 
-    instructions = prompts.get(difficulty, prompts.get("moyen", ""))
+    difficulty_instructions = prompts.get(difficulty, prompts.get("moyen", ""))
 
-    # Injecter les variables dynamiques dans la partie éditable
-    instructions = instructions.replace("{num_exercises}", str(num_exercises))
-    instructions = instructions.replace("{notions_block}", notions_block)
+    # Injecter notions dans les règles communes
+    rules_block = common_rules.replace("{notions_block}", notions_block)
 
-    # Assembler avec le bloc JSON fixe
-    system_prompt = instructions.rstrip() + "\n\n" + json_format
+    # Assembler le system prompt : persona + task + rules + difficulty + JSON
+    system_prompt = (
+        f"{active_persona}\n\n"
+        f"Tu dois créer exactement {num_exercises} {type_label} de niveau {difficulty} "
+        f"basé(s) sur le texte fourni.\n"
+        f"{rules_block}\n\n"
+        f"{difficulty_instructions}\n\n"
+        f"{json_format}"
+    )
 
     doc_context = f" (document : {source_document})" if source_document else ""
     user_prompt = (
@@ -664,6 +707,7 @@ def generate_exercises_from_chunk(
     difficulty: str = "moyen",
     vision_mode: bool = False,
     exercise_type: str = "calcul",
+    persona: str = "",
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
@@ -675,6 +719,7 @@ def generate_exercises_from_chunk(
         difficulty=difficulty,
         custom_exercise_prompts=custom_exercise_prompts,
         exercise_type=exercise_type,
+        persona=persona,
     )
 
     exercises = []
@@ -714,6 +759,7 @@ def generate_exercises(
     batch_mode: bool = False,
     vision_mode: bool = False,
     exercise_type: str = "calcul",
+    persona: str = "",
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks, avec support des niveaux de difficulté.
@@ -782,6 +828,7 @@ def generate_exercises(
                 difficulty=diff_name,
                 custom_exercise_prompts=custom_exercise_prompts,
                 exercise_type=exercise_type,
+                persona=persona,
             )
             custom_id = f"exercise_{diff_name}_{idx}"
             images = chunk.page_images if (vision_mode and chunk.page_images) else None
@@ -827,6 +874,7 @@ def generate_exercises(
                     difficulty=diff_name,
                     vision_mode=vision_mode,
                     exercise_type=exercise_type,
+                    persona=persona,
                 )
                 all_exercises.extend(exercises)
             except Exception as e:

@@ -19,7 +19,11 @@ except ImportError:
     _VISION_AVAILABLE = False
 from core.llm_service import VISION_MODEL_NAME, VISION_CONTEXT_WINDOW, call_llm_chat
 from generation.quiz_generator import generate_quiz, Quiz, QuizQuestion, DIFFICULTY_PROMPTS, QUIZ_DEFAULT_PERSONA, QUIZ_FIXED_RULES_DISPLAY
-from generation.exercise_generator import generate_exercises, Exercise, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
+from generation.exercise_generator import (
+    generate_exercises, Exercise, DEFAULT_EXERCISE_PROMPTS,
+    DEFAULT_EXERCISE_PROMPTS_TROU, DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE,
+    EXERCISE_DEFAULT_PERSONA, EXERCISE_FIXED_RULES_BY_TYPE,
+)
 from export.quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
 from generation.notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
 from ui.ui_components import render_stat_card, render_source_info, render_difficulty_badge
@@ -30,6 +34,7 @@ from generation.chat_mode import (
 )
 from sessions.session_store import (
     create_session as create_quiz_session, create_pool_session,
+    create_work_session, get_work_session, update_work_session_draft,
     deactivate_session, list_sessions, get_session as get_quiz_session,
 )
 from sessions.analytics import render_analytics_dashboard, render_session_selector
@@ -140,36 +145,29 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.expander("ℹ️ Comment fonctionne cet outil ? Lire avant utilisation", expanded=False):
+with st.expander("ℹ️ Comment fonctionne cet outil ?", expanded=False):
     st.markdown("""
-**Comment ça marche ?**
+**En 5 étapes :**
+1. **Uploadez** vos documents (PDF, DOCX, ODT, PPTX, TXT)
+2. **Notions** — l'IA identifie les concepts clés du cours. Activez/désactivez ceux à cibler.
+3. **Générez** des QCM (onglet Quizz) ou des exercices (Calcul / Trou / Cas pratique)
+4. **Vérifiez** (optionnel) — l'IA relit le document et reformule les questions ambiguës
+5. **Exportez** en HTML interactif ou CSV, ou partagez via une session en ligne
 
-1. **Uploadez** un ou plusieurs documents (PDF, DOCX, ODT, PPTX, TXT) dans la barre latérale.
-2. **Détectez les notions** fondamentales du cours (onglet *Notions*). Ces notions servent de base de critères pour orienter le LLM : elles lui donnent le contexte des concepts clés sur lesquels appuyer la génération des questions et exercices. Vous pouvez les activer/désactiver, les modifier ou en ajouter manuellement.
-3. **Générez** des quizz QCM (onglet *Quizz*) ou des exercices mathématiques/logiques (onglet *Exercices*) en choisissant le nombre de questions par niveau de difficulté.
-4. **(Optionnel) Vérifiez** les réponses du quizz via le bouton **"🔍 Vérifier les réponses par l'IA"** : le LLM relit le document et tente de répondre comme un étudiant. Les questions ambiguës sont reformulées ou supprimées automatiquement.
-5. **Exportez** les résultats en HTML interactif (quizz avec score en temps réel) ou en CSV (séparateur `;`).
+**Types d'exercices :**
+- **Calcul** — réponse numérique, vérifiée automatiquement par code Python
+- **Questions à trou** — phrases à compléter avec les termes clés
+- **Cas pratique** — scénario réaliste avec sous-questions progressives
 
-**Fonctionnement des exercices**
+**Personnalisation :** Vous pouvez modifier le *persona* de l'expert (ex: "expert en droit fiscal"), les instructions par niveau de difficulté, et activer le nombre variable de bonnes réponses.
 
-L'IA génère un énoncé autonome (toutes les données nécessaires sont incluses dans l'énoncé), une solution pas à pas, et un code Python de vérification exécuté automatiquement. Si la vérification échoue, l'IA se corrige elle-même avant de vous afficher l'exercice.
+**Mode pool :** Générez un grand nombre de questions, puis partagez un sous-ensemble aléatoire par participant avec seuil de réussite et relance automatique.
 
-**Vérification IA des QCM**
-
-Après génération d'un quizz, vous pouvez demander au LLM de vérifier ses propres réponses. Il relit le document source (ou utilise ses connaissances en mode libre) et tente de répondre à chaque question sans voir les bonnes réponses. Si il échoue, la question est reformulée automatiquement (jusqu'à 3 tentatives). Si elle reste incorrecte, elle est supprimée. Les détails de chaque tentative sont consultables dans un rapport discret.
+**Ateliers formateurs :** Co-éditez un brouillon de quizz entre collègues avant publication.
 
 ---
 
-**Avertissement — Qualité du contenu généré**
-
-L'intelligence artificielle peut produire des **erreurs factuelles, des calculs incorrects ou des formulations imprécises**. La qualité des exercices et quizz générés dépend de plusieurs facteurs :
-- **La qualité et la richesse du document fourni** : un document incomplet ou ambigu limitera la pertinence des questions.
-- **La qualité des notions détectées** : si des concepts importants n'ont pas été identifiés, les questions peuvent passer à côté des points essentiels.
-- **La familiarité du modèle avec le domaine** : certains sujets très spécialisés ou peu représentés dans les données d'entraînement peuvent donner des résultats moins fiables.
-
-De plus, **le modèle texte ne perçoit pas les images, schémas, graphiques et tableaux** présents dans les documents — seul le texte est analysé. Pour analyser le contenu visuel des PDF, activez le **Mode Vision** dans les options avancées de la barre latérale.
-
-Tout contenu généré doit être **relu et validé par un formateur** avant toute utilisation pédagogique officielle.
+**⚠️ Qualité :** L'IA peut produire des erreurs. La qualité dépend du document et du domaine. Le modèle texte ne perçoit pas les images (activez le Mode Vision pour les PDF visuels). **Relisez toujours le contenu avant utilisation.**
     """)
 
 # ─── Session state ──────────────────────────────────────────────────────────────
@@ -190,6 +188,12 @@ if "notions" not in st.session_state:
     st.session_state.notions = None
 if "exercise_prompts" not in st.session_state:
     st.session_state.exercise_prompts = {k: v for k, v in DEFAULT_EXERCISE_PROMPTS.items()}
+if "exercise_prompts_trou" not in st.session_state:
+    st.session_state.exercise_prompts_trou = {k: v for k, v in DEFAULT_EXERCISE_PROMPTS_TROU.items()}
+if "exercise_prompts_cas_pratique" not in st.session_state:
+    st.session_state.exercise_prompts_cas_pratique = {k: v for k, v in DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE.items()}
+if "exercise_persona" not in st.session_state:
+    st.session_state.exercise_persona = EXERCISE_DEFAULT_PERSONA
 if "chat_session" not in st.session_state:
     st.session_state.chat_session = None
 if "verification_results" not in st.session_state:
@@ -204,6 +208,10 @@ if "_editing_question_idx" not in st.session_state:
     st.session_state._editing_question_idx = None
 if "_ai_assist_instruction" not in st.session_state:
     st.session_state._ai_assist_instruction = {}
+if "_quiz_changelog" not in st.session_state:
+    st.session_state._quiz_changelog = []  # List of {"type", "index", "before", "after", "action"}
+if "_quiz_original_snapshot" not in st.session_state:
+    st.session_state._quiz_original_snapshot = None  # Snapshot after generation, before any edits
 
 
 def _invalidate_download_cache():
@@ -430,6 +438,7 @@ with st.sidebar:
     global_stats = load_stats()
     st.metric("Questions & Ex. générés", global_stats["total_questions"])
     st.metric("Documents traités", global_stats["total_documents"])
+    st.metric("Sessions créées", global_stats.get("total_sessions", 0))
     st.metric("Tokens générés (IA)", f"{global_stats['total_tokens']:,}")
 
 
@@ -929,6 +938,8 @@ if uploaded_files:
                 )
                 st.session_state.quiz = quiz
                 st.session_state.verification_results = None
+                st.session_state._quiz_changelog = []
+                st.session_state._quiz_original_snapshot = len(quiz.questions)
                 _invalidate_download_cache()
                 increment_stats(questions=len(quiz.questions))
                 progress_bar.progress(1.0, text="✅ Quizz généré !")
@@ -985,7 +996,8 @@ if uploaded_files:
                         with col_save:
                             if st.button("💾 Sauvegarder", key=f"save_q_{i}", type="primary"):
                                 from dataclasses import replace as dc_replace
-                                quiz.questions[i] = dc_replace(
+                                before_q = {"question": q.question, "choices": dict(q.choices), "correct_answers": list(q.correct_answers), "explanation": q.explanation}
+                                new_q = dc_replace(
                                     q,
                                     question=edit_question,
                                     choices=edit_choices,
@@ -993,6 +1005,9 @@ if uploaded_files:
                                     explanation=edit_explanation,
                                     citation=edit_citation,
                                 )
+                                quiz.questions[i] = new_q
+                                after_q = {"question": edit_question, "choices": edit_choices, "correct_answers": edit_correct, "explanation": edit_explanation}
+                                st.session_state._quiz_changelog.append({"action": "✏️ Édition manuelle", "index": i + 1, "before": before_q, "after": after_q})
                                 st.session_state._editing_question_idx = None
                                 _invalidate_download_cache()
                                 st.rerun()
@@ -1002,7 +1017,8 @@ if uploaded_files:
                                 st.rerun()
                         with col_delete:
                             if st.button("🗑️", key=f"delete_q_{i}", help="Supprimer cette question"):
-                                quiz.questions.pop(i)
+                                deleted_q = quiz.questions.pop(i)
+                                st.session_state._quiz_changelog.append({"action": "🗑️ Supprimée", "index": i + 1, "before": {"question": deleted_q.question, "correct_answers": list(deleted_q.correct_answers)}, "after": None})
                                 st.session_state._editing_question_idx = None
                                 _invalidate_download_cache()
                                 st.rerun()
@@ -1024,10 +1040,13 @@ if uploaded_files:
                                             src_text = chunk.text
                                             break
                                 try:
+                                    before_q = {"question": q.question, "choices": dict(q.choices), "correct_answers": list(q.correct_answers), "explanation": q.explanation}
                                     improved = improve_question_with_llm(
                                         quiz.questions[i], ai_instr, source_text=src_text,
                                     )
                                     quiz.questions[i] = improved
+                                    after_q = {"question": improved.question, "choices": dict(improved.choices), "correct_answers": list(improved.correct_answers), "explanation": improved.explanation}
+                                    st.session_state._quiz_changelog.append({"action": f"🤖 Amélioration IA ({ai_instr[:50]})", "index": i + 1, "before": before_q, "after": after_q})
                                     st.session_state._editing_question_idx = None
                                     _invalidate_download_cache()
                                     st.rerun()
@@ -1144,6 +1163,22 @@ if uploaded_files:
                     )
                     st.session_state.quiz = verified_quiz
                     st.session_state.verification_results = vr_results
+                    # Ajouter au changelog les questions reformulées/supprimées
+                    for vr in vr_results:
+                        if vr.status == "reformulated" and vr.final_question:
+                            st.session_state._quiz_changelog.append({
+                                "action": "🔄 Reformulée (vérification IA)",
+                                "index": vr.question_index + 1,
+                                "before": {"question": vr.original_question.question, "choices": dict(vr.original_question.choices), "correct_answers": list(vr.original_question.correct_answers), "explanation": vr.original_question.explanation},
+                                "after": {"question": vr.final_question.question, "choices": dict(vr.final_question.choices), "correct_answers": list(vr.final_question.correct_answers), "explanation": vr.final_question.explanation},
+                            })
+                        elif vr.status == "deleted":
+                            st.session_state._quiz_changelog.append({
+                                "action": "🗑️ Supprimée (vérification IA)",
+                                "index": vr.question_index + 1,
+                                "before": {"question": vr.original_question.question, "correct_answers": list(vr.original_question.correct_answers)},
+                                "after": None,
+                            })
                     _invalidate_download_cache()
                     verify_bar.progress(1.0, text="✅ Vérification terminée !")
                     time.sleep(0.5)
@@ -1152,6 +1187,54 @@ if uploaded_files:
                 except Exception as e:
                     verify_bar.empty()
                     st.error(f"❌ Erreur lors de la vérification : {str(e)}")
+
+            # ─── Historique des modifications ─────────────────────────────
+            if st.session_state._quiz_changelog:
+                st.divider()
+                changelog = st.session_state._quiz_changelog
+                original_count = st.session_state._quiz_original_snapshot or "?"
+                n_edits = sum(1 for c in changelog if "Édition" in c["action"] or "Amélioration" in c["action"])
+                n_reformulated = sum(1 for c in changelog if "Reformulée" in c["action"])
+                n_deleted = sum(1 for c in changelog if "Supprimée" in c["action"])
+
+                st.markdown(f"### 📜 Historique des modifications")
+                st.caption(f"Questions initiales : **{original_count}** → Actuelles : **{len(quiz.questions)}** · {n_edits} édition(s) · {n_reformulated} reformulation(s) · {n_deleted} suppression(s)")
+
+                with st.expander(f"📋 Voir les {len(changelog)} modification(s)", expanded=False):
+                    for idx, entry in enumerate(reversed(changelog)):
+                        action = entry["action"]
+                        q_num = entry["index"]
+                        before = entry.get("before", {})
+                        after = entry.get("after")
+
+                        st.markdown(f"**{action}** — Question {q_num}")
+
+                        if after is None:
+                            # Supprimée
+                            st.markdown(f"> ~~{before.get('question', '')}~~")
+                        else:
+                            before_text = before.get("question", "")
+                            after_text = after.get("question", "")
+                            if before_text != after_text:
+                                st.markdown(f"**Avant :** {before_text}")
+                                st.markdown(f"**Après :** {after_text}")
+                            else:
+                                st.markdown(f"> {after_text}")
+
+                            # Montrer les changements de réponses
+                            before_ans = before.get("correct_answers", [])
+                            after_ans = after.get("correct_answers", [])
+                            if before_ans != after_ans:
+                                st.markdown(f"Réponses : `{before_ans}` → `{after_ans}`")
+
+                            # Montrer les changements d'explication
+                            before_exp = before.get("explanation", "")
+                            after_exp = after.get("explanation", "")
+                            if before_exp != after_exp and after_exp:
+                                st.caption(f"💡 Explication mise à jour")
+
+                        if idx < len(changelog) - 1:
+                            st.markdown("---")
 
             # Boutons de téléchargement
             st.divider()
@@ -1252,6 +1335,57 @@ if uploaded_files:
                         st.success(f"Session créée ! Code : **{session_obj.session_code}**")
                     st.code(f"Code de session : {session_obj.session_code}", language=None)
                     st.caption("Les participants accèdent au quizz via la page quiz_session avec `?code=" + session_obj.session_code + "`.")
+                    increment_stats(sessions=1)
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+            # Export vers un atelier formateur
+            st.divider()
+            st.markdown("### 🛠️ Exporter vers un atelier formateur")
+            ws_target = st.text_input(
+                "Code de l'atelier (vide = créer un nouvel atelier)",
+                key="export_ws_code", placeholder="Ex: K8S42X",
+            )
+            ws_owner = st.text_input("Votre nom", key="export_ws_owner", placeholder="Formateur")
+            if st.button("🛠️ Exporter vers l'atelier", key="export_to_ws"):
+                quiz_data_export = {
+                    "title": quiz.title,
+                    "difficulty": quiz.difficulty,
+                    "questions": [
+                        {
+                            "question": q.question, "choices": q.choices,
+                            "correct_answers": q.correct_answers, "explanation": q.explanation,
+                            "source_pages": q.source_pages, "difficulty_level": q.difficulty_level,
+                            "source_document": q.source_document, "citation": q.citation,
+                            "related_notions": q.related_notions,
+                        } for q in quiz.questions
+                    ],
+                }
+                notions_export = []
+                if st.session_state.notions:
+                    notions_export = [
+                        {"title": n.title, "description": n.description, "enabled": n.enabled}
+                        for n in st.session_state.notions
+                    ]
+                try:
+                    if ws_target.strip():
+                        # Fusionner dans un atelier existant
+                        existing_ws = get_work_session(ws_target.strip().upper())
+                        if existing_ws is None:
+                            st.error(f"Atelier introuvable : {ws_target}")
+                        else:
+                            import json as _json
+                            existing_data = _json.loads(existing_ws.draft_quiz_json)
+                            existing_qs = existing_data.get("questions", [])
+                            existing_qs.extend(quiz_data_export["questions"])
+                            existing_data["questions"] = existing_qs
+                            update_work_session_draft(ws_target.strip().upper(), existing_data, ws_owner or "?", notions_export)
+                            st.success(f"✅ {len(quiz.questions)} question(s) ajoutées à l'atelier **{ws_target.strip().upper()}** ({len(existing_qs)} total)")
+                    else:
+                        # Créer un nouvel atelier
+                        ws_obj = create_work_session(quiz_data_export, notions_export, quiz.title, owner_name=ws_owner or "?")
+                        st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
+                        st.code(f"Code atelier : {ws_obj.work_code}", language=None)
                 except Exception as e:
                     st.error(f"Erreur : {e}")
 
@@ -1304,40 +1438,62 @@ if uploaded_files:
         else:
             st.info("📋 Un scénario avec plusieurs sous-questions. Vérification manuelle recommandée.")
 
-        # 📝 Édition des prompts d'exercice (partie éditable uniquement)
+        # 📝 Édition des prompts d'exercice (persona + difficulté + règles fixes)
         with st.expander("📝 Personnaliser les Prompts d'Exercice"):
-            st.info(
-                "Modifiez les instructions pour chaque niveau. "
-                "Utilisez `{num_exercises}` et `{notions_block}` comme variables. "
-                "Le bloc **FORMAT DE RÉPONSE (JSON strict)** est fixe et ajouté automatiquement."
+            # Section 1 : Persona
+            st.markdown("**1. Persona de l'expert** (modifiable)")
+            st.session_state.exercise_persona = st.text_area(
+                "Persona", value=st.session_state.exercise_persona,
+                height=80, key="ex_persona_input", label_visibility="collapsed",
             )
+            if st.button("🔄 Réinitialiser le persona", key="reset_ex_persona"):
+                st.session_state.exercise_persona = EXERCISE_DEFAULT_PERSONA
+                st.rerun()
+
+            st.divider()
+
+            # Section 2 : Instructions par difficulté (adaptées au type sélectionné)
+            st.markdown(f"**2. Instructions par difficulté** (type : *{exercise_type_label}*)")
+            # Sélectionner le bon dict de prompts selon le type
+            if exercise_type == "trou":
+                _ex_prompts_key = "exercise_prompts_trou"
+                _ex_defaults = DEFAULT_EXERCISE_PROMPTS_TROU
+            elif exercise_type == "cas_pratique":
+                _ex_prompts_key = "exercise_prompts_cas_pratique"
+                _ex_defaults = DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE
+            else:
+                _ex_prompts_key = "exercise_prompts"
+                _ex_defaults = DEFAULT_EXERCISE_PROMPTS
+
+            _ex_current = st.session_state[_ex_prompts_key]
             ex_tab_f, ex_tab_m, ex_tab_d = st.tabs(["🟢 Facile", "🟡 Moyen", "🔴 Difficile"])
             with ex_tab_f:
-                st.session_state.exercise_prompts["facile"] = st.text_area(
-                    "Prompt Facile", value=st.session_state.exercise_prompts["facile"],
-                    height=300, key="ex_prompt_facile"
+                _ex_current["facile"] = st.text_area(
+                    "Facile", value=_ex_current["facile"], height=120, key="ex_prompt_facile",
                 )
                 if st.button("🔄 Réinitialiser", key="reset_ex_facile"):
-                    st.session_state.exercise_prompts["facile"] = DEFAULT_EXERCISE_PROMPTS["facile"]
+                    _ex_current["facile"] = _ex_defaults["facile"]
                     st.rerun()
             with ex_tab_m:
-                st.session_state.exercise_prompts["moyen"] = st.text_area(
-                    "Prompt Moyen", value=st.session_state.exercise_prompts["moyen"],
-                    height=300, key="ex_prompt_moyen"
+                _ex_current["moyen"] = st.text_area(
+                    "Moyen", value=_ex_current["moyen"], height=120, key="ex_prompt_moyen",
                 )
                 if st.button("🔄 Réinitialiser", key="reset_ex_moyen"):
-                    st.session_state.exercise_prompts["moyen"] = DEFAULT_EXERCISE_PROMPTS["moyen"]
+                    _ex_current["moyen"] = _ex_defaults["moyen"]
                     st.rerun()
             with ex_tab_d:
-                st.session_state.exercise_prompts["difficile"] = st.text_area(
-                    "Prompt Difficile", value=st.session_state.exercise_prompts["difficile"],
-                    height=300, key="ex_prompt_difficile"
+                _ex_current["difficile"] = st.text_area(
+                    "Difficile", value=_ex_current["difficile"], height=120, key="ex_prompt_difficile",
                 )
                 if st.button("🔄 Réinitialiser", key="reset_ex_difficile"):
-                    st.session_state.exercise_prompts["difficile"] = DEFAULT_EXERCISE_PROMPTS["difficile"]
+                    _ex_current["difficile"] = _ex_defaults["difficile"]
                     st.rerun()
-            with st.expander("📌 Bloc JSON fixe (non modifiable)", expanded=False):
-                st.code(EXERCISE_JSON_FORMAT, language="json")
+
+            st.divider()
+
+            # Section 3 : Règles fixes (lecture seule)
+            st.markdown("**3. Règles fixes du pipeline** (non modifiables)")
+            st.code(EXERCISE_FIXED_RULES_BY_TYPE.get(exercise_type, ""), language=None)
 
         if st.button("🧮 Générer les Exercices", type="primary", width='stretch', disabled=(total_ex == 0)):
             progress_bar = st.progress(0, text="Démarrage...")
@@ -1362,16 +1518,21 @@ if uploaded_files:
                 if st.session_state.notions:
                     active_notions = [n for n in st.session_state.notions if n.enabled]
 
+                # Sélectionner les prompts éditables correspondant au type
+                _active_ex_prompts = st.session_state.get(
+                    {"calcul": "exercise_prompts", "trou": "exercise_prompts_trou", "cas_pratique": "exercise_prompts_cas_pratique"}.get(exercise_type, "exercise_prompts")
+                )
                 exercises = generate_exercises(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts_ex,
                     model=selected_model,
                     progress_callback=exercise_progress,
                     notions=active_notions,
-                    custom_exercise_prompts=st.session_state.exercise_prompts,
+                    custom_exercise_prompts=_active_ex_prompts,
                     batch_mode=batch_mode,
                     vision_mode=vision_enabled,
                     exercise_type=exercise_type,
+                    persona=st.session_state.exercise_persona,
                 )
                 st.session_state.exercises = exercises
                 _invalidate_download_cache()
@@ -2059,6 +2220,7 @@ elif app_mode == "💬 Mode libre (IA)":
                     st.success(f"Session créée ! Code : **{session_obj.session_code}**")
                     st.code(f"Code de session : {session_obj.session_code}", language=None)
                     st.caption("Les participants peuvent rejoindre via la page 'Quiz Session' avec ce code.")
+                    increment_stats(sessions=1)
                 except Exception as e:
                     st.error(f"Erreur : {e}")
 
