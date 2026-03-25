@@ -10,15 +10,16 @@ from processing.document_processor import (
     extract_and_chunk_multiple, extract_and_chunk_multiple_vision,
     extract_and_chunk_multiple_vision_text,
     get_text_stats_multiple, count_tokens,
+    TextChunk
 )
 try:
-    from processing.vision_processor import analyze_pdf_dpi, render_page_preview, estimate_tokens_for_dpi
+    from processing.vision_processor import analyze_pdf_dpi, render_page_preview, estimate_tokens_for_dpi, convert_office_to_pdf, OFFICE_EXTENSIONS
     _VISION_AVAILABLE = True
 except ImportError:
     _VISION_AVAILABLE = False
-from core.llm_service import VISION_MODEL_NAME, call_llm_chat
-from generation.quiz_generator import generate_quiz, Quiz, DIFFICULTY_PROMPTS, QUIZ_DEFAULT_PERSONA, QUIZ_FIXED_RULES_DISPLAY
-from generation.exercise_generator import generate_exercises, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
+from core.llm_service import VISION_MODEL_NAME, VISION_CONTEXT_WINDOW, call_llm_chat
+from generation.quiz_generator import generate_quiz, Quiz, QuizQuestion, DIFFICULTY_PROMPTS, QUIZ_DEFAULT_PERSONA, QUIZ_FIXED_RULES_DISPLAY
+from generation.exercise_generator import generate_exercises, Exercise, DEFAULT_EXERCISE_PROMPTS, EXERCISE_JSON_FORMAT
 from export.quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
 from generation.notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
 from ui.ui_components import render_stat_card, render_source_info, render_difficulty_badge
@@ -330,7 +331,7 @@ with st.sidebar:
             selected_model = VISION_MODEL_NAME
             st.info(f"Modele vision actif :\n`{VISION_MODEL_NAME}`")
         else:
-            model_options = ["Gpt-oss-120b","Gpt-oss-20b", "Qwen3-VL-32B-Instruct-FP8"]
+            model_options = ["Gpt-oss-120b","Gpt-oss-20b", "Qwen3-VL-32B-Instruct-FP8", "Qwen3-Coder-Next-FP8"]
             selected_model = st.selectbox(
                 "Modèle LLM à sélectionner",
                 options=model_options,
@@ -408,7 +409,6 @@ with st.sidebar:
             try:
                 data = json.loads(uploaded_session.read().decode("utf-8"))
                 if "quiz" in data:
-                    from quiz_generator import QuizQuestion
                     questions = [QuizQuestion(**q) for q in data["quiz"]["questions"]]
                     st.session_state.quiz = Quiz(
                         title=data["quiz"].get("title", "Quizz restauré"),
@@ -416,7 +416,6 @@ with st.sidebar:
                         questions=questions,
                     )
                 if "exercises" in data:
-                    from exercise_generator import Exercise
                     st.session_state.exercises = [Exercise(**ex) for ex in data["exercises"]]
                 if "notions" in data:
                     st.session_state.notions = [Notion(**n) for n in data["notions"]]
@@ -441,7 +440,6 @@ if uploaded_files:
     vision_dpi_override = None
     if vision_enabled and _VISION_AVAILABLE:
         # Trouver le premier fichier compatible vision (PDF ou Office)
-        from vision_processor import convert_office_to_pdf, OFFICE_EXTENSIONS
         vision_extensions = {".pdf"} | OFFICE_EXTENSIONS
         vision_files = [
             f for f in uploaded_files
@@ -523,7 +521,6 @@ if uploaded_files:
                             user_tokens = estimate_tokens_for_dpi(
                                 dpi_info["page_sizes_pt"], user_dpi
                             )
-                            from llm_service import VISION_CONTEXT_WINDOW
                             budget = VISION_CONTEXT_WINDOW - 2000  # text_token_buffer
 
                             if user_tokens > budget:
@@ -954,7 +951,7 @@ if uploaded_files:
                 # Badge difficulté
                 diff_label = q.difficulty_level or "moyen"
                 diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
-                expander_title = f"{diff_emoji} **Q{i+1}.** {q.question[:100]}{'…' if len(q.question) > 100 else ''}"
+                expander_title = f"{diff_emoji} **Q{i+1}.** {q.question}"
                 is_editing = (st.session_state._editing_question_idx == i)
 
                 with st.expander(expander_title, expanded=(i < 3 or is_editing)):
@@ -1979,7 +1976,6 @@ elif app_mode == "💬 Mode libre (IA)":
 
             if st.button("🔍 Vérifier les réponses par l'IA", type="secondary", width='stretch', key="verify_quiz_libre"):
                 # En mode libre, pas de chunks — on génère un texte source depuis les notions
-                from document_processor import TextChunk
                 notions_text = "\n\n".join(
                     f"## {n.title}\n{n.description}"
                     for n in (chat_session.notions or [])
@@ -2187,7 +2183,7 @@ elif app_mode == "📡 Sessions Partagées":
                         diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
                         related_notions = q.get("related_notions", [])
 
-                        with st.expander(f"{diff_emoji} **Q{i+1}.** {q.get('question', '')[:100]}", expanded=(i < 3)):
+                        with st.expander(f"{diff_emoji} **Q{i+1}.** {q.get('question', '')}", expanded=(i < 3)):
                             render_difficulty_badge(diff_label)
 
                             if related_notions:
