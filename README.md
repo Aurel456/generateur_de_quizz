@@ -14,34 +14,35 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Sélection dynamique du modèle** : Choisissez le modèle LLM directement depuis l'interface (récupération automatique via l'API).
 - **Génération multi-niveaux** :
   - Configurez simultanément le nombre de questions pour chaque niveau (**Facile**, **Moyen**, **Difficile**) en un seul run.
-  - **Éditeur de Prompts** : Personnalisez totalement les instructions pédagogiques pour chaque niveau de difficulté directement dans l'interface.
+  - **Anti-doublons entre niveaux** : Les questions déjà générées sont passées en contexte lors des niveaux suivants, évitant les répétitions.
+  - **Éditeur de Prompts** : Personnalisez le **persona expert** (ex: "Tu es un expert en droit fiscal") et les **instructions par niveau de difficulté**. Les règles techniques garantissant la qualité sont affichées en lecture seule.
 - **Paramétrage précis** :
   - Nombre de choix de réponses (A, B, C, D... jusqu'à G).
-  - Nombre de bonnes réponses (choix multiple possible).
-- **Questions autonomes** : Les questions sont conçues pour être répondables **sans le document source**, uniquement avec les connaissances acquises en formation. Aucune référence de type "selon le texte" n'est utilisée.
-- **Tags de notions** : Chaque question affiche les **notions fondamentales** qu'elle couvre sous forme de badges cliquables, permettant d'identifier immédiatement les concepts testés.
+  - **Mode "Fixe"** : nombre de bonnes réponses constant (slider).
+  - **Mode "Variable (1 à N)"** : le LLM choisit le nombre de bonnes réponses selon la question — élimine les formulations prévisibles.
+- **Questions autonomes** : Les questions sont conçues pour être répondables **sans le document source**, uniquement avec les connaissances acquises en formation.
+- **Tags de notions** : Chaque question affiche les **notions fondamentales** qu'elle couvre sous forme de badges cliquables.
+- **Édition interactive des questions** : Bouton "✏️ Éditer" par question pour modifier l'énoncé, les choix, les bonnes réponses et l'explication. Bouton "🤖 Améliorer par IA" pour soumettre une instruction libre au LLM (ex: "Reformule plus clairement" ou "Ajoute un choix de type piège").
+- **Historique des modifications** : Toutes les modifications (édition manuelle, amélioration IA, reformulation lors de la vérification, suppressions) sont tracées dans un journal "📜 Historique des modifications" avec avant/après.
 - **Export HTML interactif** : Téléchargez un fichier HTML autonome avec design sombre, score en temps réel et explications détaillées.
-- **Export CSV robuste** : Séparateur `;`, guillemets systématiques (`QUOTE_ALL`), BOM UTF-8 pour compatibilité Excel. Les retours à la ligne dans les champs sont remplacés par ` | `.
+- **Export CSV robuste** : Séparateur `;`, guillemets systématiques (`QUOTE_ALL`), BOM UTF-8 pour compatibilité Excel.
 - **Badges de difficulté** : Chaque question affiche son niveau de difficulté avec un badge coloré (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
-- **Vérification IA des réponses** : Un bouton dédié permet au LLM de **relire le document source** et de tenter de répondre à chaque question comme un étudiant. Si le LLM échoue (mauvaise réponse ou mauvais nombre de réponses), la question est **reformulée automatiquement** (jusqu'à 3 tentatives). Si la question reste incorrecte après 3 reformulations, elle est **supprimée**. Les tentatives sont affichées discrètement dans un expander et loguées.
+- **Vérification IA des réponses** : Le LLM relit le document source et tente de répondre à chaque question. Si le LLM échoue, la question est **reformulée automatiquement** (jusqu'à 3 tentatives), puis **supprimée** si toujours incorrecte.
 - **Citations précises** : Les explications incluent une citation exacte du texte source.
 - **Attribution des sources** : Document source et numéro de page précis pour chaque question.
 
 ### 🧮 Exercices & Problèmes (Maths / Logique / Science)
 
-- **Trois niveaux de difficulté distincts** :
-  - 🟢 **Facile** : Application numérique directe d'une formule ou d'un concept en une étape.
-  - 🟡 **Moyen** : Raisonnement multi-étapes combinant plusieurs formules ou concepts.
-  - 🔴 **Difficile** : Résolution complexe de niveau études supérieures (modélisation, optimisation, démonstration).
-- **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source. Toute référence au document est strictement interdite dans l'énoncé ("selon le texte", "d'après le document", etc.).
+- **Trois types d'exercices** :
+  - **Calcul numérique** : Résolution chiffrée avec vérification automatique par exécution Python.
+  - **Questions à trou** : Phrases à compléter avec des blancs (`___`), retour JSON structuré `blanks`.
+  - **Cas pratique** : Scénario avec sous-questions numérotées, retour JSON `sub_questions`.
+- **Trois niveaux de difficulté distincts** : 🟢 Facile / 🟡 Moyen / 🔴 Difficile.
+- **Prompts réorganisés** : Même structure que les quizz — **persona** modifiable par le formateur, **règles fixes** par type affichées en lecture seule, **instructions par niveau** personnalisables.
+- **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source.
 - **Tags de notions** : Chaque exercice indique les notions fondamentales qu'il couvre.
-- **Vérification pas à pas** : Le code Python de vérification affiche chaque étape intermédiaire avec `print()`, permettant un suivi détaillé des calculs.
-- **Auto-correction par l'IA** : Si la vérification échoue, le système renvoie automatiquement le résultat du code Python au LLM pour corriger la solution, puis re-vérifie.
-- **Code de vérification complet** : Le code Python reproduit intégralement le raisonnement pas à pas (pas de simple `result = valeur`).
-- **Prompts personnalisables par niveau** : Modifiez les instructions envoyées à l'IA pour chaque niveau de difficulté. Le bloc FORMAT DE RÉPONSE (JSON strict) est fixe et non modifiable, garantissant la stabilité du parsing.
+- **Vérification pas à pas** (calcul numérique) : Le code Python affiche chaque étape intermédiaire ; auto-correction LLM si le résultat ne correspond pas.
 - **Retry automatique JSON** : Si le LLM produit un JSON invalide, le système relance automatiquement l'appel jusqu'à 3 fois.
-- **Affichage complet** : Énoncé, Réponse attendue, Étapes de résolution détaillées, Code de vérification Python.
-- **Citations et sources** : Chaque exercice indique la citation du texte source et le document/page d'origine.
 
 ### 💬 Mode Libre (Génération par conversation IA)
 
@@ -49,61 +50,70 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Conversation guidée** : L'IA pose des questions pour comprendre le sujet, le niveau et le périmètre souhaités.
 - **Génération automatique de notions** : À partir de la conversation, l'IA identifie les notions fondamentales du sujet.
 - **Validation interactive** : Revoyez, activez/désactivez ou modifiez les notions proposées avant la génération.
-- **Extraction automatique des préférences** : Si vous mentionnez un nombre de questions ou un niveau de difficulté dans la conversation (ex: *"10 questions faciles"*), le formulaire de configuration est **pré-rempli** automatiquement.
-- **Génération directe** : Le LLM génère les questions directement à partir du sujet et des notions — **aucun document fictif intermédiaire** n'est créé.
-- **Session partagée** : Après génération, vous pouvez créer une session partagée directement depuis le mode libre.
-- **Même qualité d'export** : Les quizz et exercices générés en mode libre bénéficient des mêmes exports (HTML, CSV) et du même affichage que le mode document.
+- **Extraction automatique des préférences** : Si vous mentionnez un nombre de questions ou un niveau dans la conversation, le formulaire est **pré-rempli** automatiquement.
+- **Session partagée** : Après génération, créez une session partagée directement depuis le mode libre.
 
 ### 📚 Notions Fondamentales
 
 - **Détection automatique** : L'IA identifie les concepts clés, définitions, théorèmes et principes des documents.
-- **Fusion des notions similaires** : Bouton **"🔗 Regrouper les notions"** — le LLM fusionne automatiquement les notions redondantes ou similaires pour obtenir une liste plus concise et claire.
+- **Fusion des notions similaires** : Bouton **"🔗 Regrouper les notions"** — le LLM fusionne automatiquement les notions redondantes.
 - **Édition interactive** : Activez/désactivez, supprimez ou ajoutez manuellement des notions.
 - **Chat LLM** : Modifiez les notions en langage naturel (ex: *« Ajoute une notion sur les dérivées partielles »*).
-- **Guidage de la génération** : Les notions activées servent de base de critères pour orienter le LLM — elles lui fournissent le contexte des concepts clés sur lesquels appuyer la génération des questions et exercices.
-- **Tagging automatique** : Chaque question et exercice généré est automatiquement associé aux notions qu'il couvre (champ `related_notions`).
-- **Barre de progression avec ETA** : Affichage du temps restant estimé pendant la détection (style tqdm).
+- **Comptage par notion** : Après génération, un badge "3 questions ✅" / "0 questions ⚠️" s'affiche à côté de chaque notion.
+- **Regroupement par thématique** : Les notions sont groupées par catégorie (ex: "Fondements", "Procédure") extraite lors de la détection.
+- **Option mélange de notions** : Toggle pour forcer chaque question à couvrir **une seule notion** (`related_notions` = 1 élément) ou autoriser le mélange.
+- **Tagging automatique** : Chaque question/exercice généré est associé aux notions qu'il couvre.
 
 ### 🔗 Sessions Partagées & Analytics
 
-- **Partage de quizz** : Après la génération d'un quizz, créez une **session partagée** avec un code unique (ex: `K8S42X`).
-- **Page participant** : Les participants accèdent au quizz via une URL Streamlit dédiée (`/quiz_session?code=...`), saisissent leur nom et répondent aux questions.
-- **Scoring côté serveur** : Les réponses correctes ne sont jamais envoyées au client — le calcul du score est effectué côté serveur pour éviter la triche.
-- **Correction détaillée** : Après soumission, chaque participant voit son score, les bonnes réponses et les explications.
+- **Partage de quizz** : Après génération, créez une **session partagée** avec un code unique (ex: `K8S42X`).
+- **Page participant** : Les participants accèdent au quizz via `/quiz_session?code=...`, saisissent leur nom et répondent aux questions.
+- **Scoring côté serveur** : Les bonnes réponses ne sont jamais envoyées au client.
+- **Correction détaillée** : Chaque participant voit son score, les bonnes réponses et les explications après soumission.
+- **Mode Pool** : Le formateur génère un **pool de questions** (ex: 50). Chaque participant reçoit un **sous-ensemble** (ex: 20 questions) tiré proportionnellement par niveau de difficulté. Si le score est en dessous du seuil, un bouton "🔁 Réessayer avec de nouvelles questions" propose un nouveau sous-ensemble depuis les questions non encore vues.
 - **Dashboard Analytics** (onglet dédié) :
   - **Métriques globales** : Nombre de participants, score moyen, score médian.
-  - **Taux de réussite par question** : Graphique en barres coloré (vert/orange/rouge) identifiant les questions difficiles.
-  - **Taux de réussite par notion** : Graphique radar montrant quelles notions posent problème aux participants.
-  - **Classement des participants** : Tableau avec podium (🥇🥈🥉), score et pourcentage.
+  - **Taux de réussite par question** : Graphique en barres coloré (vert/orange/rouge).
+  - **Taux de réussite par notion** : Graphique radar.
+  - **Classement des participants** : Tableau avec podium (🥇🥈🥉).
 - **Gestion des sessions** : Fermez une session pour empêcher de nouvelles soumissions.
-- **Onglet "Sessions Partagées"** : Mode dédié dans la barre latérale pour consulter **toutes les sessions**, visualiser les questions et accéder aux analytics sans quitter l'interface principale.
-- **Bouton Rafraîchir** : Les participants peuvent rafraîchir la page après soumission pour voir leurs résultats immédiatement (compatible Docker).
-- **Stockage persistant** : Les sessions et résultats sont stockés en base SQLite.
+
+### 🛠️ Ateliers Formateurs (Sessions de travail collaboratives)
+
+- **Brouillon partageable** : Créez un atelier avec un code unique — plusieurs formateurs peuvent co-éditer le même brouillon de quizz.
+- **Accès** : Via la barre latérale "🛠️ Ateliers Formateurs" ou en ajoutant `?code=XXXXXX` à l'URL.
+- **Édition complète** : Chaque question est éditable (énoncé, choix, bonnes réponses, explication), réordonnable (⬆️/⬇️) et supprimable.
+- **Ajout manuel** : Formulaire pour ajouter des questions à la main dans l'atelier.
+- **Export vers atelier** : Depuis l'onglet Quizz principal, un bouton permet d'**exporter le quizz généré vers un atelier** (nouveau ou existant) pour continuer l'édition collaborative.
+- **Import depuis session** : Importez les questions d'une session étudiante existante dans l'atelier.
+- **Fusion d'ateliers** : Fusionnez le contenu de deux ateliers en un seul.
+- **Publication** : Publiez l'atelier comme une **session étudiante** (avec code participant) directement depuis l'interface.
+- **Rafraîchissement** : Bouton "🔃 Rafraîchir" pour récupérer les modifications des collègues.
+
+### ❓ Guide Formateur
+
+- **Schéma du pipeline** : Diagramme ASCII du flux Document → Notions → Génération → Sessions → Analytics, avec les points d'intervention du formateur.
+- **Points d'intervention** : Liste illustrée des moments où le formateur peut agir et quel onglet consulter.
+- **FAQ statique** : ~10 questions/réponses fréquentes sur la qualité, les doublons, la sécurité, la vérification IA, etc.
+- **Chatbot "Assistant formateur"** : Chat LLM avec un system prompt spécialisé — répond aux questions libres sur l'utilisation de l'outil, les bonnes pratiques pédagogiques et l'interprétation des analytics.
+
+### 📊 Statistiques & Suivi Global
+
+- **Tableau de bord** : Suivi persistant du nombre total de questions générées, documents traités, tokens consommés et **sessions créées**.
+- **Interface intégrée** : Métriques affichées dans la barre latérale.
 
 ### 👁️ Mode Vision (PDF → Images)
 
 - **Modèle vision** : Utilise `Qwen3-VL-32B-Instruct-FP8` pour analyser les **images des pages PDF** (diagrammes, schémas, formules, tableaux visuels).
-- **Optimisation DPI automatique** : Le système calcule le DPI optimal pour respecter le budget de tokens du modèle vision (recherche binaire entre min/max DPI).
-- **Remplacement du texte** : En mode vision, les pages PDF sont envoyées comme images au modèle au lieu du texte extrait par pdfplumber.
-- **Rendu PyMuPDF** : Utilise `fitz` (PyMuPDF) pour le rendu des pages — aucune dépendance système (pas de poppler).
-- **Fallback automatique** : Les fichiers non-PDF (DOCX, PPTX, etc.) restent traités en mode texte classique.
+- **Optimisation DPI automatique** : Le système calcule le DPI optimal pour respecter le budget de tokens (recherche binaire entre min/max DPI).
+- **Fallback automatique** : Les fichiers non-PDF restent traités en mode texte classique.
 
 ### ⚡ Traitement par lots (Batch API)
 
 - **API Batch OpenAI** : Soumet toutes les requêtes LLM indépendantes en un seul lot via `/v1/batches`.
-- **Accélération** : Génération de quizz multi-niveaux, exercices et vérification IA en parallèle au lieu de séquentiel.
+- **Opérations batchées** : Génération de quizz, exercices, vérification IA des QCM, génération en mode libre.
 - **Suivi en temps réel** : Polling avec barre de progression pendant l'attente des résultats.
-- **Opérations batchées** :
-  - Génération de quizz (tous les chunks × niveaux de difficulté)
-  - Génération d'exercices (génération initiale ; vérification/correction reste séquentielle)
-  - Vérification IA des QCM (première passe ; reformulations restent séquentielles)
-  - Génération directe en mode libre (tous les niveaux de difficulté)
 - **Compatible vision** : Les requêtes batch peuvent inclure des images pour le modèle vision.
-
-### 📊 Statistiques & Suivi Global
-
-- **Tableau de bord** : Suivi persistant du nombre total de questions et exercices générés, de documents traités et de tokens consommés (IA).
-- **Interface intégrée** : Affichage permanent des métriques globales dans la barre latérale pour suivre l'utilisation de l'outil dans le temps.
 
 ---
 
@@ -174,7 +184,7 @@ TIKTOKEN_ENCODING=cl100k_base
 VISION_MODEL_NAME=Qwen3-VL-32B-Instruct-FP8
 VISION_CONTEXT_WINDOW=80000
 
-# Base de données SQLite pour les sessions partagées (optionnel)
+# Base de données SQLite pour les sessions partagées
 QUIZ_SESSIONS_DB=shared_data/quiz_sessions.db
 ```
 
@@ -193,221 +203,111 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 ### Mode Document (depuis un fichier)
 
 1. **Upload** : Chargez un ou **plusieurs fichiers** (PDF, DOCX, ODT...) dans la barre latérale.
-2. **Configuration** :
-    - Ajustez le mode de lecture et la taille des chunks.
-    - Sélectionnez le **Modèle LLM** souhaité dans la liste déroulante.
-3. **Onglet Notions** :
-    - Cliquez sur **"🔍 Détecter les notions fondamentales"** pour identifier les concepts clés (barre de progression avec temps restant estimé).
-    - Cliquez sur **"🔗 Regrouper les notions"** pour fusionner les notions similaires ou redondantes.
-    - Activez/désactivez les notions pour guider la génération.
-    - Utilisez le chat LLM pour modifier les notions en langage naturel.
+2. **Configuration** : Ajustez le mode de lecture, la taille des chunks, et sélectionnez le modèle LLM.
+3. **Onglet Notions** : Détectez les notions fondamentales, regroupez les similaires, activez/désactivez, éditez par chat.
 4. **Onglet Quizz** :
-    - Saisissez le nombre de questions pour chaque niveau (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
-    - (Optionnel) Modifiez les instructions spécifiques envoyées à l'IA dans l'expandeur **"Personnaliser les Prompts"**.
-    - Cliquez sur **"Générer le Quizz"**.
-    - Visualisez les questions avec leurs badges de difficulté, tags de notions, citations et sources. Téléchargez en HTML ou CSV.
-    - (Optionnel) Cliquez sur **"🔍 Vérifier les réponses par l'IA"** pour que le LLM relise le document et vérifie chaque question. Les questions incorrectes sont reformulées ou supprimées automatiquement.
-    - Cliquez sur **"📤 Créer une session partagée"** pour partager le quizz avec des participants.
+   - Configurez le nombre de questions par niveau et le mode bonnes réponses (Fixe / Variable).
+   - (Optionnel) Personnalisez le persona expert et les instructions par niveau dans **"Personnaliser les Prompts"**.
+   - Cliquez sur **"Générer le Quizz"**.
+   - Éditez les questions via ✏️, améliorez-les par IA via 🤖, consultez l'historique des modifications.
+   - Exportez en HTML ou CSV.
+   - (Optionnel) Vérifiez les réponses par l'IA.
+   - Créez une session partagée (mode standard ou mode pool) ou exportez vers un Atelier Formateurs.
 5. **Onglet Exercices** :
-    - Saisissez le nombre d'exercices pour chaque niveau (🟢 Facile, 🟡 Moyen, 🔴 Difficile).
-    - (Optionnel) Modifiez les **prompts par niveau** dans l'expandeur **"Personnaliser les Prompts d'Exercice"** (le bloc JSON est fixe et non modifiable).
-    - Cliquez sur **"Générer les Exercices"**.
-    - L'IA va générer, *vérifier pas à pas* et *auto-corriger* chaque exercice via l'exécution de code Python complet.
+   - Choisissez le type (Calcul numérique / Questions à trou / Cas pratique).
+   - Personnalisez le persona et les instructions par niveau.
+   - Générez — les exercices de calcul sont auto-vérifiés et auto-corrigés.
+6. **Onglet Guide** : Consultez le schéma du pipeline, la FAQ et l'assistant chatbot.
 
-### Mode Libre (sans document)
+### Ateliers Formateurs
 
-1. Sélectionnez **"💬 Mode libre (IA)"** dans la barre latérale.
-2. **Décrivez le sujet** souhaité dans le chat (ex: *"Je veux 10 questions faciles sur Kubernetes"*).
-3. L'IA pose quelques **questions de clarification** (niveau, aspects spécifiques, périmètre).
-4. L'IA propose des **notions fondamentales** — validez-les ou modifiez-les.
-5. **Configurez** le nombre de questions/exercices par niveau (pré-rempli depuis la conversation) et lancez la génération.
-6. Les résultats sont affichés et exportables exactement comme en mode document.
-7. (Optionnel) Cliquez sur **"📤 Créer une session partagée"** pour partager le quizz.
+1. Cliquez sur **"🛠️ Ateliers Formateurs"** dans la barre latérale.
+2. Créez un nouvel atelier (titre + votre nom) ou entrez un code existant.
+3. Partagez le code avec vos collègues.
+4. Éditez les questions, importez depuis une session ou fusionnez avec un autre atelier.
+5. Cliquez sur **"📤 Publier"** pour créer une session étudiante depuis le brouillon.
 
 ### Sessions Partagées
 
 1. Sélectionnez **"📡 Sessions Partagées"** dans la barre latérale.
 2. Choisissez une session dans la liste déroulante.
-3. **Onglet Questions** : Visualisez toutes les questions avec réponses, explications et tags de notions.
-4. **Onglet Quizz Session Analytics** : Consultez les graphiques de réussite et le classement des participants.
+3. Visualisez les questions et consultez le dashboard analytics.
+
+---
 
 ## 🧠 Fonctionnement détaillé
 
 ### 📏 Stratégies de Chunking
 
-Le logiciel découpe le PDF en "chunks" (segments) avant de les envoyer au LLM pour éviter de dépasser la fenêtre de contexte et pour permettre une analyse ciblée :
+- **Page par page** : Chaque page est traitée comme une unité isolée. Plus précis pour l'attribution des sources.
+- **Par blocs de tokens (Défaut)** : Segments de taille fixe avec chevauchement et marqueurs `[Début Page X] ... [Fin Page X]`.
 
-- **Page par page** : Chaque page est traitée comme une unité isolée. C'est la méthode la plus précise pour l'attribution des sources.
-- **Par blocs de tokens (Défaut)** : Le texte est découpé en segments de taille fixe (ex: 10 000 tokens) avec chevauchement.
-  - Idéal pour analyser des contextes longs.
-  - **Précision** : Des marqueurs `[Début Page X] ... [Fin Page X]` sont insérés automatiquement dans le texte pour que l'IA puisse citer précisément ses sources, même au milieu d'un bloc de 50 pages.
+### 🎯 Anti-doublons entre niveaux
 
-### 🎯 Distribution des Questions (Quizz)
+Lors de la génération multi-niveaux (Facile → Moyen → Difficile), les questions déjà générées sont injectées dans le prompt du niveau suivant sous forme de liste "À NE PAS DUPLIQUER". Fonctionne aussi en mode batch (traitement séquentiel par niveau).
 
-Le système ne se contente pas d'envoyer tout le texte au hasard. Pour un quizz de $N$ questions :
+### 🔢 Nombre de bonnes réponses variable
 
-1. Il calcule le poids de chaque chunk par rapport au volume total de texte.
-2. Il répartit les $N$ questions proportionnellement à la taille des chunks.
-3. Seuls les chunks "utiles" sont envoyés à l'IA, optimisant ainsi la consommation de tokens et la pertinence pédagogique.
+En mode "Variable", le LLM choisit librement 1 à N-1 bonnes réponses selon la question. Évite les formulations prévisibles comme "Quels sont les 2 profils..." et permet des questions à réponse unique ou multiple selon la pertinence pédagogique.
 
-### 🧮 Distribution des Exercices
+### 🏊 Mode Pool (sessions étudiantes)
 
-Pour chaque niveau de difficulté demandé, le système sélectionne des chunks répartis uniformément dans le document, garantissant une couverture équilibrée du contenu. Les exercices de niveaux différents peuvent provenir de chunks différents.
+1. Le formateur génère un pool (ex: 50 questions) et définit un sous-ensemble (ex: 20) et un seuil de réussite (ex: 70%).
+2. Chaque participant reçoit un sous-ensemble unique, tiré proportionnellement par difficulté depuis les questions non encore vues.
+3. En dessous du seuil : bouton "🔁 Réessayer avec de nouvelles questions" → nouveau sous-ensemble depuis les non-vues. Quand tout le pool est épuisé, il se renouvelle.
 
-### 🤖 Vérification & Auto-correction (Exercices)
+### 🤖 Amélioration IA des questions
 
-Contrairement aux quizz classiques, les exercices mathématiques ou logiques passent par un cycle de **vérification et correction en boucle fermée** :
-
-1. **Génération** : Le LLM crée l'énoncé, la solution et un script Python de vérification avec affichage pas à pas (`print()` à chaque étape).
-2. **Exécution** : Le script est exécuté dans un **sous-processus isolé** (sandbox avec timeout).
-3. **Validation** : Le système compare le résultat de l'exécution avec la réponse annoncée par le LLM. La comparaison numérique est **robuste** : elle tolère les différences de format (entier vs décimal : `10` vs `10.0`), les virgules décimales françaises (`10,5`), les séparateurs de milliers (`1 000`, `1.000,5`) et les suffixes d'unités (`3.14 m`, `42.5%`).
-   - Si les résultats concordent, l'exercice est marqué comme **Vérifié ✅**.
-   - Si la vérification échoue : le résultat du code Python est renvoyé au LLM pour **correction automatique** de la solution et des étapes, puis une **re-vérification** est effectuée.
-   - En cas d'erreur ou de JSON invalide, le système relance automatiquement la génération (jusqu'à 3 tentatives).
-4. **Détails de vérification** : L'affichage montre les calculs intermédiaires, le résultat obtenu vs attendu, et le statut final (Vérifié ✅ / Erreur ❌).
+Le module `generation/question_editor.py` envoie la question + l'instruction du formateur au LLM avec un prompt strict : appliquer uniquement le changement demandé, conserver les labels des bonnes réponses, la difficulté, les sources et les notions liées.
 
 ### 🔍 Vérification IA des réponses QCM
 
-Après la génération d'un quizz en mode document, un bouton permet de lancer une **vérification automatique par le LLM** :
+1. Le LLM relit le document source et répond à chaque question comme un étudiant.
+2. Si la réponse est incorrecte : reformulation automatique (jusqu'à 3 fois).
+3. Si toujours incorrecte après 3 reformulations : suppression.
+4. Toutes les reformulations et suppressions sont ajoutées au journal des modifications.
 
-1. **Vérification** : Le LLM relit le document source et tente de répondre à chaque question **comme un étudiant**, sans voir les bonnes réponses. Il sélectionne ses réponses et justifie son raisonnement.
-2. **Comparaison** : Les réponses du LLM sont comparées aux bonnes réponses attendues.
-3. **Reformulation** (si échec) : Si le LLM ne trouve pas la bonne réponse, la question et les choix sont **reformulés automatiquement** pour éliminer les ambiguïtés, puis re-vérifiés. Ce cycle se répète **jusqu'à 3 fois**.
-4. **Suppression** (si toujours incorrect) : Si après 3 reformulations le LLM échoue toujours, la question est **supprimée** du quizz.
-5. **Rapport** : Un résumé affiche le nombre de questions vérifiées, reformulées et supprimées. Les détails de chaque tentative (réponses LLM, raisonnement, résultat) sont consultables dans un expander discret et loguées via `logging`.
+### 🤖 Vérification & Auto-correction (Exercices calcul)
 
-### 💬 Mode Libre — Génération par conversation
-
-Le mode libre utilise une **machine à états** pour guider la conversation :
-
-1. **Découverte du sujet** : Le LLM explore le thème avec l'utilisateur via un chat libre.
-2. **Génération de notions** : Quand le LLM estime avoir assez d'informations, il extrait automatiquement des notions fondamentales structurées.
-3. **Extraction des préférences** : Le LLM analyse la conversation pour pré-remplir la configuration (nombre de questions, niveau, type QCM/exercices).
-4. **Validation** : L'utilisateur valide/modifie les notions via des checkboxes.
-5. **Génération directe** : Le LLM génère les questions/exercices directement à partir du sujet et des notions validées, sans document intermédiaire.
-
-### 🔗 Sessions Partagées
-
-Le système de sessions partagées fonctionne entièrement dans Streamlit :
-
-1. Le créateur génère un quizz puis clique sur "Créer une session partagée" → un code unique est généré.
-2. Les participants ouvrent la page `/quiz_session?code=...` dans leur navigateur.
-3. Le scoring est effectué **côté serveur** (les bonnes réponses ne sont jamais envoyées au client).
-4. Les résultats sont stockés en **SQLite** et agrégés pour le dashboard analytics.
+1. Le LLM génère l'énoncé, la solution et un script Python de vérification avec `print()` par étape.
+2. Le script est exécuté dans un **sous-processus isolé** (sandbox, timeout 30s).
+3. Si le résultat ne correspond pas : renvoi au LLM pour correction, puis re-vérification.
+4. Comparaison numérique robuste : tolère `10` vs `10.0`, virgules françaises (`10,5`), séparateurs de milliers, suffixes d'unités.
 
 ---
 
-## 🏛️ Diagramme Structurel
+## 🏛️ Architecture du projet
 
-```mermaid
-graph TD
-    User((Utilisateur))
-
-    subgraph UI [Interface Streamlit]
-        Mode{Mode Document / Libre / Sessions}
-        Upload[Upload Fichiers]
-        Chat[Chat LLM]
-        Params[Configuration]
-        Tabs[Onglets: Notions / Quizz / Exercices / Aperçu]
-        SessionsTab[Onglet Sessions Partagées]
-    end
-
-    subgraph Core [Traitement]
-        DocProc[document_processor.py]
-        VisionProc[vision_processor.py]
-        ChatMode[chat_mode.py]
-        Chunking[Chunking Intelligent]
-        DirectGen[Génération directe LLM]
-        BatchSvc[batch_service.py]
-    end
-
-    subgraph Logic [Modules IA]
-        NotionDet[notion_detector.py]
-        QuizGen[quiz_generator.py]
-        QuizVerif[quiz_verifier.py]
-        ExGen[exercise_generator.py]
-        Agent[Vérification Python + Auto-correction LLM]
-    end
-
-    subgraph Output [Exports & Partage]
-        HTML[Export HTML interactif]
-        CSV[Export CSV]
-        Session[Session Partagée]
-    end
-
-    subgraph Analytics [Analytics]
-        SQLite[(SQLite DB)]
-        Dashboard[Dashboard Plotly]
-        Participant[Page Participant]
-    end
-
-    User --> Mode
-    Mode -- "Document" --> Upload
-    Mode -- "Libre" --> Chat
-    Mode -- "Sessions" --> SessionsTab
-
-    Upload --> DocProc
-    Upload -- "Vision activé" --> VisionProc
-    VisionProc -- "Images base64" --> Chunking
-    DocProc --> Chunking
-
-    Chat --> ChatMode
-    ChatMode -- "Notions + Sujet" --> DirectGen
-    DirectGen --> QuizGen
-    DirectGen --> ExGen
-
-    Chunking --> NotionDet
-    NotionDet -- "Détection itérative" --> NotionDet
-    NotionDet --> Tabs
-
-    Tabs -- "Notions activées" --> QuizGen
-    Tabs -- "Notions activées" --> ExGen
-
-    Chunking --> QuizGen
-    Chunking --> ExGen
-
-    QuizGen -- "Batch mode" --> BatchSvc
-    ExGen -- "Batch mode" --> BatchSvc
-    QuizVerif -- "Batch 1ère passe" --> BatchSvc
-    BatchSvc -- "Résultats" --> QuizGen
-    QuizGen -- "Génération via LLM" --> QuizVerif
-    QuizVerif -- "Reformulation / Suppression" --> QuizGen
-    QuizVerif -- "Vérifié" --> HTML
-    ExGen -- "Génération + Code" --> Agent
-    Agent -- "Vérification" --> ExGen
-    ExGen --> CSV
-
-    QuizGen --> Session
-    Session --> SQLite
-    Participant --> SQLite
-    SQLite --> Dashboard
-    SessionsTab --> Dashboard
-
-    HTML --> User
-    Dashboard --> User
+```text
+generateur_de_quizz/
+├── app.py                        ← point d'entrée Streamlit
+├── pages/
+│   ├── quiz_session.py           ← page participant (quizz partagé / pool)
+│   └── work_session.py           ← page Atelier Formateurs (collaborative)
+├── templates/quiz_template.html  ← template Jinja2 pour export HTML
+├── shared_data/                  ← données persistantes (SQLite, stats JSON)
+├── core/
+│   ├── llm_service.py            ← client LLM
+│   └── stats_manager.py          ← statistiques globales (questions, docs, tokens, sessions)
+├── processing/
+│   ├── document_processor.py     ← extraction texte multi-format + chunking
+│   └── vision_processor.py       ← rendu PDF→images via PyMuPDF
+├── generation/
+│   ├── quiz_generator.py         ← génération QCM (anti-doublons, variable_correct, persona)
+│   ├── quiz_verifier.py          ← vérification IA des QCM, reformulation auto
+│   ├── exercise_generator.py     ← génération exercices (3 types, persona séparé)
+│   ├── question_editor.py        ← amélioration LLM d'une question existante
+│   ├── notion_detector.py        ← détection, édition, fusion des notions
+│   ├── chat_mode.py              ← machine à états pour le mode libre
+│   └── batch_service.py          ← traitement par lots (ThreadPoolExecutor)
+├── export/
+│   └── quiz_exporter.py          ← export HTML (Jinja2) et CSV
+├── sessions/
+│   ├── session_store.py          ← backend SQLite (sessions étudiantes + ateliers formateurs)
+│   └── analytics.py              ← dashboard Plotly
+└── ui/
+    └── ui_components.py          ← badges, stat cards, guide tab
 ```
-
----
-
-## 🏗️ Architecture du projet
-
-- `app.py` : Interface utilisateur principale (Streamlit), sélecteur de mode (document/libre/sessions partagées), toggles batch/vision, vérification IA des QCM.
-- `chat_mode.py` : Machine à états pour le mode libre (conversation LLM, génération de notions, génération directe de questions/exercices, support batch).
-- `ui_components.py` : Composants UI réutilisables (stat cards, badges difficulté, sources).
-- `stats_manager.py` : Gestionnaire de sauvegarde persistante (JSON) pour le suivi des statistiques globales.
-- `document_processor.py` : Extraction de texte multi-format et découpage intelligent (support multi-documents, mode vision PDF→images).
-- `notion_detector.py` : Détection, édition et fusion des notions fondamentales similaires via LLM (support vision).
-- `llm_service.py` : Client API OpenAI, gestion des tokens, retry réseau, retry JSON, support conversation multi-tours (`call_llm_chat`) et **appels vision multimodaux** (`call_llm_vision`, `call_llm_vision_json`).
-- `quiz_generator.py` : Logique de création des QCM avec citations, difficulté, sources précises, **tags de notions**, **batch mode** et **vision mode**.
-- `quiz_verifier.py` : Vérification IA des réponses QCM — le LLM relit le document et tente de répondre comme un étudiant, avec **reformulation automatique** (jusqu'à 3 fois), **suppression** des questions incorrectes et **batch première passe**.
-- `exercise_generator.py` : Création d'exercices par niveau de difficulté, **vérification pas à pas**, **auto-correction** via LLM, **tags de notions**, **batch mode** et **vision mode**.
-- `vision_processor.py` : Extraction d'images PDF via PyMuPDF (fitz), optimisation DPI automatique, calcul de tokens par page (modèle Qwen-VL patch-based).
-- `batch_service.py` : Service de traitement par lots via l'API Batch OpenAI — soumission JSONL, polling, téléchargement et parsing des résultats.
-- `quiz_exporter.py` : Export HTML interactif (Jinja2) et CSV enrichis (avec notions).
-- `session_store.py` : Backend SQLite pour les sessions de quizz partagées (création, soumission, scoring, analytics).
-- `analytics.py` : Dashboard analytics Plotly (graphiques par question, par notion, classement participants).
-- `pages/quiz_session.py` : Page participant Streamlit pour passer un quizz partagé.
-- `templates/quiz_template.html` : Template HTML/CSS/JS pour l'export des quizz (badges difficulté, tags notions, citations, sources).
 
 ## 📦 Dépendances principales
 
@@ -415,7 +315,7 @@ graph TD
 - `langchain`, `langgraph`, `langchain-openai`, `langchain-experimental` : Orchestration LLM et Agents.
 - `openai` : Client API standard (chat completions + batch API).
 - `pdfplumber`, `python-docx`, `odfpy`, `python-pptx` : Extraction multi-format (texte).
-- `PyMuPDF` (fitz) : Rendu PDF→images pour le mode vision (pur Python, pas de dépendance système).
+- `PyMuPDF` (fitz) : Rendu PDF→images pour le mode vision.
 - `Pillow` : Manipulation d'images et encodage base64 JPEG.
 - `tiktoken` : Tokenizer OpenAI rapide.
 - `jinja2` : Templating HTML.
@@ -425,15 +325,12 @@ graph TD
 
 ## ⚠️ Notes importantes
 
-- **Sécurité** : L'agent de vérification des exercices exécute du code Python généré par le LLM dans un **sous-processus isolé** avec un timeout de 30 secondes. Cela offre une isolation de base (le code ne peut pas affecter le processus principal), mais n'est pas équivalent à un sandbox Docker. Utilisez ce logiciel dans un environnement de confiance pour la production.
-- **Sessions partagées** : Le scoring des quizz partagés est effectué **côté serveur** — les bonnes réponses ne sont jamais envoyées au navigateur des participants. La base SQLite est stockée dans `shared_data/`.
-- **Modèles** : L'interface permet de choisir n'importe quel modèle disponible sur votre API. Testé principalement avec `gtp-oss-120b`.
+- **Sécurité** : L'agent de vérification des exercices exécute du code Python généré par le LLM dans un **sous-processus isolé** avec timeout de 30 secondes. Utilisez ce logiciel dans un environnement de confiance.
+- **Sessions partagées** : Le scoring est effectué **côté serveur** — les bonnes réponses ne sont jamais envoyées au navigateur des participants. La base SQLite est stockée dans `shared_data/`.
+- **Ateliers Formateurs** : Le modèle de concurrence est "dernier à sauvegarder gagne" — pour une collaboration simultanée intensive, rafraîchissez avant d'éditer.
 - **max_tokens** : Aucune limite de tokens de réponse n'est envoyée à l'API par défaut, permettant des réponses longues sans troncature.
-- **Chunking** : Deux modes sont disponibles : **Page par page** (recommandé pour la précision des sources) et **Par blocs de tokens** (pour une analyse large, jusqu'à 15 000 tokens).
-- **Tiktoken** : L'encodeur tiktoken est configurable via `TIKTOKEN_ENCODING` dans `.env`. Utilisez `cl100k_base` pour GPT-4 ou `o200k_base` pour GPT-4o.
-- **Qualité du contenu généré** : La pertinence des quizz et exercices dépend de la richesse du document fourni (ou de la conversation en mode libre), de la qualité des notions détectées, et de la familiarité du modèle avec le domaine. Tout contenu généré doit être relu et validé par un formateur avant utilisation pédagogique.
-- **Mode Vision** : Activez le toggle "Mode Vision" dans la barre latérale pour analyser les images des PDF avec `Qwen3-VL-32B-Instruct-FP8`. Le système optimise automatiquement le DPI pour respecter le budget de tokens. Les fichiers non-PDF restent traités en mode texte.
-- **Batch API** : Le toggle "Traitement par lots" accélère la génération en soumettant toutes les requêtes indépendantes via l'API Batch OpenAI (`/v1/batches`). Nécessite que votre serveur supporte cette route.
+- **Qualité du contenu généré** : Tout contenu généré doit être relu et validé par un formateur avant utilisation pédagogique.
+- **Batch API** : Le toggle "Traitement par lots" nécessite que votre serveur supporte la route `/v1/batches`.
 
 ## 📄 Licence
 
