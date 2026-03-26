@@ -584,7 +584,7 @@ def extract_and_chunk_vision(
     filename = getattr(file, "name", "").lower()
 
     try:
-        from vision_processor import (
+        from processing.vision_processor import (
             extract_pages_as_base64, convert_office_to_pdf,
             OFFICE_EXTENSIONS, extract_images_from_odf, encode_image,
             calculate_page_tokens, render_odf_to_pdf,
@@ -715,7 +715,7 @@ def extract_and_chunk_vision_text(
     filename = getattr(file, "name", "").lower()
 
     try:
-        from vision_processor import (
+        from processing.vision_processor import (
             smart_prepare_media, encode_image, convert_office_to_pdf,
             OFFICE_EXTENSIONS, extract_images_from_odf, render_odf_to_pdf,
         )

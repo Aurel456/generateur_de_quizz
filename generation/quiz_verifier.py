@@ -209,7 +209,7 @@ def verify_quiz(
     # ─── BATCH : première passe de vérification ───────────────────────────
     first_pass_results = {}  # idx → (llm_answers, reasoning)
     if batch_mode and total > 1:
-        from batch_service import BatchRequest, run_batch_json
+        from generation.batch_service import BatchRequest, run_batch_json
 
         batch_requests = []
         for idx, question in enumerate(quiz.questions):

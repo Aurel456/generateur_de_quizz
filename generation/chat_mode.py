@@ -406,8 +406,8 @@ FORMAT DE RÉPONSE (JSON strict) :
 
     # ─── MODE BATCH ────────────────────────────────────────────────────────
     if batch_mode and total_steps > 1:
-        from batch_service import BatchRequest, run_batch_json
-        from llm_service import MODEL_NAME as _MODEL_NAME
+        from generation.batch_service import BatchRequest, run_batch_json
+        from core.llm_service import MODEL_NAME as _MODEL_NAME
 
         batch_requests = []
         task_map = {}
@@ -549,7 +549,7 @@ FORMAT DE RÉPONSE (JSON strict) :
 
     # ─── MODE BATCH ────────────────────────────────────────────────────────
     if batch_mode and total_steps > 1:
-        from batch_service import BatchRequest, run_batch_json
+        from generation.batch_service import BatchRequest, run_batch_json
         from llm_service import MODEL_NAME as _MODEL_NAME
 
         batch_requests = []
