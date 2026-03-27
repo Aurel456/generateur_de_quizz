@@ -328,6 +328,7 @@ def generate_quiz_direct(
     model: Optional[str] = None,
     progress_callback=None,
     batch_mode: bool = False,
+    enable_thinking: bool = True,
 ) -> Quiz:
     """
     Génère un quizz QCM directement à partir du sujet et des notions,
@@ -446,7 +447,7 @@ FORMAT DE RÉPONSE (JSON strict) :
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": usr_prompt},
             ]
-            result = call_llm_chat_json(messages, model=model, temperature=0.6)
+            result = call_llm_chat_json(messages, model=model, temperature=0.6, enable_thinking=enable_thinking)
             all_questions.extend(_parse_direct_quiz_result(result, difficulty))
             current_step += 1
 
@@ -466,6 +467,7 @@ def generate_exercises_direct(
     model: Optional[str] = None,
     progress_callback=None,
     batch_mode: bool = False,
+    enable_thinking: bool = True,
 ) -> List[Exercise]:
     """
     Génère des exercices directement à partir du sujet et des notions,
@@ -589,7 +591,7 @@ FORMAT DE RÉPONSE (JSON strict) :
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": usr_prompt},
             ]
-            result = call_llm_chat_json(messages, model=model, temperature=0.5)
+            result = call_llm_chat_json(messages, model=model, temperature=0.5, enable_thinking=enable_thinking)
             all_exercises.extend(_parse_direct_exercise_result(result, difficulty))
             current_step += 1
 

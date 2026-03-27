@@ -54,6 +54,7 @@ def _verify_question_with_llm(
     question: QuizQuestion,
     source_text: str,
     model: Optional[str] = None,
+    enable_thinking: bool = True,
 ) -> Tuple[List[str], str]:
     """
     Le LLM tente de répondre à la question en lisant le document source,
@@ -95,7 +96,7 @@ CHOIX :
 
 Sélectionne exactement {num_correct} réponse(s) et explique ton raisonnement."""
 
-    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.2)
+    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.2, enable_thinking=enable_thinking)
 
     selected = result.get("selected_answers", [])
     reasoning = result.get("reasoning", "")
@@ -109,6 +110,7 @@ def _reformulate_question(
     llm_answers: List[str],
     llm_reasoning: str,
     model: Optional[str] = None,
+    enable_thinking: bool = True,
 ) -> QuizQuestion:
     """
     Le LLM reformule la question pour que les bonnes réponses soient
@@ -157,7 +159,7 @@ RAISONNEMENT DE L'ÉTUDIANT : {llm_reasoning}
 L'étudiant a répondu {llm_answers} au lieu de {question.correct_answers}.
 Reformule la question et les choix pour éliminer l'ambiguïté."""
 
-    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.4)
+    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.4, enable_thinking=enable_thinking)
 
     new_question = QuizQuestion(
         question=result.get("question", question.question),
@@ -186,6 +188,7 @@ def verify_quiz(
     max_reformulations: int = 3,
     progress_callback: Optional[Callable] = None,
     batch_mode: bool = False,
+    enable_thinking: bool = True,
 ) -> Tuple[Quiz, List[QuestionVerificationResult]]:
     """
     Vérifie toutes les questions d'un quiz via le LLM.
@@ -288,7 +291,8 @@ Sélectionne exactement {num_correct} réponse(s) et explique ton raisonnement."
                     llm_answers, reasoning = first_pass_results[idx]
                 else:
                     llm_answers, reasoning = _verify_question_with_llm(
-                        current_question, source_text, model=model
+                        current_question, source_text, model=model,
+                        enable_thinking=enable_thinking,
                     )
 
                 is_correct = sorted(llm_answers) == sorted(current_question.correct_answers)
@@ -322,6 +326,7 @@ Sélectionne exactement {num_correct} réponse(s) et explique ton raisonnement."
                     current_question = _reformulate_question(
                         current_question, source_text,
                         llm_answers, reasoning, model=model,
+                        enable_thinking=enable_thinking,
                     )
 
             except Exception as e:

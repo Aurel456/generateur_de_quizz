@@ -6,11 +6,16 @@ import string
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+import logging
+
 from core.llm_service import call_llm_json, call_llm_vision_json, count_tokens, MODEL_CONTEXT_WINDOW
+from core.models import validate_quiz_question
 from processing.document_processor import TextChunk
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from generation.notion_detector import Notion
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -170,33 +175,29 @@ def _parse_quiz_questions(
     chunk: TextChunk,
     difficulty: str,
 ) -> List[QuizQuestion]:
-    """Parse le JSON retourné par le LLM en liste de QuizQuestion."""
+    """Parse le JSON retourné par le LLM en liste de QuizQuestion avec validation Pydantic."""
     questions = []
     for q_data in result.get("questions", []):
         try:
-            source_page = q_data.get("source_page")
-            if source_page:
-                source_pages = [source_page] if isinstance(source_page, int) else chunk.source_pages
-            else:
-                source_pages = chunk.source_pages
+            # Validation Pydantic (normalise source_page → source_pages, vérifie correct_answers ⊆ choices)
+            validated = validate_quiz_question(q_data)
 
-            choices = q_data["choices"]
-            correct_answers = q_data["correct_answers"]
+            source_pages = validated["source_pages"] if validated["source_pages"] else chunk.source_pages
 
             question = QuizQuestion(
-                question=q_data["question"],
-                choices=choices,
-                correct_answers=correct_answers,
-                explanation=q_data.get("explanation", ""),
+                question=validated["question"],
+                choices=validated["choices"],
+                correct_answers=validated["correct_answers"],
+                explanation=validated.get("explanation", ""),
                 source_pages=source_pages,
-                difficulty_level=q_data.get("difficulty_level", difficulty),
+                difficulty_level=validated.get("difficulty_level") or difficulty,
                 source_document=chunk.source_document,
-                citation=q_data.get("citation", ""),
-                related_notions=q_data.get("related_notions", []),
+                citation=validated.get("citation", ""),
+                related_notions=validated.get("related_notions", []),
             )
-            if all(ans in question.choices for ans in question.correct_answers):
-                questions.append(question)
-        except (KeyError, TypeError):
+            questions.append(question)
+        except Exception as e:
+            logger.warning("Question ignorée (validation échouée) : %s", e)
             continue
     return questions
 
@@ -215,6 +216,7 @@ def generate_quiz_from_chunk(
     variable_correct: bool = False,
     persona: str = "",
     notion_mixing: bool = True,
+    enable_thinking: bool = True,
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -230,9 +232,9 @@ def generate_quiz_from_chunk(
 
     # Appel au LLM (vision ou texte)
     if vision_mode and chunk.page_images:
-        result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.6)
+        result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.6, enable_thinking=enable_thinking)
     else:
-        result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.6)
+        result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.6, enable_thinking=enable_thinking)
 
     return _parse_quiz_questions(result, chunk, difficulty)
 
@@ -275,6 +277,7 @@ def generate_quiz(
     variable_correct: bool = False,
     persona: str = "",
     notion_mixing: bool = True,
+    enable_thinking: bool = True,
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -406,6 +409,7 @@ def generate_quiz(
                         variable_correct=variable_correct,
                         persona=persona,
                         notion_mixing=notion_mixing,
+                        enable_thinking=enable_thinking,
                     )
                     all_questions.extend(questions)
                     # Mettre à jour la liste pour les chunks suivants du même niveau

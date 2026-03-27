@@ -22,3 +22,5 @@ python-pptx        # → from pptx import Presentation
 odfpy              # → from odf.opendocument import load as load_odf
 plotly                              #   from odf import text, draw, table
                                #   from odf.teletype import extractText
+pytest>=7.0.0
+pytest-mock>=3.10.0

@@ -16,6 +16,8 @@ from langchain_openai import ChatOpenAI
 from langchain_experimental.tools import PythonREPLTool
 from langgraph.prebuilt import create_react_agent
 
+import logging
+
 from core.llm_service import (
     call_llm_json,
     call_llm_vision_json,
@@ -26,7 +28,10 @@ from core.llm_service import (
     VISION_MODEL_NAME,
     MODEL_CONTEXT_WINDOW,
 )
+from core.models import validate_exercise
 from processing.document_processor import TextChunk
+
+logger = logging.getLogger(__name__)
 
 # Timeout pour l'exécution sandbox (en secondes)
 SANDBOX_TIMEOUT = 30
@@ -79,6 +84,7 @@ EXERCISE_JSON_FORMAT_CAS_PRATIQUE = """FORMAT DE RÉPONSE (JSON strict) :
                 {{"question": "Question 2 ?", "answer": "Réponse développée à la question 2..."}}
             ],
             "correction": "Correction globale et commentaires pédagogiques sur l'ensemble du cas...",
+            "verification_code": "# Code Python de vérification des calculs (OPTIONNEL, seulement si des calculs sont demandés)\\n# Étape 1 : Données\\nbase = 50000\\ntaux = 0.2\\n# Étape 2 : Calcul\\nresult = base * taux\\nprint(f'Résultat: {{result}}')",
             "citation": "Citation exacte du passage du texte qui inspire le cas...",
             "source_page": 1,
             "related_notions": ["Titre notion 1", "Titre notion 2"]
@@ -124,7 +130,9 @@ RÈGLES (appliquées automatiquement) :
 4. Blancs sur des informations importantes, pas anecdotiques
 5. Champ "context" avec [BLANC] à la place du terme manquant
 6. Page exacte et citation du passage source
-7. 'related_notions' avec les titres exacts des notions couvertes"""
+7. 'related_notions' avec les titres exacts des notions couvertes
+8. L'énoncé doit fournir SUFFISAMMENT DE CONTEXTE pour répondre sans le document
+9. Au minimum 3 phrases, dont au moins une phrase de contexte SANS blanc"""
 
 EXERCISE_FIXED_RULES_CAS_PRATIQUE = """CONTEXTE IMPORTANT :
 Les étudiants ne possèdent PAS le document source au moment de l'exercice.
@@ -138,7 +146,9 @@ RÈGLES (appliquées automatiquement) :
 4. Analyse, calcul ou argumentation demandée
 5. Correction complète et pédagogique par sous-question
 6. Page exacte et citation du passage source
-7. 'related_notions' avec les titres exacts des notions couvertes"""
+7. 'related_notions' avec les titres exacts des notions couvertes
+8. Pour les sous-questions avec calculs, fournir un verification_code Python avec les étapes arithmétiques (PAS de code arbitraire)
+9. Le code doit stocker le résultat final dans 'result' et afficher chaque étape avec print()"""
 
 # Dict pour accéder aux règles fixes par type
 EXERCISE_FIXED_RULES_BY_TYPE = {
@@ -163,6 +173,9 @@ RÈGLES POUR LES QUESTIONS À TROU :
 5. Le champ "context" de chaque blanc montre la phrase avec [BLANC] à la place du terme manquant
 6. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte
 7. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes
+8. L'énoncé doit fournir SUFFISAMMENT DE CONTEXTE pour que l'étudiant puisse répondre sans le document.
+   Chaque phrase à trou doit être entourée de phrases explicatives qui donnent le cadre nécessaire (définitions, exemples, contexte).
+9. L'exercice doit comporter au minimum 3 phrases, dont au moins une phrase de contexte SANS blanc avant les phrases à compléter.
 {notions_block}"""
 
 _COMMON_RULES_CAS_PRATIQUE = """
@@ -179,6 +192,9 @@ RÈGLES POUR LES CAS PRATIQUES :
 5. La correction de chaque sous-question doit être complète et pédagogique
 6. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte
 7. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes
+8. Pour les sous-questions comportant des CALCULS, fournis un champ "verification_code" avec du code Python vérifiant les étapes de calcul.
+   NE génère PAS de code Python arbitraire — uniquement les étapes arithmétiques reproduisant le raisonnement.
+   Le code doit stocker le résultat final dans une variable 'result' et afficher chaque étape avec print().
 {notions_block}"""
 
 _COMMON_RULES = """
@@ -561,7 +577,7 @@ def _verify_exercise_direct(exercise: Exercise) -> Exercise:
     return exercise
 
 
-def _correct_exercise_with_llm(exercise: Exercise, model: Optional[str] = None) -> Exercise:
+def _correct_exercise_with_llm(exercise: Exercise, model: Optional[str] = None, enable_thinking: bool = True) -> Exercise:
     """
     Demande au LLM de corriger un exercice dont la vérification a échoué.
     Envoie le résultat du code Python au LLM pour qu'il corrige sa résolution.
@@ -593,7 +609,7 @@ FORMAT DE RÉPONSE (JSON strict) :
     )
 
     try:
-        result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
+        result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3, enable_thinking=enable_thinking)
 
         if "expected_answer" in result:
             exercise.expected_answer = str(result["expected_answer"])
@@ -616,68 +632,69 @@ def _parse_exercises(
     difficulty: str,
     exercise_type: str = "calcul",
 ) -> List[Exercise]:
-    """Parse le JSON retourné par le LLM en liste d'Exercise (sans vérification)."""
+    """Parse le JSON retourné par le LLM en liste d'Exercise avec validation Pydantic."""
     exercises = []
     for ex_data in result.get("exercises", []):
         try:
-            source_page = ex_data.get("source_page")
-            if source_page:
-                source_pages = [source_page] if isinstance(source_page, int) else chunk.source_pages
-            else:
-                source_pages = chunk.source_pages
+            # Validation Pydantic (normalise source_page → source_pages)
+            validated = validate_exercise(ex_data)
+
+            source_pages = validated["source_pages"] if validated["source_pages"] else chunk.source_pages
 
             if exercise_type == "trou":
                 exercise = Exercise(
-                    statement=ex_data["statement"],
+                    statement=validated["statement"],
                     expected_answer="",
-                    blanks=ex_data.get("blanks", []),
-                    correction=ex_data.get("correction", ""),
+                    blanks=validated.get("blanks", []),
+                    correction=validated.get("correction", ""),
                     source_pages=source_pages,
                     source_document=chunk.source_document,
-                    citation=ex_data.get("citation", ""),
+                    citation=validated.get("citation", ""),
                     difficulty_level=difficulty,
-                    related_notions=ex_data.get("related_notions", []),
+                    related_notions=validated.get("related_notions", []),
                     exercise_type="trou",
                     verified=True,
                     verification_output="Vérification manuelle recommandée.",
                 )
             elif exercise_type == "cas_pratique":
                 exercise = Exercise(
-                    statement=ex_data["statement"],
+                    statement=validated["statement"],
                     expected_answer="",
-                    sub_questions=ex_data.get("sub_questions", []),
-                    correction=ex_data.get("correction", ""),
+                    sub_questions=validated.get("sub_questions", []),
+                    correction=validated.get("correction", ""),
+                    verification_code=validated.get("verification_code", ""),
                     source_pages=source_pages,
                     source_document=chunk.source_document,
-                    citation=ex_data.get("citation", ""),
+                    citation=validated.get("citation", ""),
                     difficulty_level=difficulty,
-                    related_notions=ex_data.get("related_notions", []),
+                    related_notions=validated.get("related_notions", []),
                     exercise_type="cas_pratique",
                     verified=True,
                     verification_output="Vérification manuelle recommandée.",
                 )
             else:
                 exercise = Exercise(
-                    statement=ex_data["statement"],
-                    expected_answer=str(ex_data.get("expected_answer", "")),
-                    steps=ex_data.get("steps", []),
-                    num_steps=len(ex_data.get("steps", [])),
-                    correction=ex_data.get("correction", ""),
-                    verification_code=ex_data.get("verification_code", ""),
+                    statement=validated["statement"],
+                    expected_answer=str(validated.get("expected_answer", "")),
+                    steps=validated.get("steps", []),
+                    num_steps=len(validated.get("steps", [])),
+                    correction=validated.get("correction", ""),
+                    verification_code=validated.get("verification_code", ""),
                     source_pages=source_pages,
                     source_document=chunk.source_document,
-                    citation=ex_data.get("citation", ""),
+                    citation=validated.get("citation", ""),
                     difficulty_level=difficulty,
-                    related_notions=ex_data.get("related_notions", []),
+                    related_notions=validated.get("related_notions", []),
                     exercise_type="calcul",
                 )
             exercises.append(exercise)
-        except (KeyError, TypeError):
+        except Exception as e:
+            logger.warning("Exercice ignoré (validation échouée) : %s", e)
             continue
     return exercises
 
 
-def _verify_and_correct_exercise(exercise: Exercise, model: Optional[str] = None) -> Exercise:
+def _verify_and_correct_exercise(exercise: Exercise, model: Optional[str] = None, enable_thinking: bool = True) -> Exercise:
     """Vérifie un exercice par exécution directe, corrige via LLM si échec.
     Pour les types 'trou' et 'cas_pratique', la vérification automatique est ignorée."""
     if exercise.exercise_type != "calcul":
@@ -687,7 +704,7 @@ def _verify_and_correct_exercise(exercise: Exercise, model: Optional[str] = None
     exercise = _verify_exercise_direct(exercise)
     if not exercise.verified and exercise.verification_code:
         initial_output = exercise.verification_output
-        exercise = _correct_exercise_with_llm(exercise, model=model)
+        exercise = _correct_exercise_with_llm(exercise, model=model, enable_thinking=enable_thinking)
         exercise = _verify_exercise_direct(exercise)
         exercise.verification_output = (
             initial_output
@@ -708,6 +725,7 @@ def generate_exercises_from_chunk(
     vision_mode: bool = False,
     exercise_type: str = "calcul",
     persona: str = "",
+    enable_thinking: bool = True,
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
@@ -727,14 +745,14 @@ def generate_exercises_from_chunk(
     for attempt in range(max_retries):
         try:
             if vision_mode and chunk.page_images:
-                result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.5)
+                result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.5, enable_thinking=enable_thinking)
             else:
-                result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.5)
+                result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.5, enable_thinking=enable_thinking)
 
             parsed = _parse_exercises(result, chunk, difficulty, exercise_type=exercise_type)
 
             for exercise in parsed:
-                exercise = _verify_and_correct_exercise(exercise, model=model)
+                exercise = _verify_and_correct_exercise(exercise, model=model, enable_thinking=enable_thinking)
                 exercises.append(exercise)
 
             verified_count = sum(1 for ex in exercises if ex.verified)
@@ -760,6 +778,7 @@ def generate_exercises(
     vision_mode: bool = False,
     exercise_type: str = "calcul",
     persona: str = "",
+    enable_thinking: bool = True,
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks, avec support des niveaux de difficulté.
@@ -774,6 +793,7 @@ def generate_exercises(
         custom_exercise_prompts: Dict {difficulté: prompt_editable}.
         batch_mode: Si True, utilise l'API Batch pour la génération initiale.
         vision_mode: Si True, envoie les images des chunks au modèle vision.
+        enable_thinking: Si True, active le mode thinking du LLM.
 
     Returns:
         Liste d'Exercise.
@@ -859,7 +879,7 @@ def generate_exercises(
                 continue
             parsed = _parse_exercises(parsed_json, chunk, diff_name, exercise_type=exercise_type)
             for exercise in parsed[:n_ex]:
-                exercise = _verify_and_correct_exercise(exercise, model=model)
+                exercise = _verify_and_correct_exercise(exercise, model=model, enable_thinking=enable_thinking)
                 all_exercises.append(exercise)
 
     # ─── MODE SÉQUENTIEL ───────────────────────────────────────────────────
@@ -875,6 +895,7 @@ def generate_exercises(
                     vision_mode=vision_mode,
                     exercise_type=exercise_type,
                     persona=persona,
+                    enable_thinking=enable_thinking,
                 )
                 all_exercises.extend(exercises)
             except Exception as e:

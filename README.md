@@ -35,14 +35,17 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 - **Trois types d'exercices** :
   - **Calcul numérique** : Résolution chiffrée avec vérification automatique par exécution Python.
-  - **Questions à trou** : Phrases à compléter avec des blancs (`___`), retour JSON structuré `blanks`.
-  - **Cas pratique** : Scénario avec sous-questions numérotées, retour JSON `sub_questions`.
+  - **Questions à trou** : Phrases à compléter avec des blancs (`___`), retour JSON structuré `blanks`. Contexte suffisant pour répondre sans le document.
+  - **Cas pratique** : Scénario avec sous-questions numérotées, retour JSON `sub_questions`. Code de vérification Python optionnel pour les calculs.
 - **Trois niveaux de difficulté distincts** : 🟢 Facile / 🟡 Moyen / 🔴 Difficile.
 - **Prompts réorganisés** : Même structure que les quizz — **persona** modifiable par le formateur, **règles fixes** par type affichées en lecture seule, **instructions par niveau** personnalisables.
 - **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source.
 - **Tags de notions** : Chaque exercice indique les notions fondamentales qu'il couvre.
+- **Vérification IA pour tous les types** : Boucle vérifier → reformuler (max 3 tentatives) → supprimer, similaire aux QCM. Les exercices à trou et cas pratiques sont aussi vérifiés par le LLM.
 - **Vérification pas à pas** (calcul numérique) : Le code Python affiche chaque étape intermédiaire ; auto-correction LLM si le résultat ne correspond pas.
+- **Accumulation** : Les générations successives s'ajoutent sans écraser les exercices existants. Bouton "Effacer tout" disponible.
 - **Retry automatique JSON** : Si le LLM produit un JSON invalide, le système relance automatiquement l'appel jusqu'à 3 fois.
+- **Validation Pydantic** : Les réponses JSON du LLM sont validées par des modèles Pydantic v2 avant traitement.
 
 ### 💬 Mode Libre (Génération par conversation IA)
 
@@ -76,6 +79,8 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
   - **Taux de réussite par question** : Graphique en barres coloré (vert/orange/rouge).
   - **Taux de réussite par notion** : Graphique radar.
   - **Classement des participants** : Tableau avec podium (🥇🥈🥉).
+  - **Recommandations IA** : Bouton pour analyser les résultats via LLM — identifie les notions faibles, questions problématiques, patterns étudiants et recommandations globales.
+- **Sessions avec exercices** : Les exercices sont stockés et partagés dans les sessions aux côtés des quizz QCM.
 - **Gestion des sessions** : Fermez une session pour empêcher de nouvelles soumissions.
 
 ### 🛠️ Ateliers Formateurs (Sessions de travail collaboratives)
@@ -106,14 +111,44 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 - **Modèle vision** : Utilise `Qwen3-VL-32B-Instruct-FP8` pour analyser les **images des pages PDF** (diagrammes, schémas, formules, tableaux visuels).
 - **Optimisation DPI automatique** : Le système calcule le DPI optimal pour respecter le budget de tokens (recherche binaire entre min/max DPI).
+- **Pages par chunk configurables** : Slider pour définir le nombre de pages groupées par chunk (1–20), avec estimation des tokens par chunk en temps réel.
 - **Fallback automatique** : Les fichiers non-PDF restent traités en mode texte classique.
 
 ### ⚡ Traitement par lots (Batch API)
 
 - **API Batch OpenAI** : Soumet toutes les requêtes LLM indépendantes en un seul lot via `/v1/batches`.
 - **Opérations batchées** : Génération de quizz, exercices, vérification IA des QCM, génération en mode libre.
+- **Retry par requête** : Les requêtes individuelles qui échouent sont retentées automatiquement (max 2 retries, backoff exponentiel).
 - **Suivi en temps réel** : Polling avec barre de progression pendant l'attente des résultats.
 - **Compatible vision** : Les requêtes batch peuvent inclure des images pour le modèle vision.
+
+### 🧠 Raisonnement IA (enable_thinking)
+
+- **Toggle dans la sidebar** : Active ou désactive le mode "thinking" du modèle Qwen (raisonnement interne avant réponse).
+- **Propagé partout** : Le paramètre est passé à toutes les générations (quiz, exercices, notions, vérification, chat).
+- **Désactivé par défaut en vision** : Le mode thinking est automatiquement OFF quand le mode vision est activé.
+
+### 🗄️ Cache LLM
+
+- **Cache SHA256** : Les réponses LLM sont mises en cache en mémoire (clé = SHA256 des paramètres).
+- **LRU + TTL** : Eviction des entrées les plus anciennes (max 500), expiration après 1h.
+- **Persistence optionnelle** : Sauvegarde vers `shared_data/llm_cache.json` pour survivre aux redémarrages.
+- **Skip cache** : Paramètre `use_cache=False` pour forcer un appel frais.
+
+### 📊 Suivi des tokens
+
+- **Tracking automatique** : Chaque appel LLM enregistre les tokens d'entrée et de sortie.
+- **Stats agrégées** : Résumé total via `get_token_summary()`.
+
+### 🧪 Tests unitaires
+
+- **51 tests** couvrant : cache LLM, token tracker, modèles Pydantic, parsing JSON, sessions SQLite, exports HTML/CSV.
+- **Exécution** : `python -m pytest tests/ -v`
+
+### 📦 Export combiné
+
+- **HTML combiné** : Export unique contenant les sections QCM et Exercices avec navigation par onglets.
+- **CSV combiné** : Export unique avec séparateurs de sections (`=== QUIZ QCM ===` / `=== EXERCICES ===`).
 
 ---
 
@@ -285,9 +320,12 @@ generateur_de_quizz/
 │   ├── quiz_session.py           ← page participant (quizz partagé / pool)
 │   └── work_session.py           ← page Atelier Formateurs (collaborative)
 ├── templates/quiz_template.html  ← template Jinja2 pour export HTML
-├── shared_data/                  ← données persistantes (SQLite, stats JSON)
+├── shared_data/                  ← données persistantes (SQLite, stats JSON, cache LLM)
 ├── core/
-│   ├── llm_service.py            ← client LLM
+│   ├── llm_service.py            ← client LLM (cache, retry, token tracking, enable_thinking)
+│   ├── llm_cache.py              ← cache SHA256 avec LRU, TTL et persistence JSON
+│   ├── token_tracker.py          ← suivi des tokens LLM par appel
+│   ├── models.py                 ← modèles Pydantic v2 (validation JSON LLM)
 │   └── stats_manager.py          ← statistiques globales (questions, docs, tokens, sessions)
 ├── processing/
 │   ├── document_processor.py     ← extraction texte multi-format + chunking
@@ -296,15 +334,24 @@ generateur_de_quizz/
 │   ├── quiz_generator.py         ← génération QCM (anti-doublons, variable_correct, persona)
 │   ├── quiz_verifier.py          ← vérification IA des QCM, reformulation auto
 │   ├── exercise_generator.py     ← génération exercices (3 types, persona séparé)
+│   ├── exercise_verifier.py      ← vérification IA des exercices trou/cas_pratique
 │   ├── question_editor.py        ← amélioration LLM d'une question existante
 │   ├── notion_detector.py        ← détection, édition, fusion des notions
 │   ├── chat_mode.py              ← machine à états pour le mode libre
-│   └── batch_service.py          ← traitement par lots (ThreadPoolExecutor)
+│   └── batch_service.py          ← traitement par lots (ThreadPoolExecutor, retry par requête)
 ├── export/
-│   └── quiz_exporter.py          ← export HTML (Jinja2) et CSV
+│   └── quiz_exporter.py          ← export HTML/CSV (quiz, exercices, combiné)
 ├── sessions/
-│   ├── session_store.py          ← backend SQLite (sessions étudiantes + ateliers formateurs)
-│   └── analytics.py              ← dashboard Plotly
+│   ├── session_store.py          ← backend SQLite (sessions + exercices + ateliers)
+│   └── analytics.py              ← dashboard Plotly + recommandations IA
+├── tests/                        ← tests unitaires (pytest)
+│   ├── conftest.py               ← fixtures partagées
+│   ├── test_llm_cache.py
+│   ├── test_llm_service.py
+│   ├── test_token_tracker.py
+│   ├── test_models.py
+│   ├── test_session_store.py
+│   └── test_quiz_exporter.py
 └── ui/
     └── ui_components.py          ← badges, stat cards, guide tab
 ```
@@ -320,6 +367,8 @@ generateur_de_quizz/
 - `tiktoken` : Tokenizer OpenAI rapide.
 - `jinja2` : Templating HTML.
 - `plotly` : Graphiques interactifs pour le dashboard analytics.
+- `pydantic` : Validation des données LLM (modèles v2).
+- `pytest` : Tests unitaires.
 
 ---
 

@@ -112,6 +112,7 @@ def detect_notions(
     model: Optional[str] = None,
     progress_callback=None,
     vision_mode: bool = False,
+    enable_thinking: bool = True,
 ) -> List[Notion]:
     """
     Détecte les notions fondamentales de manière itérative, chunk par chunk.
@@ -143,9 +144,9 @@ def detect_notions(
 
         try:
             if vision_mode and chunk.page_images:
-                result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.3)
+                result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.3, enable_thinking=enable_thinking)
             else:
-                result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
+                result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3, enable_thinking=enable_thinking)
             notions = _parse_notions_response(result)
         except Exception as e:
             print(f"Erreur détection notions chunk {i}: {e}")
@@ -160,7 +161,8 @@ def detect_notions(
 def edit_notions_with_llm(
     current_notions: List[Notion],
     user_instruction: str,
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    enable_thinking: bool = True,
 ) -> List[Notion]:
     """
     Permet à l'utilisateur de modifier les notions via une instruction en langage naturel.
@@ -209,7 +211,7 @@ INSTRUCTION DE L'UTILISATEUR : {user_instruction}
 
 Applique cette instruction et retourne la liste complète mise à jour."""
 
-    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
+    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3, enable_thinking=enable_thinking)
 
     notions = []
     for n_data in result.get("notions", []):
@@ -231,7 +233,8 @@ Applique cette instruction et retourne la liste complète mise à jour."""
 
 def merge_similar_notions(
     notions: List[Notion],
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    enable_thinking: bool = True,
 ) -> tuple:
     """
     Fusionne les notions similaires ou redondantes entre elles via le LLM.
@@ -276,7 +279,7 @@ FORMAT DE RÉPONSE (JSON strict) :
         "Fusionne les notions similaires ou redondantes. Retourne une liste consolidée."
     )
 
-    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3)
+    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3, enable_thinking=enable_thinking)
 
     merged = []
     for n_data in result.get("merged_notions", []):

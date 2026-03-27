@@ -19,9 +19,12 @@ generateur_de_quizz/
 │   ├── quiz_session.py           ← page participant (quizz partagé / pool)
 │   └── work_session.py           ← page Atelier Formateurs (collaborative)
 ├── templates/quiz_template.html  ← template Jinja2 pour export HTML
-├── shared_data/                  ← données persistantes (SQLite, stats JSON)
+├── shared_data/                  ← données persistantes (SQLite, stats JSON, cache LLM)
 ├── core/
-│   ├── llm_service.py            ← client LLM (call_llm, call_llm_json, call_llm_chat, call_llm_vision)
+│   ├── llm_service.py            ← client LLM (cache SHA256, retry, token tracking, enable_thinking)
+│   ├── llm_cache.py              ← cache LLM : SHA256 key, LRU eviction, TTL, persistence JSON
+│   ├── token_tracker.py          ← suivi tokens par appel (log_token_usage, get_token_summary)
+│   ├── models.py                 ← modèles Pydantic v2 (QuizQuestionModel, ExerciseModel, NotionModel...)
 │   └── stats_manager.py          ← statistiques globales (questions, docs, tokens, sessions)
 ├── processing/
 │   ├── document_processor.py     ← extraction texte multi-format + chunking
@@ -30,15 +33,24 @@ generateur_de_quizz/
 │   ├── quiz_generator.py         ← génération QCM — anti-doublons, variable_correct, persona
 │   ├── quiz_verifier.py          ← vérification IA des QCM, reformulation auto (max 3 essais)
 │   ├── exercise_generator.py     ← génération exercices — 3 types, persona séparé des règles fixes
+│   ├── exercise_verifier.py      ← vérification IA des exercices trou/cas_pratique (verify→reformulate→delete)
 │   ├── question_editor.py        ← amélioration LLM d'une question existante (improve_question_with_llm)
 │   ├── notion_detector.py        ← détection, édition, fusion des notions fondamentales
 │   ├── chat_mode.py              ← machine à états (ChatState) pour le mode libre
-│   └── batch_service.py          ← traitement par lots (ThreadPoolExecutor)
+│   └── batch_service.py          ← traitement par lots (ThreadPoolExecutor, retry par requête, BatchResult)
 ├── export/
-│   └── quiz_exporter.py          ← export HTML (Jinja2) et CSV
+│   └── quiz_exporter.py          ← export HTML/CSV (quiz, exercices, combiné quiz+exercices)
 ├── sessions/
-│   ├── session_store.py          ← backend SQLite (sessions étudiantes + pool + ateliers formateurs)
-│   └── analytics.py              ← dashboard Plotly (graphiques par question, par notion, classement)
+│   ├── session_store.py          ← backend SQLite (sessions + exercices + ateliers formateurs)
+│   └── analytics.py              ← dashboard Plotly + recommandations IA (generate_ai_recommendations)
+├── tests/                        ← tests unitaires (pytest, 51 tests)
+│   ├── conftest.py               ← fixtures partagées (sample data)
+│   ├── test_llm_cache.py         ← cache LRU, TTL, persistence
+│   ├── test_llm_service.py       ← parsing JSON, count_tokens
+│   ├── test_token_tracker.py     ← log, summary, reset
+│   ├── test_models.py            ← validation Pydantic (quiz, exercice, notion)
+│   ├── test_session_store.py     ← CRUD SQLite, analytics
+│   └── test_quiz_exporter.py     ← HTML/CSV, export combiné
 └── ui/
     └── ui_components.py          ← badges difficulté, stat cards, render_guide_tab()
 ```
@@ -53,13 +65,19 @@ generateur_de_quizz/
 - Pas de `max_tokens` envoyé à l'API par défaut (réponses longues autorisées).
 - `call_llm_json` / `call_llm_chat_json` gèrent le retry automatique (jusqu'à 3 fois) si le JSON est invalide.
 - `call_llm_vision` / `call_llm_vision_json` pour les requêtes avec images base64.
+- **Cache** : `call_llm()` et `call_llm_json()` utilisent le cache SHA256 par défaut (`use_cache=True`). Ne PAS cacher `call_llm_chat` (contexte conversationnel) ni `call_llm_vision` (images trop lourdes).
+- **enable_thinking** : Toutes les fonctions `call_llm*` acceptent `enable_thinking: bool` (défaut `True` pour texte, `False` pour vision). Passe `extra_body={"enable_thinking": ..., "chat_template_kwargs": {"enable_thinking": ...}}` pour les modèles Qwen.
+- **Token tracking** : Tous les appels sont tracés automatiquement via `log_token_usage()` dans `_execute_completion()`.
+- **Parsing JSON résilient** : `_parse_json_response()` tente 3 stratégies (direct, bloc markdown, extraction braces).
 
 ### Structures de données clés
 
 - `QuizQuestion` et `Exercise` ont un champ `related_notions: List[str]`.
-- `QuizSession` a des champs optionnels `pool_json`, `subset_size`, `pass_threshold` pour le mode pool.
-- `WorkSession` est le brouillon collaboratif formateurs (table `work_sessions` dans SQLite).
+- `Exercise` a un champ `verification_code: str` pour les cas pratiques avec calculs.
+- `QuizSession` a des champs optionnels `pool_json`, `subset_size`, `pass_threshold` pour le mode pool, et `exercises_json` pour stocker les exercices.
+- `WorkSession` est le brouillon collaboratif formateurs (table `work_sessions` dans SQLite), avec `draft_exercises_json`.
 - Les chunks de texte portent des marqueurs `[Début Page X] ... [Fin Page X]` pour la traçabilité des sources.
+- **Modèles Pydantic v2** (`core/models.py`) : `QuizQuestionModel`, `ExerciseModel`, `NotionModel` etc. Utilisés pour valider les réponses JSON du LLM avant conversion vers les dataclasses existants (`model_validate()` → `model_dump()`). Migration graduelle — ne pas remplacer les dataclasses existants.
 
 ### Structure des prompts (quiz et exercices)
 
@@ -75,7 +93,18 @@ Constantes dans `exercise_generator.py` : `EXERCISE_DEFAULT_PERSONA`, `EXERCISE_
 ### Types d'exercices
 
 Trois types supportés : `"calcul"` (vérification Python), `"trou"` (JSON `blanks`), `"cas_pratique"` (JSON `sub_questions`).
-Les types `trou` et `cas_pratique` n'ont pas de vérification Python automatique (`verified=True` avec note manuelle).
+
+**Vérification par type :**
+
+- `calcul` : Vérification par exécution Python (subprocess isolé) + auto-correction LLM.
+- `trou` : Vérification par LLM (le LLM remplit les blancs depuis le document source, comparaison flexible, seuil 70%).
+- `cas_pratique` : Vérification par LLM (le LLM répond aux sous-questions) + exécution du `verification_code` s'il existe.
+
+Le module `exercise_verifier.py` gère la boucle vérifier → reformuler (max 3 tentatives) → supprimer pour trou et cas_pratique. Les exercices calcul sont vérifiés directement dans `exercise_generator.py`.
+
+### Accumulation des exercices
+
+Les générations successives s'ajoutent aux exercices existants (`st.session_state.exercises + new`). Bouton "Effacer tout" pour réinitialiser. Même logique pour le mode document et le mode libre.
 
 ### Sessions étudiantes
 
@@ -145,8 +174,15 @@ streamlit run app.py
 - **Sessions partagées** : toute la logique DB est dans `session_store.py` (SQLite WAL mode). Le schéma évolue via `ALTER TABLE` backward-compatible dans `init_db()`.
 - **Nouvelles migrations SQLite** : toujours utiliser `try/except` autour des `ALTER TABLE` dans `init_db()` (les colonnes peuvent déjà exister).
 - **Ateliers formateurs** : logique dans `session_store.py` (fonctions `*_work_session*`), UI dans `pages/work_session.py`.
-- **Batch API** : le toggle est dans la sidebar de `app.py`. Les fonctions batch sont dans `batch_service.py` et appelées conditionnellement depuis `quiz_generator.py`, `exercise_generator.py`, `quiz_verifier.py` et `chat_mode.py`.
+- **Batch API** : le toggle est dans la sidebar de `app.py`. Les fonctions batch sont dans `batch_service.py` et appelées conditionnellement depuis `quiz_generator.py`, `exercise_generator.py`, `quiz_verifier.py` et `chat_mode.py`. `BatchResult` dataclass retourne `results`, `failures` et `retry_count`.
 - **Stats globales** : utiliser `increment_stats(questions=N, documents=N, tokens=N, sessions=N)` depuis `core/stats_manager.py`. Appeler `increment_stats(sessions=1)` à chaque création de session étudiante.
+- **Cache LLM** : `core/llm_cache.py`. Instance globale via `get_cache()`. Clé SHA256 des paramètres, LRU (max 500), TTL (1h), persistence vers `shared_data/llm_cache.json`. Ne PAS cacher les appels chat ou vision.
+- **Token tracker** : `core/token_tracker.py`. Appelé automatiquement par `_execute_completion()`. `get_token_summary()` pour les stats agrégées. `reset_token_log()` pour les tests.
+- **Modèles Pydantic** : `core/models.py`. Utiliser `validate_quiz_question(data)` et `validate_exercise(data)` pour valider les JSON du LLM. Lèvent `ValidationError` si invalide.
+- **Vérification exercices** : `generation/exercise_verifier.py`. `verify_exercises(exercises, chunks, model)` retourne `(exercises_ok, results)`. Pattern identique à `quiz_verifier.py`.
+- **Export combiné** : `quiz_exporter.py` — `export_combined_html(quiz, exercises)` et `export_combined_csv(quiz, exercises)`.
+- **enable_thinking** : Toujours propager `enable_thinking=st.session_state.get("enable_thinking", True)` lors des appels de génération depuis `app.py`. Le paramètre est accepté par toutes les fonctions publiques de generation/.
+- **Tests** : `python -m pytest tests/ -v`. Ajouter des tests dans `tests/` pour tout nouveau module. Fixtures dans `conftest.py`.
 
 ---
 

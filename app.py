@@ -24,7 +24,10 @@ from generation.exercise_generator import (
     DEFAULT_EXERCISE_PROMPTS_TROU, DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE,
     EXERCISE_DEFAULT_PERSONA, EXERCISE_FIXED_RULES_BY_TYPE,
 )
-from export.quiz_exporter import export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html
+from export.quiz_exporter import (
+    export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html,
+    export_combined_html, export_combined_csv,
+)
 from generation.notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
 from ui.ui_components import render_stat_card, render_source_info, render_difficulty_badge
 from core.stats_manager import load_stats, increment_stats
@@ -329,6 +332,13 @@ with st.sidebar:
             )
             vision_text_mode = vision_sub == "Images + Texte"
 
+        enable_thinking = st.toggle(
+            "Raisonnement IA (thinking)",
+            value=not vision_enabled,
+            help="Active le mode raisonnement du LLM. Desactive par defaut en mode vision pour de meilleures performances.",
+        )
+        st.session_state["enable_thinking"] = enable_thinking
+
         st.divider()
 
     # ─── Modèle LLM (auto-switché si vision activé) ──────────────────────────
@@ -566,10 +576,32 @@ if uploaded_files:
                             else:
                                 st.info("Apercu non disponible pour cette page.")
 
+                    # Slider pages par chunk
+                    pages_per_chunk = st.slider(
+                        "Pages par chunk (vision)",
+                        min_value=1,
+                        max_value=20,
+                        value=st.session_state.get("vision_pages_per_chunk", 10),
+                        key="vision_pages_per_chunk",
+                        help="Nombre de pages groupées par chunk pour le traitement vision. "
+                             "Moins de pages = plus de chunks mais plus précis.",
+                    )
+                    # Estimation tokens par chunk
+                    if dpi_info and dpi_info.get("page_sizes_pt"):
+                        from processing.vision_processor import calculate_page_tokens
+                        current_dpi = vision_dpi_override or dpi_info["auto_dpi"]
+                        avg_tokens_per_page = sum(
+                            calculate_page_tokens(w, h, current_dpi)
+                            for w, h in dpi_info["page_sizes_pt"]
+                        ) / max(len(dpi_info["page_sizes_pt"]), 1)
+                        tokens_per_chunk = int(avg_tokens_per_page * pages_per_chunk)
+                        st.caption(f"~{tokens_per_chunk:,} tokens/chunk ({avg_tokens_per_page:.0f} tokens/page × {pages_per_chunk} pages)")
+
     # ─── Extraire les stats et chunks ────────────────────────────────────────
     files_key = "_".join(sorted(f.name for f in uploaded_files))
     vision_dpi_param = vision_dpi_override or "auto"
-    current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_text_mode}_{vision_dpi_param}"
+    vision_pages_chunk = st.session_state.get("vision_pages_per_chunk", 10)
+    current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_text_mode}_{vision_dpi_param}_{vision_pages_chunk}"
 
     if st.session_state.pdf_stats is None or st.session_state.get("_last_params") != current_params:
         with st.spinner("📄 Analyse et découpage des documents en cours..."):
@@ -585,10 +617,12 @@ if uploaded_files:
                     vision_kwargs["min_dpi"] = vision_dpi_override
                     vision_kwargs["max_dpi"] = vision_dpi_override
                 if vision_text_mode:
+                    vision_kwargs["max_pages_per_chunk"] = vision_pages_chunk
                     st.session_state.chunks = extract_and_chunk_multiple_vision_text(
                         uploaded_files, **vision_kwargs
                     )
                 else:
+                    vision_kwargs["max_images_per_chunk"] = vision_pages_chunk
                     st.session_state.chunks = extract_and_chunk_multiple_vision(
                         uploaded_files, **vision_kwargs
                     )
@@ -702,7 +736,7 @@ if uploaded_files:
                             text=f"🧠 Chunk {min(current + 1, total)}/{total}{eta_str}"
                         )
 
-                notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress, vision_mode=vision_enabled)
+                notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress, vision_mode=vision_enabled, enable_thinking=st.session_state.get("enable_thinking", True))
                 st.session_state.notions = notions
                 progress_bar.progress(1.0, text="✅ Notions détectées !")
                 time.sleep(0.5)
@@ -935,6 +969,7 @@ if uploaded_files:
                     variable_correct=variable_correct,
                     persona=st.session_state.quiz_persona,
                     notion_mixing=notion_mixing,
+                    enable_thinking=st.session_state.get("enable_thinking", True),
                 )
                 st.session_state.quiz = quiz
                 st.session_state.verification_results = None
@@ -1160,6 +1195,7 @@ if uploaded_files:
                         max_reformulations=3,
                         progress_callback=verify_progress,
                         batch_mode=batch_mode,
+                        enable_thinking=st.session_state.get("enable_thinking", True),
                     )
                     st.session_state.quiz = verified_quiz
                     st.session_state.verification_results = vr_results
@@ -1264,6 +1300,30 @@ if uploaded_files:
                     )
                 
                 st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur. Le fichier CSV est idéal pour Excel.")
+
+                # Export combiné si des exercices existent aussi
+                exercises = st.session_state.get("exercises")
+                if exercises:
+                    st.markdown("**Export combiné (Quiz + Exercices)**")
+                    col_comb1, col_comb2 = st.columns(2)
+                    with col_comb1:
+                        combined_html = export_combined_html(quiz, exercises)
+                        st.download_button(
+                            label=f"📥 HTML Combiné ({len(quiz.questions)}Q + {len(exercises)}Ex)",
+                            data=combined_html,
+                            file_name="quiz_exercices.html",
+                            mime="text/html",
+                            width='stretch',
+                        )
+                    with col_comb2:
+                        combined_csv = export_combined_csv(quiz, exercises)
+                        st.download_button(
+                            label=f"📊 CSV Combiné ({len(quiz.questions)}Q + {len(exercises)}Ex)",
+                            data=combined_csv,
+                            file_name="quiz_exercices.csv",
+                            mime="text/csv",
+                            width='stretch',
+                        )
             except Exception as e:
                 st.error(f"Erreur lors de l'export : {e}")
 
@@ -1322,6 +1382,21 @@ if uploaded_files:
                             {"title": n.title, "description": n.description, "enabled": n.enabled}
                             for n in st.session_state.notions
                         ]
+                    # Sérialiser les exercices si disponibles
+                    exercises_data = None
+                    if st.session_state.exercises:
+                        exercises_data = [
+                            {
+                                "statement": ex.statement, "expected_answer": ex.expected_answer,
+                                "steps": ex.steps, "correction": ex.correction,
+                                "verification_code": ex.verification_code, "verified": ex.verified,
+                                "source_pages": ex.source_pages, "source_document": ex.source_document,
+                                "citation": ex.citation, "difficulty_level": ex.difficulty_level,
+                                "related_notions": ex.related_notions, "exercise_type": ex.exercise_type,
+                                "blanks": ex.blanks, "sub_questions": ex.sub_questions,
+                            } for ex in st.session_state.exercises
+                        ]
+
                     if use_pool and total_q > 1:
                         session_obj = create_pool_session(
                             quiz_data, notions_data, share_title,
@@ -1331,7 +1406,7 @@ if uploaded_files:
                         st.success(f"Session pool créée ! Code : **{session_obj.session_code}**")
                         st.caption(f"Chaque participant verra {session_obj.subset_size} questions sur {total_q}.")
                     else:
-                        session_obj = create_quiz_session(quiz_data, notions_data, share_title)
+                        session_obj = create_quiz_session(quiz_data, notions_data, share_title, exercises_data=exercises_data)
                         st.success(f"Session créée ! Code : **{session_obj.session_code}**")
                     st.code(f"Code de session : {session_obj.session_code}", language=None)
                     st.caption("Les participants accèdent au quizz via la page quiz_session avec `?code=" + session_obj.session_code + "`.")
@@ -1533,8 +1608,13 @@ if uploaded_files:
                     vision_mode=vision_enabled,
                     exercise_type=exercise_type,
                     persona=st.session_state.exercise_persona,
+                    enable_thinking=st.session_state.get("enable_thinking", True),
                 )
-                st.session_state.exercises = exercises
+                # Accumulation : ajouter sans écraser les exercices existants
+                if st.session_state.exercises is None:
+                    st.session_state.exercises = exercises
+                else:
+                    st.session_state.exercises = st.session_state.exercises + exercises
                 _invalidate_download_cache()
                 increment_stats(questions=len(exercises))
                 progress_bar.progress(1.0, text="✅ Exercices générés et vérifiés !")
@@ -1550,7 +1630,21 @@ if uploaded_files:
         if st.session_state.exercises is not None:
             exercises = st.session_state.exercises
 
-            st.markdown(f"### 📋 {len(exercises)} exercice(s) généré(s)")
+            # Compteur par type
+            type_counts = {}
+            for ex in exercises:
+                t = getattr(ex, 'exercise_type', 'calcul')
+                type_counts[t] = type_counts.get(t, 0) + 1
+            type_summary = " + ".join(f"{v} {k}" for k, v in type_counts.items())
+
+            col_ex_title, col_ex_clear = st.columns([4, 1])
+            with col_ex_title:
+                st.markdown(f"### {len(exercises)} exercice(s) ({type_summary})")
+            with col_ex_clear:
+                if st.button("Effacer tout", key="clear_exercises_btn"):
+                    st.session_state.exercises = None
+                    _invalidate_download_cache()
+                    st.rerun()
 
             for i, ex in enumerate(exercises):
                 diff_label = ex.difficulty_level or "moyen"
@@ -1900,7 +1994,7 @@ Chaque session a son propre code et ses propres résultats, indépendants des se
                         for m in st.session_state.guide_chat_messages
                     ]
                     try:
-                        response = call_llm_chat(api_messages, temperature=0.5)
+                        response = call_llm_chat(api_messages, temperature=0.5, enable_thinking=st.session_state.get("enable_thinking", True))
                     except Exception as e:
                         response = f"Erreur lors de la génération de la réponse : {e}"
                     st.markdown(response)
@@ -2030,6 +2124,7 @@ elif app_mode == "💬 Mode libre (IA)":
                         model=selected_model,
                         progress_callback=chat_quiz_progress,
                         batch_mode=batch_mode,
+                        enable_thinking=st.session_state.get("enable_thinking", True),
                     )
                     st.session_state.quiz = quiz
                     st.session_state.chat_session.quiz = quiz
@@ -2056,9 +2151,14 @@ elif app_mode == "💬 Mode libre (IA)":
                         model=selected_model,
                         progress_callback=chat_ex_progress,
                         batch_mode=batch_mode,
+                        enable_thinking=st.session_state.get("enable_thinking", True),
                     )
-                    st.session_state.exercises = exercises
-                    st.session_state.chat_session.exercises = exercises
+                    # Accumulation
+                    if st.session_state.exercises is None:
+                        st.session_state.exercises = exercises
+                    else:
+                        st.session_state.exercises = st.session_state.exercises + exercises
+                    st.session_state.chat_session.exercises = st.session_state.exercises
                     _invalidate_download_cache()
                     increment_stats(questions=len(exercises))
 
@@ -2162,6 +2262,7 @@ elif app_mode == "💬 Mode libre (IA)":
                         quiz=quiz, chunks=fake_chunks, model=selected_model,
                         max_reformulations=3, progress_callback=libre_verify_progress,
                         batch_mode=batch_mode,
+                        enable_thinking=st.session_state.get("enable_thinking", True),
                     )
                     st.session_state.quiz = verified_quiz
                     st.session_state.chat_session.quiz = verified_quiz
