@@ -275,7 +275,7 @@ def generate_ai_recommendations(analytics: dict, model: str = None) -> dict:
     for q_idx, q in per_question.items():
         questions_summary.append({
             "index": int(q_idx),
-            "text": q.get("question_text", "")[:100],
+            "text": q.get("question_text", ""),
             "success_rate": round(q.get("success_rate", 0) * 100, 1),
             "difficulty": q.get("difficulty_level", ""),
             "notions": q.get("related_notions", []),

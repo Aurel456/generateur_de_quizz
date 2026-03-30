@@ -302,7 +302,7 @@ def _reformulate_cas_pratique(
 ) -> Exercise:
     """Reformule un exercice de cas pratique."""
     sub_q_text = "\n".join(
-        f"  Q{i+1}. {sq['question']} → Réponse attendue: {sq['answer'][:100]}"
+        f"  Q{i+1}. {sq['question']} → Réponse attendue: {sq['answer']}"
         for i, sq in enumerate(exercise.sub_questions)
     )
 
