@@ -28,8 +28,16 @@ MODEL_NAME = os.getenv("MODEL_NAME", "gtp-oss-120b")
 MODEL_CONTEXT_WINDOW = int(os.getenv("MODEL_CONTEXT_WINDOW", "32000"))
 TIKTOKEN_ENCODING = os.getenv("TIKTOKEN_ENCODING", "cl100k_base")
 
-# Configuration Vision
-VISION_MODEL_NAME = os.getenv("VISION_MODEL_NAME", "")
+# Configuration Vision — supporte un seul modèle ou une liste JSON
+_raw_vision_model = os.getenv("VISION_MODEL_NAME", "")
+if _raw_vision_model.strip().startswith("["):
+    try:
+        VISION_MODEL_NAMES: List[str] = json.loads(_raw_vision_model)
+    except json.JSONDecodeError:
+        VISION_MODEL_NAMES = [_raw_vision_model] if _raw_vision_model else []
+else:
+    VISION_MODEL_NAMES = [_raw_vision_model] if _raw_vision_model else []
+VISION_MODEL_NAME = VISION_MODEL_NAMES[0] if VISION_MODEL_NAMES else ""
 VISION_CONTEXT_WINDOW = int(os.getenv("VISION_CONTEXT_WINDOW", "80000"))
 
 # Marge de sécurité pour les tokens (prompt system + overhead)

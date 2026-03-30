@@ -75,6 +75,14 @@ class SubQuestionModel(BaseModel):
     answer: str
 
 
+class SubPartModel(BaseModel):
+    """Sous-partie d'un exercice multi-questions (calcul)."""
+    question: str
+    expected_answer: str = ""
+    steps: List[str] = []
+    verification_code: str = ""
+
+
 class ExerciseModel(BaseModel):
     """Validation d'un exercice (tous types)."""
     statement: str
@@ -90,6 +98,8 @@ class ExerciseModel(BaseModel):
     blanks: List[BlankModel] = []
     # Type cas pratique
     sub_questions: List[SubQuestionModel] = []
+    # Multi-questions (calcul avec Q1, Q2...)
+    sub_parts: List[SubPartModel] = []
 
     @model_validator(mode="after")
     def normalize_source_pages(self):

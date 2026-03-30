@@ -95,17 +95,21 @@ def _build_quiz_prompt(
     variable_correct: bool = False,
     persona: str = "",
     notion_mixing: bool = True,
+    max_correct: Optional[int] = None,
 ) -> tuple:
     """Construit le prompt système et utilisateur pour la génération de quizz."""
-    
+
     labels_str = ", ".join(choice_labels[:num_choices])
     prompts = difficulty_prompts or DIFFICULTY_PROMPTS
     diff_instruction = prompts.get(difficulty, DIFFICULTY_PROMPTS.get(difficulty, ""))
-    
+
     notions_block = ""
     if notions_text:
         notions_block = f"""\n\n{notions_text}\nLes questions doivent prioritairement couvrir ces notions fondamentales."""
-    
+
+    # Déterminer le N max pour le mode variable
+    effective_max = max_correct if max_correct is not None else (num_choices - 1)
+
     active_persona = persona.strip() if persona.strip() else QUIZ_DEFAULT_PERSONA
     system_prompt = f"""{active_persona}
 Tu dois générer exactement {num_questions} questions QCM (Questions à Choix Multiples).
@@ -117,7 +121,7 @@ uniquement grâce aux connaissances acquises pendant la formation, SANS avoir le
 
 RÈGLES STRICTES :
 1. Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})
-2. {"Varie le nombre de bonnes réponses entre 1 et " + str(num_choices - 1) + " selon la question. Certaines questions ont 1 seule bonne réponse, d'autres en ont 2 ou plus. Ne mentionne JAMAIS le nombre de bonnes réponses dans l'énoncé de la question." if variable_correct else f"Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)"}
+2. {"Varie le nombre de bonnes réponses entre 1 et " + str(effective_max) + " selon la question. Certaines questions ont 1 seule bonne réponse, d'autres en ont 2 ou plus. Ne mentionne JAMAIS le nombre de bonnes réponses dans l'énoncé de la question." if variable_correct else f"Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)"}
 3. {diff_instruction}
 4. Chaque question doit inclure une explication de la réponse avec une CITATION exacte du texte source.
    L'explication doit être factuelle et ne jamais affirmer quelque chose qui n'est pas directement
@@ -217,6 +221,7 @@ def generate_quiz_from_chunk(
     persona: str = "",
     notion_mixing: bool = True,
     enable_thinking: bool = True,
+    max_correct: Optional[int] = None,
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -227,7 +232,7 @@ def generate_quiz_from_chunk(
         chunk.text, difficulty, num_questions, num_choices, num_correct, choice_labels,
         difficulty_prompts, notions_text=notions_text, source_document=chunk.source_document,
         existing_questions=existing_questions, variable_correct=variable_correct,
-        persona=persona, notion_mixing=notion_mixing,
+        persona=persona, notion_mixing=notion_mixing, max_correct=max_correct,
     )
 
     # Appel au LLM (vision ou texte)
@@ -278,6 +283,7 @@ def generate_quiz(
     persona: str = "",
     notion_mixing: bool = True,
     enable_thinking: bool = True,
+    max_correct: Optional[int] = None,
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -332,8 +338,8 @@ def generate_quiz(
 
     # ─── MODE BATCH (par niveau séquentiel pour l'anti-doublons) ───────────
     if batch_mode and total_steps > 1:
-        from generation.batch_service import BatchRequest, run_batch_json
-        from core.llm_service import VISION_MODEL_NAME, MODEL_NAME
+        from generation.batch_service import BatchRequest, run_batch_json, run_batch_multi_model
+        from core.llm_service import VISION_MODEL_NAME, VISION_MODEL_NAMES, MODEL_NAME
 
         for diff_name, diff_tasks in tasks_by_diff.items():
             # Questions déjà accumulées des niveaux précédents
@@ -350,6 +356,7 @@ def generate_quiz(
                     existing_questions=accumulated_q_texts,
                     variable_correct=variable_correct,
                     persona=persona, notion_mixing=notion_mixing,
+                    max_correct=max_correct,
                 )
                 custom_id = f"quiz_{diff_name}_{idx}"
                 images = chunk.page_images if (vision_mode and chunk.page_images) else None
@@ -368,12 +375,24 @@ def generate_quiz(
             if progress_callback:
                 progress_callback(step_idx, total_steps)
 
-            results = run_batch_json(
-                batch_requests,
-                progress_callback=lambda done, _total, s=step_idx: (
-                    progress_callback(s + done, total_steps) if progress_callback else None
-                ),
-            )
+            # Multi-model dispatch si vision avec plusieurs modèles
+            has_vision_requests = any(r.images for r in batch_requests)
+            if has_vision_requests and len(VISION_MODEL_NAMES) > 1:
+                batch_result = run_batch_multi_model(
+                    batch_requests,
+                    models=VISION_MODEL_NAMES,
+                    progress_callback=lambda done, _total, s=step_idx: (
+                        progress_callback(s + done, total_steps) if progress_callback else None
+                    ),
+                )
+                results = batch_result.results
+            else:
+                results = run_batch_json(
+                    batch_requests,
+                    progress_callback=lambda done, _total, s=step_idx: (
+                        progress_callback(s + done, total_steps) if progress_callback else None
+                    ),
+                )
 
             for custom_id, parsed_json in results.items():
                 chunk, diff_name_res = task_map.get(custom_id, (None, None))
@@ -410,6 +429,7 @@ def generate_quiz(
                         persona=persona,
                         notion_mixing=notion_mixing,
                         enable_thinking=enable_thinking,
+                        max_correct=max_correct,
                     )
                     all_questions.extend(questions)
                     # Mettre à jour la liste pour les chunks suivants du même niveau

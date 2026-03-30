@@ -34,6 +34,7 @@ class WorkSession:
     created_at: str
     status: str = "draft"  # "draft" | "published"
     draft_exercises_json: str = "[]"  # Exercices brouillon de l'atelier
+    original_quiz_json: str = "[]"  # Snapshot initial pour la vue diff
 
 
 @dataclass
@@ -122,6 +123,7 @@ def init_db():
             "ALTER TABLE participant_results ADD COLUMN seen_question_indices TEXT DEFAULT '[]'",
             "ALTER TABLE quiz_sessions ADD COLUMN exercises_json TEXT DEFAULT '[]'",
             "ALTER TABLE work_sessions ADD COLUMN draft_exercises_json TEXT DEFAULT '[]'",
+            "ALTER TABLE work_sessions ADD COLUMN original_quiz_json TEXT DEFAULT '[]'",
         ]:
             try:
                 conn.execute(alter_sql)
@@ -697,10 +699,10 @@ def create_work_session(
         conn.execute(
             """INSERT INTO work_sessions
             (work_session_id, work_code, title, draft_quiz_json, draft_notions_json,
-             owner_name, last_modified, created_at, status, draft_exercises_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)""",
+             owner_name, last_modified, created_at, status, draft_exercises_json, original_quiz_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)""",
             (work_session_id, work_code, title, draft_quiz_json, draft_notions_json,
-             owner_name, now, now, draft_exercises_json),
+             owner_name, now, now, draft_exercises_json, draft_quiz_json),
         )
         conn.commit()
 
@@ -715,6 +717,7 @@ def create_work_session(
             created_at=now,
             status="draft",
             draft_exercises_json=draft_exercises_json,
+            original_quiz_json=draft_quiz_json,
         )
     finally:
         conn.close()
@@ -741,6 +744,7 @@ def get_work_session(work_code: str) -> Optional[WorkSession]:
             created_at=row["created_at"],
             status=row["status"],
             draft_exercises_json=row["draft_exercises_json"] if "draft_exercises_json" in row.keys() else "[]",
+            original_quiz_json=row["original_quiz_json"] if "original_quiz_json" in row.keys() else "[]",
         )
     finally:
         conn.close()
@@ -778,9 +782,17 @@ def update_work_session_draft(
 def publish_work_session(
     work_code: str,
     session_title: Optional[str] = None,
+    pool_mode: bool = False,
+    subset_size: Optional[int] = None,
+    pass_threshold: float = 0.7,
 ) -> Optional[QuizSession]:
     """
     Publie un atelier en créant une session étudiante correspondante.
+
+    Args:
+        pool_mode: Si True, crée une session pool (sous-ensemble aléatoire par participant).
+        subset_size: Nombre de questions par participant (requis si pool_mode=True).
+        pass_threshold: Score minimum (0–1) pour valider (pool_mode seulement).
 
     Returns:
         QuizSession créée, ou None si l'atelier est introuvable.
@@ -794,7 +806,10 @@ def publish_work_session(
     exercises_data = json.loads(ws.draft_exercises_json) if ws.draft_exercises_json else []
     title = session_title or ws.title
 
-    session = create_session(quiz_data, notions_data, title, exercises_data=exercises_data)
+    if pool_mode and subset_size:
+        session = create_pool_session(quiz_data, notions_data, title, subset_size=subset_size, pass_threshold=pass_threshold)
+    else:
+        session = create_session(quiz_data, notions_data, title, exercises_data=exercises_data)
 
     # Marquer l'atelier comme publié
     conn = _get_connection()
@@ -828,6 +843,8 @@ def list_work_sessions() -> List[WorkSession]:
                 last_modified=r["last_modified"],
                 created_at=r["created_at"],
                 status=r["status"],
+                draft_exercises_json=r["draft_exercises_json"] if "draft_exercises_json" in r.keys() else "[]",
+                original_quiz_json=r["original_quiz_json"] if "original_quiz_json" in r.keys() else "[]",
             )
             for r in rows
         ]

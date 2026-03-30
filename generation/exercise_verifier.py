@@ -12,6 +12,7 @@ from typing import Callable, List, Optional, Tuple
 
 from core.llm_service import call_llm_json, count_tokens, MODEL_NAME
 from generation.exercise_generator import Exercise, _verify_exercise_direct
+from generation.calc_agent import run_calc_agent
 from processing.document_processor import TextChunk
 
 logger = logging.getLogger(__name__)
@@ -180,17 +181,117 @@ Réponds à chaque sous-question."""
     return result, reasoning
 
 
-def _check_cas_pratique_answers(exercise: Exercise, llm_result: dict) -> bool:
+def _verify_with_calc_agent(
+    exercise: Exercise,
+    llm_result: dict,
+    model: Optional[str] = None,
+    enable_thinking: bool = True,
+) -> Tuple[bool, str]:
+    """
+    Vérification en 2 étapes avec l'agent de calcul scientifique.
+
+    Étape 1 : Le LLM analyse l'exercice et les réponses, identifie s'il y a
+              des calculs à vérifier, et génère du code Python si nécessaire.
+    Étape 2 : Si du code est généré, l'agent l'exécute et le résultat est
+              réinjecté dans le LLM pour la décision finale.
+
+    Returns:
+        (is_verified, reasoning)
+    """
+    # Étape 1 : Demander au LLM s'il y a des calculs à vérifier
+    system_prompt = """Tu es un correcteur d'exercices. Analyse l'exercice et les réponses fournies.
+
+Si l'exercice contient des calculs numériques, génère du code Python pour les vérifier.
+Si l'exercice est purement textuel, évalue directement la cohérence.
+
+FORMAT DE RÉPONSE (JSON strict) :
+{
+    "has_calculations": true,
+    "verification_code": "# Code Python pour vérifier les calculs\\nresult = ...\\nprint(f'Résultat: {result}')",
+    "preliminary_assessment": "Ton analyse préliminaire...",
+    "is_correct_without_calc": false
+}
+
+Si has_calculations est false, is_correct_without_calc indique ta décision.
+Si has_calculations est true, verification_code contient le code à exécuter."""
+
+    answers_text = ""
+    if exercise.exercise_type == "cas_pratique":
+        for a in llm_result.get("answers", []):
+            answers_text += f"Q{a.get('question_index', 0)+1}: {a.get('answer', '')}\n"
+    elif exercise.exercise_type == "trou":
+        for b in llm_result.get("filled_blanks", []):
+            answers_text += f"Blanc {b.get('position', '?')}: {b.get('answer', '')}\n"
+
+    user_prompt = (
+        f"EXERCICE :\n{exercise.statement}\n\n"
+        f"RÉPONSES FOURNIES :\n{answers_text}\n\n"
+        f"RAISONNEMENT DE L'ÉTUDIANT :\n{llm_result.get('reasoning', '')}\n\n"
+        "Analyse et indique s'il y a des calculs à vérifier."
+    )
+
+    try:
+        step1 = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.2, enable_thinking=enable_thinking)
+    except Exception as e:
+        logger.warning("Calc agent étape 1 échouée: %s", e)
+        return False, f"Erreur agent calcul: {e}"
+
+    if not step1.get("has_calculations", False):
+        return step1.get("is_correct_without_calc", False), step1.get("preliminary_assessment", "")
+
+    # Étape 2 : Exécuter le code et réinjecter le résultat
+    code = step1.get("verification_code", "")
+    if not code:
+        return False, "Pas de code de vérification généré."
+
+    calc_result = run_calc_agent(code, timeout=30)
+
+    # Réinjecter le résultat dans le LLM pour la décision finale
+    system_prompt_2 = """Tu es un correcteur d'exercices. Le code Python de vérification a été exécuté.
+Analyse le résultat et décide si l'exercice est correct.
+
+FORMAT DE RÉPONSE (JSON strict) :
+{
+    "is_correct": true,
+    "reasoning": "Explication de ta décision..."
+}"""
+
+    user_prompt_2 = (
+        f"EXERCICE :\n{exercise.statement}\n\n"
+        f"RÉPONSES FOURNIES :\n{answers_text}\n\n"
+        f"ANALYSE PRÉLIMINAIRE :\n{step1.get('preliminary_assessment', '')}\n\n"
+        f"CODE EXÉCUTÉ :\n```python\n{code}\n```\n\n"
+        f"RÉSULTAT DE L'EXÉCUTION :\n"
+        f"  Succès: {calc_result['success']}\n"
+        f"  Sortie: {calc_result['output'][:500]}\n"
+        f"  Résultat: {calc_result['result']}\n"
+        f"  Erreur: {calc_result['error']}\n\n"
+        "L'exercice est-il correct ?"
+    )
+
+    try:
+        step2 = call_llm_json(system_prompt_2, user_prompt_2, model=model, temperature=0.2, enable_thinking=enable_thinking)
+        return step2.get("is_correct", False), step2.get("reasoning", "")
+    except Exception as e:
+        logger.warning("Calc agent étape 2 échouée: %s", e)
+        return calc_result["success"], f"Code exécuté, résultat: {calc_result['result']}"
+
+
+def _check_cas_pratique_answers(
+    exercise: Exercise,
+    llm_result: dict,
+    model: Optional[str] = None,
+    enable_thinking: bool = True,
+) -> bool:
     """
     Vérifie les réponses du LLM pour un cas pratique.
-    Pour les sous-questions numériques : exécution du code de vérification.
-    Pour les autres : le LLM a pu répondre = l'exercice est cohérent.
+    Utilise l'agent de calcul si des calculs sont détectés.
     """
     answers = llm_result.get("answers", [])
     if not answers:
         return False
 
-    # Si un code de vérification existe, l'exécuter
+    # Si un code de vérification existe, l'exécuter directement
     if exercise.verification_code:
         test_exercise = Exercise(
             statement=exercise.statement,
@@ -200,7 +301,10 @@ def _check_cas_pratique_answers(exercise: Exercise, llm_result: dict) -> bool:
         )
         test_exercise = _verify_exercise_direct(test_exercise)
         if not test_exercise.verified:
-            return False
+            # Tenter via l'agent de calcul (2 étapes)
+            is_ok, reasoning = _verify_with_calc_agent(exercise, llm_result, model=model, enable_thinking=enable_thinking)
+            if not is_ok:
+                return False
 
     # Le LLM a fourni des réponses pour au moins la moitié des sous-questions
     return len(answers) >= len(exercise.sub_questions) * 0.5
@@ -429,7 +533,7 @@ def verify_exercises(
                         current_exercise, source_text, model=model,
                         enable_thinking=enable_thinking,
                     )
-                    is_correct = _check_cas_pratique_answers(current_exercise, llm_result)
+                    is_correct = _check_cas_pratique_answers(current_exercise, llm_result, model=model, enable_thinking=enable_thinking)
                 else:
                     break
 

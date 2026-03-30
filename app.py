@@ -17,7 +17,7 @@ try:
     _VISION_AVAILABLE = True
 except ImportError:
     _VISION_AVAILABLE = False
-from core.llm_service import VISION_MODEL_NAME, VISION_CONTEXT_WINDOW, call_llm_chat
+from core.llm_service import VISION_MODEL_NAME, VISION_MODEL_NAMES, VISION_CONTEXT_WINDOW, call_llm_chat
 from generation.quiz_generator import generate_quiz, Quiz, QuizQuestion, DIFFICULTY_PROMPTS, QUIZ_DEFAULT_PERSONA, QUIZ_FIXED_RULES_DISPLAY
 from generation.exercise_generator import (
     generate_exercises, Exercise, DEFAULT_EXERCISE_PROMPTS,
@@ -347,7 +347,10 @@ with st.sidebar:
         st.markdown("## 🤖 Modèle LLM")
         if vision_enabled:
             selected_model = VISION_MODEL_NAME
-            st.info(f"Modele vision actif :\n`{VISION_MODEL_NAME}`")
+            if len(VISION_MODEL_NAMES) > 1:
+                st.info(f"Modèles vision actifs ({len(VISION_MODEL_NAMES)}) :\n" + "\n".join(f"- `{m}`" for m in VISION_MODEL_NAMES))
+            else:
+                st.info(f"Modèle vision actif :\n`{VISION_MODEL_NAME}`")
         else:
             model_options = ["Gpt-oss-120b","Gpt-oss-20b", "Qwen3-VL-32B-Instruct-FP8", "Qwen3-Coder-Next-FP8"]
             selected_model = st.selectbox(
@@ -882,7 +885,15 @@ if uploaded_files:
                     value=1,
                     help="Combien de réponses correctes parmi les choix."
                 )
+                max_correct = num_correct
             else:
+                max_correct = st.slider(
+                    "Maximum de bonnes réponses (N)",
+                    min_value=2,
+                    max_value=num_choices - 1,
+                    value=num_choices - 1,
+                    help="Le LLM choisira entre 1 et N bonnes réponses par question."
+                )
                 num_correct = 1  # valeur par défaut ignorée en mode variable
 
             notion_mixing = st.toggle(
@@ -970,6 +981,7 @@ if uploaded_files:
                     persona=st.session_state.quiz_persona,
                     notion_mixing=notion_mixing,
                     enable_thinking=st.session_state.get("enable_thinking", True),
+                    max_correct=max_correct if variable_correct else None,
                 )
                 st.session_state.quiz = quiz
                 st.session_state.verification_results = None
@@ -1272,98 +1284,157 @@ if uploaded_files:
                         if idx < len(changelog) - 1:
                             st.markdown("---")
 
-            # Boutons de téléchargement
+            # ─── Onglets d'export Quiz ───────────────────────────────────────
             st.divider()
-            col_down1, col_down2 = st.columns(2)
-
-            try:
-                with col_down1:
-                    html_content = _get_cached("quiz_html", export_quiz_html, quiz)
-                    st.download_button(
-                        label="📥 Télécharger le Quizz sous format HTML Interactif",
-                        data=html_content,
-                        file_name="quizz_interactif.html",
-                        mime="text/html",
-                        type="primary",
-                        width='stretch'
-                    )
-
-                with col_down2:
-                    csv_content = _get_cached("quiz_csv", export_quiz_csv, quiz)
-                    st.download_button(
-                        label="📊 Télécharger le Quizz sous format CSV",
-                        data=csv_content,
-                        file_name="quizz.csv",
-                        mime="text/csv",
-                        type="secondary",
-                        width='stretch'
-                    )
-                
-                st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur. Le fichier CSV est idéal pour Excel.")
-
-                # Export combiné si des exercices existent aussi
-                exercises = st.session_state.get("exercises")
-                if exercises:
-                    st.markdown("**Export combiné (Quiz + Exercices)**")
-                    col_comb1, col_comb2 = st.columns(2)
-                    with col_comb1:
-                        combined_html = export_combined_html(quiz, exercises)
-                        st.download_button(
-                            label=f"📥 HTML Combiné ({len(quiz.questions)}Q + {len(exercises)}Ex)",
-                            data=combined_html,
-                            file_name="quiz_exercices.html",
-                            mime="text/html",
-                            width='stretch',
-                        )
-                    with col_comb2:
-                        combined_csv = export_combined_csv(quiz, exercises)
-                        st.download_button(
-                            label=f"📊 CSV Combiné ({len(quiz.questions)}Q + {len(exercises)}Ex)",
-                            data=combined_csv,
-                            file_name="quiz_exercices.csv",
-                            mime="text/csv",
-                            width='stretch',
-                        )
-            except Exception as e:
-                st.error(f"Erreur lors de l'export : {e}")
-
-            # Section partage
-            st.divider()
-            st.markdown("### 🔗 Partager ce quizz")
-            share_title = st.text_input(
-                "Titre de la session partagée",
-                value=quiz.title,
-                key="share_quiz_title",
+            export_quiz_tab_dl, export_quiz_tab_session, export_quiz_tab_atelier = st.tabs(
+                ["📥 Téléchargements", "📡 Session Partagée", "🛠️ Atelier Formateur"]
             )
 
-            total_q = len(quiz.questions)
-            use_pool = st.toggle(
-                "Mode pool (sous-ensemble par participant)",
-                value=False,
-                key="share_use_pool",
-                help=f"Le pool complet contient {total_q} questions. Chaque participant en voit un sous-ensemble tiré aléatoirement.",
-            )
-            if use_pool and total_q > 1:
-                pool_col1, pool_col2 = st.columns(2)
-                with pool_col1:
-                    subset_size = st.number_input(
-                        "Questions par passage",
-                        min_value=1, max_value=total_q, value=min(20, total_q),
-                        key="share_subset_size",
-                        help="Nombre de questions présentées à chaque participant à chaque passage.",
-                    )
-                with pool_col2:
-                    pass_threshold_pct = st.slider(
-                        "Seuil de réussite (%)",
-                        min_value=0, max_value=100, value=70, step=5,
-                        key="share_pass_threshold",
-                        help="Score minimum pour valider la session. En dessous, le participant peut réessayer avec de nouvelles questions.",
-                    )
-                st.caption(f"Pool : {total_q} questions — Passage : {subset_size} questions — Seuil : {pass_threshold_pct}%")
-
-            if st.button("📤 Créer une session partagée", type="secondary", width='stretch'):
+            with export_quiz_tab_dl:
+                col_down1, col_down2 = st.columns(2)
                 try:
-                    quiz_data = {
+                    with col_down1:
+                        html_content = _get_cached("quiz_html", export_quiz_html, quiz)
+                        st.download_button(
+                            label="📥 HTML Interactif",
+                            data=html_content,
+                            file_name="quizz_interactif.html",
+                            mime="text/html",
+                            type="primary",
+                            width='stretch',
+                            key="export_quiz_dl_html",
+                        )
+                    with col_down2:
+                        csv_content = _get_cached("quiz_csv", export_quiz_csv, quiz)
+                        st.download_button(
+                            label="📊 CSV",
+                            data=csv_content,
+                            file_name="quizz.csv",
+                            mime="text/csv",
+                            type="secondary",
+                            width='stretch',
+                            key="export_quiz_dl_csv",
+                        )
+                    st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur.")
+
+                    exercises = st.session_state.get("exercises")
+                    if exercises:
+                        st.markdown("**Export combiné (Quiz + Exercices)**")
+                        col_comb1, col_comb2 = st.columns(2)
+                        with col_comb1:
+                            combined_html = export_combined_html(quiz, exercises)
+                            st.download_button(
+                                label=f"📥 HTML Combiné ({len(quiz.questions)}Q + {len(exercises)}Ex)",
+                                data=combined_html,
+                                file_name="quiz_exercices.html",
+                                mime="text/html",
+                                width='stretch',
+                                key="export_quiz_dl_combined_html",
+                            )
+                        with col_comb2:
+                            combined_csv = export_combined_csv(quiz, exercises)
+                            st.download_button(
+                                label=f"📊 CSV Combiné ({len(quiz.questions)}Q + {len(exercises)}Ex)",
+                                data=combined_csv,
+                                file_name="quiz_exercices.csv",
+                                mime="text/csv",
+                                width='stretch',
+                                key="export_quiz_dl_combined_csv",
+                            )
+                except Exception as e:
+                    st.error(f"Erreur lors de l'export : {e}")
+
+            with export_quiz_tab_session:
+                share_title = st.text_input(
+                    "Titre de la session partagée",
+                    value=quiz.title,
+                    key="share_quiz_title",
+                )
+
+                total_q = len(quiz.questions)
+                use_pool = st.toggle(
+                    "Mode pool (sous-ensemble par participant)",
+                    value=False,
+                    key="share_use_pool",
+                    help=f"Le pool complet contient {total_q} questions. Chaque participant en voit un sous-ensemble tiré aléatoirement.",
+                )
+                if use_pool and total_q > 1:
+                    pool_col1, pool_col2 = st.columns(2)
+                    with pool_col1:
+                        subset_size = st.number_input(
+                            "Questions par passage",
+                            min_value=1, max_value=total_q, value=min(20, total_q),
+                            key="share_subset_size",
+                            help="Nombre de questions présentées à chaque participant à chaque passage.",
+                        )
+                    with pool_col2:
+                        pass_threshold_pct = st.slider(
+                            "Seuil de réussite (%)",
+                            min_value=0, max_value=100, value=70, step=5,
+                            key="share_pass_threshold",
+                            help="Score minimum pour valider la session.",
+                        )
+                    st.caption(f"Pool : {total_q} questions — Passage : {subset_size} questions — Seuil : {pass_threshold_pct}%")
+
+                if st.button("📤 Créer une session partagée", type="secondary", width='stretch', key="export_quiz_share_btn"):
+                    try:
+                        quiz_data = {
+                            "title": quiz.title,
+                            "difficulty": quiz.difficulty,
+                            "questions": [
+                                {
+                                    "question": q.question, "choices": q.choices,
+                                    "correct_answers": q.correct_answers, "explanation": q.explanation,
+                                    "source_pages": q.source_pages, "difficulty_level": q.difficulty_level,
+                                    "source_document": q.source_document, "citation": q.citation,
+                                    "related_notions": q.related_notions,
+                                } for q in quiz.questions
+                            ],
+                        }
+                        notions_data = []
+                        if st.session_state.notions:
+                            notions_data = [
+                                {"title": n.title, "description": n.description, "enabled": n.enabled}
+                                for n in st.session_state.notions
+                            ]
+                        exercises_data = None
+                        if st.session_state.exercises:
+                            exercises_data = [
+                                {
+                                    "statement": ex.statement, "expected_answer": ex.expected_answer,
+                                    "steps": ex.steps, "correction": ex.correction,
+                                    "verification_code": ex.verification_code, "verified": ex.verified,
+                                    "source_pages": ex.source_pages, "source_document": ex.source_document,
+                                    "citation": ex.citation, "difficulty_level": ex.difficulty_level,
+                                    "related_notions": ex.related_notions, "exercise_type": ex.exercise_type,
+                                    "blanks": ex.blanks, "sub_questions": ex.sub_questions,
+                                } for ex in st.session_state.exercises
+                            ]
+                        if use_pool and total_q > 1:
+                            session_obj = create_pool_session(
+                                quiz_data, notions_data, share_title,
+                                subset_size=int(st.session_state.get("share_subset_size", min(20, total_q))),
+                                pass_threshold=st.session_state.get("share_pass_threshold", 70) / 100,
+                            )
+                            st.success(f"Session pool créée ! Code : **{session_obj.session_code}**")
+                            st.caption(f"Chaque participant verra {session_obj.subset_size} questions sur {total_q}.")
+                        else:
+                            session_obj = create_quiz_session(quiz_data, notions_data, share_title, exercises_data=exercises_data)
+                            st.success(f"Session créée ! Code : **{session_obj.session_code}**")
+                        st.code(f"Code de session : {session_obj.session_code}", language=None)
+                        st.caption("Les participants accèdent au quizz via la page quiz_session avec `?code=" + session_obj.session_code + "`.")
+                        increment_stats(sessions=1)
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+            with export_quiz_tab_atelier:
+                ws_target = st.text_input(
+                    "Code de l'atelier (vide = créer un nouvel atelier)",
+                    key="export_ws_code", placeholder="Ex: K8S42X",
+                )
+                ws_owner = st.text_input("Votre nom", key="export_ws_owner", placeholder="Formateur")
+                if st.button("🛠️ Exporter vers l'atelier", key="export_to_ws"):
+                    quiz_data_export = {
                         "title": quiz.title,
                         "difficulty": quiz.difficulty,
                         "questions": [
@@ -1376,93 +1447,31 @@ if uploaded_files:
                             } for q in quiz.questions
                         ],
                     }
-                    notions_data = []
+                    notions_export = []
                     if st.session_state.notions:
-                        notions_data = [
+                        notions_export = [
                             {"title": n.title, "description": n.description, "enabled": n.enabled}
                             for n in st.session_state.notions
                         ]
-                    # Sérialiser les exercices si disponibles
-                    exercises_data = None
-                    if st.session_state.exercises:
-                        exercises_data = [
-                            {
-                                "statement": ex.statement, "expected_answer": ex.expected_answer,
-                                "steps": ex.steps, "correction": ex.correction,
-                                "verification_code": ex.verification_code, "verified": ex.verified,
-                                "source_pages": ex.source_pages, "source_document": ex.source_document,
-                                "citation": ex.citation, "difficulty_level": ex.difficulty_level,
-                                "related_notions": ex.related_notions, "exercise_type": ex.exercise_type,
-                                "blanks": ex.blanks, "sub_questions": ex.sub_questions,
-                            } for ex in st.session_state.exercises
-                        ]
-
-                    if use_pool and total_q > 1:
-                        session_obj = create_pool_session(
-                            quiz_data, notions_data, share_title,
-                            subset_size=int(st.session_state.get("share_subset_size", min(20, total_q))),
-                            pass_threshold=st.session_state.get("share_pass_threshold", 70) / 100,
-                        )
-                        st.success(f"Session pool créée ! Code : **{session_obj.session_code}**")
-                        st.caption(f"Chaque participant verra {session_obj.subset_size} questions sur {total_q}.")
-                    else:
-                        session_obj = create_quiz_session(quiz_data, notions_data, share_title, exercises_data=exercises_data)
-                        st.success(f"Session créée ! Code : **{session_obj.session_code}**")
-                    st.code(f"Code de session : {session_obj.session_code}", language=None)
-                    st.caption("Les participants accèdent au quizz via la page quiz_session avec `?code=" + session_obj.session_code + "`.")
-                    increment_stats(sessions=1)
-                except Exception as e:
-                    st.error(f"Erreur : {e}")
-
-            # Export vers un atelier formateur
-            st.divider()
-            st.markdown("### 🛠️ Exporter vers un atelier formateur")
-            ws_target = st.text_input(
-                "Code de l'atelier (vide = créer un nouvel atelier)",
-                key="export_ws_code", placeholder="Ex: K8S42X",
-            )
-            ws_owner = st.text_input("Votre nom", key="export_ws_owner", placeholder="Formateur")
-            if st.button("🛠️ Exporter vers l'atelier", key="export_to_ws"):
-                quiz_data_export = {
-                    "title": quiz.title,
-                    "difficulty": quiz.difficulty,
-                    "questions": [
-                        {
-                            "question": q.question, "choices": q.choices,
-                            "correct_answers": q.correct_answers, "explanation": q.explanation,
-                            "source_pages": q.source_pages, "difficulty_level": q.difficulty_level,
-                            "source_document": q.source_document, "citation": q.citation,
-                            "related_notions": q.related_notions,
-                        } for q in quiz.questions
-                    ],
-                }
-                notions_export = []
-                if st.session_state.notions:
-                    notions_export = [
-                        {"title": n.title, "description": n.description, "enabled": n.enabled}
-                        for n in st.session_state.notions
-                    ]
-                try:
-                    if ws_target.strip():
-                        # Fusionner dans un atelier existant
-                        existing_ws = get_work_session(ws_target.strip().upper())
-                        if existing_ws is None:
-                            st.error(f"Atelier introuvable : {ws_target}")
+                    try:
+                        if ws_target.strip():
+                            existing_ws = get_work_session(ws_target.strip().upper())
+                            if existing_ws is None:
+                                st.error(f"Atelier introuvable : {ws_target}")
+                            else:
+                                import json as _json
+                                existing_data = _json.loads(existing_ws.draft_quiz_json)
+                                existing_qs = existing_data.get("questions", [])
+                                existing_qs.extend(quiz_data_export["questions"])
+                                existing_data["questions"] = existing_qs
+                                update_work_session_draft(ws_target.strip().upper(), existing_data, ws_owner or "?", notions_export)
+                                st.success(f"✅ {len(quiz.questions)} question(s) ajoutées à l'atelier **{ws_target.strip().upper()}** ({len(existing_qs)} total)")
                         else:
-                            import json as _json
-                            existing_data = _json.loads(existing_ws.draft_quiz_json)
-                            existing_qs = existing_data.get("questions", [])
-                            existing_qs.extend(quiz_data_export["questions"])
-                            existing_data["questions"] = existing_qs
-                            update_work_session_draft(ws_target.strip().upper(), existing_data, ws_owner or "?", notions_export)
-                            st.success(f"✅ {len(quiz.questions)} question(s) ajoutées à l'atelier **{ws_target.strip().upper()}** ({len(existing_qs)} total)")
-                    else:
-                        # Créer un nouvel atelier
-                        ws_obj = create_work_session(quiz_data_export, notions_export, quiz.title, owner_name=ws_owner or "?")
-                        st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
-                        st.code(f"Code atelier : {ws_obj.work_code}", language=None)
-                except Exception as e:
-                    st.error(f"Erreur : {e}")
+                            ws_obj = create_work_session(quiz_data_export, notions_export, quiz.title, owner_name=ws_owner or "?")
+                            st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
+                            st.code(f"Code atelier : {ws_obj.work_code}", language=None)
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
 
     # ═══ ONGLET EXERCICES ════════════════════════════════════════════════════════
 
@@ -1646,24 +1655,29 @@ if uploaded_files:
                     _invalidate_download_cache()
                     st.rerun()
 
-            for i, ex in enumerate(exercises):
+            def _render_exercise_card(ex, idx, key_prefix=""):
+                """Affiche une carte d'exercice dans un st.expander."""
                 diff_label = ex.difficulty_level or "moyen"
                 diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
-                verified_label = "✅ Vérifié" if ex.verified else "⚠️ Non vérifié"
+                ex_type = getattr(ex, "exercise_type", "calcul")
+                if ex.verified:
+                    verified_label = "✅ Vérifié (code)" if ex_type == "calcul" else "✅ Vérifié (LLM)"
+                else:
+                    verified_label = "⚠️ Non vérifié"
                 with st.expander(
-                    f"{diff_emoji} **Exercice {i+1}** — {verified_label}",
+                    f"{diff_emoji} **Exercice {idx+1}** — {verified_label}",
                     expanded=True
                 ):
-                    # Statut de vérification
                     if ex.verified:
-                        st.success("✅ Réponse vérifiée par exécution de code")
+                        if ex_type == "calcul":
+                            st.success("✅ Réponse vérifiée par exécution de code Python")
+                        else:
+                            st.success("✅ Réponse vérifiée par auto-correction LLM")
                     else:
                         st.warning("⚠️ La vérification automatique n'a pas pu confirmer la réponse")
 
-                    # Badge difficulté
                     render_difficulty_badge(diff_label)
 
-                    # Tags notions
                     if ex.related_notions:
                         tags_html = " ".join(
                             f'<span style="background:rgba(108,99,255,0.15);color:#6c63ff;'
@@ -1673,22 +1687,16 @@ if uploaded_files:
                         )
                         st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
 
-                    # Énoncé
                     st.markdown("#### 📝 Énoncé")
                     st.markdown(ex.statement)
 
-                    # Affichage selon le type d'exercice
-                    ex_type = getattr(ex, "exercise_type", "calcul")
-
                     if ex_type == "trou":
-                        # Questions à trou : afficher les blancs et réponses
                         blanks = getattr(ex, "blanks", [])
                         if blanks:
                             st.markdown("#### ✏️ Réponses attendues")
                             for b in blanks:
                                 st.markdown(f"**Blanc {b.get('position', '?')} :** `{b.get('answer', '')}` — *{b.get('context', '')}*")
                     elif ex_type == "cas_pratique":
-                        # Cas pratique : afficher les sous-questions
                         sub_qs = getattr(ex, "sub_questions", [])
                         if sub_qs:
                             st.markdown("#### ❓ Sous-questions & Réponses")
@@ -1696,13 +1704,28 @@ if uploaded_files:
                                 st.markdown(f"**Q{j+1} :** {sq.get('question', '')}")
                                 st.markdown(f"> {sq.get('answer', '')}")
                     else:
-                        # Calcul numérique
-                        st.markdown(f"#### 🎯 Réponse attendue : `{ex.expected_answer}`")
+                        sub_parts = getattr(ex, "sub_parts", [])
+                        if sub_parts:
+                            st.markdown("#### 🔢 Questions")
+                            for sp_idx, sp in enumerate(sub_parts):
+                                sp_verified = sp.get("verified", False)
+                                sp_icon = "✅" if sp_verified else "⚠️"
+                                st.markdown(f"**{sp_icon} Q{sp_idx+1}.** {sp.get('question', '')}")
+                                st.markdown(f"🎯 Réponse attendue : `{sp.get('expected_answer', '')}`")
+                                sp_steps = sp.get("steps", [])
+                                if sp_steps:
+                                    for sj, sstep in enumerate(sp_steps):
+                                        st.markdown(f"   {sj+1}. {sstep}")
+                                if sp.get("verification_output"):
+                                    st.caption(sp["verification_output"])
+                                st.markdown("---")
+                        else:
+                            st.markdown(f"#### 🎯 Réponse attendue : `{ex.expected_answer}`")
 
-                        if ex.steps:
-                            st.markdown(f"#### 📊 Résolution ({ex.num_steps} étapes)")
-                            for j, step in enumerate(ex.steps):
-                                st.markdown(f"**{j+1}.** {step}")
+                            if ex.steps:
+                                st.markdown(f"#### 📊 Résolution ({ex.num_steps} étapes)")
+                                for j, step in enumerate(ex.steps):
+                                    st.markdown(f"**{j+1}.** {step}")
 
                         if ex.verification_output:
                             with st.expander("📋 Détails de la vérification", expanded=not ex.verified):
@@ -1712,43 +1735,153 @@ if uploaded_files:
                             with st.expander("🔍 Code de vérification"):
                                 st.code(ex.verification_code, language="python")
 
-                    # Correction IA (tous types)
                     if ex.correction:
                         st.markdown("#### 🤖 Correction IA")
                         st.markdown(ex.correction)
 
-                    # Source enrichie
                     render_source_info(ex.source_document, ex.source_pages)
 
                     if ex.citation:
                         st.markdown(f"📝 **Citation :** *\"{ex.citation}\"*")
-            # Boutons de téléchargement pour les exercices
+
+            # Affichage groupé par type si plusieurs types
+            type_labels = {"calcul": "🔢 Calcul", "trou": "✏️ Questions à trou", "cas_pratique": "📋 Cas pratique"}
+            type_groups = {}
+            for i, ex in enumerate(exercises):
+                t = getattr(ex, 'exercise_type', 'calcul')
+                type_groups.setdefault(t, []).append((i, ex))
+
+            if len(type_groups) > 1:
+                tab_names = [f"{type_labels.get(t, t)} ({len(exs)})" for t, exs in type_groups.items()]
+                ex_type_tabs = st.tabs(tab_names)
+                for tab, (t, exs) in zip(ex_type_tabs, type_groups.items()):
+                    with tab:
+                        for orig_idx, ex in exs:
+                            _render_exercise_card(ex, orig_idx, key_prefix=f"{t}_")
+            else:
+                for i, ex in enumerate(exercises):
+                    _render_exercise_card(ex, i)
+            # ─── Onglets d'export Exercices ──────────────────────────────────
             st.divider()
-            col_ex1, col_ex2 = st.columns(2)
-            try:
-                with col_ex1:
-                    html_exercises = _get_cached("ex_html", export_exercises_html, exercises)
-                    st.download_button(
-                        label="📥 Télécharger les Exercices (HTML)",
-                        data=html_exercises,
-                        file_name="exercices.html",
-                        mime="text/html",
-                        type="primary",
-                        width='stretch'
-                    )
-                with col_ex2:
-                    csv_exercises = _get_cached("ex_csv", export_exercises_csv, exercises)
-                    st.download_button(
-                        label="📊 Télécharger les Exercices (CSV)",
-                        data=csv_exercises,
-                        file_name="exercices.csv",
-                        mime="text/csv",
-                        type="secondary",
-                        width='stretch'
-                    )
-                st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur. Le fichier CSV est idéal pour Excel.")
-            except Exception as e:
-                st.error(f"Erreur lors de l'export : {e}")
+            export_ex_tab_dl, export_ex_tab_session, export_ex_tab_atelier = st.tabs(
+                ["📥 Téléchargements", "📡 Session Partagée", "🛠️ Atelier Formateur"]
+            )
+
+            with export_ex_tab_dl:
+                col_ex1, col_ex2 = st.columns(2)
+                try:
+                    with col_ex1:
+                        html_exercises = _get_cached("ex_html", export_exercises_html, exercises)
+                        st.download_button(
+                            label="📥 HTML Interactif",
+                            data=html_exercises,
+                            file_name="exercices.html",
+                            mime="text/html",
+                            type="primary",
+                            width='stretch',
+                            key="export_ex_dl_html",
+                        )
+                    with col_ex2:
+                        csv_exercises = _get_cached("ex_csv", export_exercises_csv, exercises)
+                        st.download_button(
+                            label="📊 CSV",
+                            data=csv_exercises,
+                            file_name="exercices.csv",
+                            mime="text/csv",
+                            type="secondary",
+                            width='stretch',
+                            key="export_ex_dl_csv",
+                        )
+                    st.caption("Le fichier HTML est standalone — ouvrez-le dans n'importe quel navigateur.")
+                except Exception as e:
+                    st.error(f"Erreur lors de l'export : {e}")
+
+            with export_ex_tab_session:
+                ex_share_title = st.text_input(
+                    "Titre de la session partagée",
+                    value="Exercices générés",
+                    key="ex_share_title",
+                )
+                if st.button("📤 Créer une session partagée (exercices)", type="secondary", width='stretch', key="ex_share_btn"):
+                    try:
+                        exercises_data = [
+                            {
+                                "statement": ex.statement, "expected_answer": ex.expected_answer,
+                                "steps": ex.steps, "correction": ex.correction,
+                                "verification_code": ex.verification_code, "verified": ex.verified,
+                                "source_pages": ex.source_pages, "source_document": ex.source_document,
+                                "citation": ex.citation, "difficulty_level": ex.difficulty_level,
+                                "related_notions": ex.related_notions, "exercise_type": ex.exercise_type,
+                                "blanks": ex.blanks, "sub_questions": ex.sub_questions,
+                            } for ex in exercises
+                        ]
+                        notions_data = []
+                        if st.session_state.notions:
+                            notions_data = [
+                                {"title": n.title, "description": n.description, "enabled": n.enabled}
+                                for n in st.session_state.notions
+                            ]
+                        quiz_data = {"title": ex_share_title, "difficulty": "mixte", "questions": []}
+                        session_obj = create_quiz_session(quiz_data, notions_data, ex_share_title, exercises_data=exercises_data)
+                        st.success(f"Session créée ! Code : **{session_obj.session_code}**")
+                        st.code(f"Code de session : {session_obj.session_code}", language=None)
+                        increment_stats(sessions=1)
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+            with export_ex_tab_atelier:
+                ex_ws_target = st.text_input(
+                    "Code de l'atelier (vide = créer un nouvel atelier)",
+                    key="ex_export_ws_code", placeholder="Ex: K8S42X",
+                )
+                ex_ws_owner = st.text_input("Votre nom", key="ex_export_ws_owner", placeholder="Formateur")
+                if st.button("🛠️ Exporter les exercices vers l'atelier", key="ex_export_to_ws"):
+                    exercises_data_ws = [
+                        {
+                            "statement": ex.statement, "expected_answer": ex.expected_answer,
+                            "steps": ex.steps, "correction": ex.correction,
+                            "verification_code": ex.verification_code, "verified": ex.verified,
+                            "source_pages": ex.source_pages, "source_document": ex.source_document,
+                            "citation": ex.citation, "difficulty_level": ex.difficulty_level,
+                            "related_notions": ex.related_notions, "exercise_type": ex.exercise_type,
+                            "blanks": ex.blanks, "sub_questions": ex.sub_questions,
+                        } for ex in exercises
+                    ]
+                    notions_export = []
+                    if st.session_state.notions:
+                        notions_export = [
+                            {"title": n.title, "description": n.description, "enabled": n.enabled}
+                            for n in st.session_state.notions
+                        ]
+                    try:
+                        if ex_ws_target.strip():
+                            existing_ws = get_work_session(ex_ws_target.strip().upper())
+                            if existing_ws is None:
+                                st.error(f"Atelier introuvable : {ex_ws_target}")
+                            else:
+                                import json as _json
+                                existing_ex = _json.loads(existing_ws.draft_exercises_json or "[]")
+                                existing_ex.extend(exercises_data_ws)
+                                update_work_session_draft(
+                                    ex_ws_target.strip().upper(),
+                                    _json.loads(existing_ws.draft_quiz_json),
+                                    ex_ws_owner or "?",
+                                    notions_export,
+                                    exercises_data=existing_ex,
+                                )
+                                st.success(f"✅ {len(exercises)} exercice(s) ajoutés à l'atelier **{ex_ws_target.strip().upper()}**")
+                        else:
+                            ws_obj = create_work_session(
+                                {"title": "Exercices", "questions": []},
+                                notions_export,
+                                "Exercices générés",
+                                owner_name=ex_ws_owner or "?",
+                                exercises_data=exercises_data_ws,
+                            )
+                            st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
+                            st.code(f"Code atelier : {ws_obj.work_code}", language=None)
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
 
     # ═══ ONGLET APERÇU TEXTE ════════════════════════════════════════════════════
 
@@ -1756,10 +1889,25 @@ if uploaded_files:
         st.markdown("### 👁️ Aperçu du texte extrait")
         st.caption(f"Mode de lecture : **{read_mode}** — {len(chunks)} chunks créés")
 
+        # Filtre par document
+        doc_names = sorted(set(c.source_document for c in chunks if c.source_document))
+        if len(doc_names) > 1:
+            selected_doc = st.selectbox(
+                "Filtrer par document",
+                ["Tous les documents"] + doc_names,
+                key="preview_doc_filter",
+            )
+            if selected_doc != "Tous les documents":
+                filtered_chunks = [(idx, c) for idx, c in enumerate(chunks) if c.source_document == selected_doc]
+            else:
+                filtered_chunks = list(enumerate(chunks))
+        else:
+            filtered_chunks = list(enumerate(chunks))
+
         # Pagination de l'aperçu
         CHUNKS_PER_PAGE = 20
-        total_pages_preview = max(1, (len(chunks) + CHUNKS_PER_PAGE - 1) // CHUNKS_PER_PAGE)
-        
+        total_pages_preview = max(1, (len(filtered_chunks) + CHUNKS_PER_PAGE - 1) // CHUNKS_PER_PAGE)
+
         if total_pages_preview > 1:
             preview_page = st.number_input(
                 "Page", min_value=1, max_value=total_pages_preview, value=1,
@@ -1768,17 +1916,16 @@ if uploaded_files:
             )
         else:
             preview_page = 1
-        
+
         start_idx = (preview_page - 1) * CHUNKS_PER_PAGE
-        end_idx = min(start_idx + CHUNKS_PER_PAGE, len(chunks))
+        end_idx = min(start_idx + CHUNKS_PER_PAGE, len(filtered_chunks))
         
-        for i in range(start_idx, end_idx):
-            chunk = chunks[i]
+        for pos, (orig_idx, chunk) in enumerate(filtered_chunks[start_idx:end_idx]):
             doc_label = f"📄 {chunk.source_document} — " if chunk.source_document else ""
             with st.expander(
-                f"{doc_label}Chunk {i+1} — {chunk.token_count} tokens — "
+                f"{doc_label}Chunk {orig_idx+1} — {chunk.token_count} tokens — "
                 f"Pages {', '.join(map(str, chunk.source_pages))}",
-                expanded=(i == start_idx)
+                expanded=(pos == 0)
             ):
                 st.text(chunk.text[:2000] + ("..." if len(chunk.text) > 2000 else ""))
         

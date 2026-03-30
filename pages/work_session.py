@@ -203,23 +203,65 @@ for i, q in enumerate(questions):
             if q.get("explanation"):
                 st.info(f"💡 {q['explanation']}")
 
-            col_edit, col_up, col_down = st.columns([3, 1, 1])
-            with col_edit:
-                if st.button("✏️ Éditer", key=f"ws_edit_{i}"):
-                    st.session_state.ws_editing_idx = i
-                    st.rerun()
-            with col_up:
-                if i > 0 and st.button("⬆️", key=f"ws_up_{i}", help="Monter"):
-                    questions[i], questions[i - 1] = questions[i - 1], questions[i]
-                    quiz_data["questions"] = questions
-                    update_work_session_draft(ws.work_code, quiz_data, editor_name or "?")
-                    st.rerun()
-            with col_down:
-                if i < len(questions) - 1 and st.button("⬇️", key=f"ws_down_{i}", help="Descendre"):
-                    questions[i], questions[i + 1] = questions[i + 1], questions[i]
-                    quiz_data["questions"] = questions
-                    update_work_session_draft(ws.work_code, quiz_data, editor_name or "?")
-                    st.rerun()
+            if st.button("✏️ Éditer", key=f"ws_edit_{i}"):
+                st.session_state.ws_editing_idx = i
+                st.rerun()
+
+st.divider()
+
+# ─── Vue diff (original vs brouillon actuel) ────────────────────────────────
+
+original_questions = json.loads(ws.original_quiz_json) if ws.original_quiz_json else []
+# original_quiz_json peut être un dict avec "questions" ou directement une liste
+if isinstance(original_questions, dict):
+    original_questions = original_questions.get("questions", [])
+
+if original_questions:
+    with st.expander("📊 Voir les modifications par rapport à l'original"):
+        orig_texts = {q.get("question", "").strip(): q for q in original_questions}
+        curr_texts = {q.get("question", "").strip(): q for q in questions}
+
+        added = [q for txt, q in curr_texts.items() if txt not in orig_texts]
+        removed = [q for txt, q in orig_texts.items() if txt not in curr_texts]
+        modified = []
+        for txt, q in curr_texts.items():
+            if txt in orig_texts:
+                oq = orig_texts[txt]
+                if (q.get("choices") != oq.get("choices")
+                        or q.get("correct_answers") != oq.get("correct_answers")
+                        or q.get("explanation") != oq.get("explanation")):
+                    modified.append((oq, q))
+
+        if not added and not removed and not modified:
+            st.success("Aucune modification par rapport à l'original.")
+        else:
+            st.markdown(f"**{len(added)}** ajoutée(s) · **{len(removed)}** supprimée(s) · **{len(modified)}** modifiée(s)")
+
+            for q in added:
+                st.markdown(
+                    f'<div style="border-left:4px solid #4caf50;padding:4px 12px;margin:6px 0;background:#e8f5e9;">'
+                    f'<b>+ Ajoutée :</b> {q.get("question","")[:120]}</div>',
+                    unsafe_allow_html=True,
+                )
+            for q in removed:
+                st.markdown(
+                    f'<div style="border-left:4px solid #f44336;padding:4px 12px;margin:6px 0;background:#ffebee;">'
+                    f'<b>− Supprimée :</b> {q.get("question","")[:120]}</div>',
+                    unsafe_allow_html=True,
+                )
+            for oq, nq in modified:
+                details = []
+                if oq.get("choices") != nq.get("choices"):
+                    details.append("choix")
+                if oq.get("correct_answers") != nq.get("correct_answers"):
+                    details.append("réponses")
+                if oq.get("explanation") != nq.get("explanation"):
+                    details.append("explication")
+                st.markdown(
+                    f'<div style="border-left:4px solid #ff9800;padding:4px 12px;margin:6px 0;background:#fff3e0;">'
+                    f'<b>~ Modifiée ({", ".join(details)}) :</b> {nq.get("question","")[:120]}</div>',
+                    unsafe_allow_html=True,
+                )
 
 st.divider()
 
@@ -302,11 +344,39 @@ st.markdown("### 📡 Publier comme session étudiante")
 st.caption("La session publiée sera accessible aux participants avec un code d'accès. L'atelier reste éditable.")
 
 pub_title = st.text_input("Titre de la session", value=ws.title, key="ws_pub_title")
+
+pool_mode = st.toggle("🎲 Mode pool (sous-ensemble aléatoire par participant)", value=False, key="ws_pool_mode")
+if pool_mode and len(questions) >= 2:
+    col_pool1, col_pool2 = st.columns(2)
+    with col_pool1:
+        subset_size = st.slider(
+            "Questions par participant",
+            min_value=1, max_value=len(questions), value=min(10, len(questions)),
+            key="ws_pool_subset",
+        )
+    with col_pool2:
+        pass_threshold = st.slider(
+            "Seuil de validation (%)",
+            min_value=0, max_value=100, value=70, step=5,
+            key="ws_pool_threshold",
+        ) / 100.0
+elif pool_mode:
+    st.warning("Il faut au moins 2 questions pour activer le mode pool.")
+    subset_size = len(questions)
+    pass_threshold = 0.7
+
 if st.button("📤 Publier", type="primary", disabled=not questions or ws.status == "published"):
     with st.spinner("Création de la session…"):
-        session_obj = publish_work_session(ws.work_code, session_title=pub_title)
+        if pool_mode and len(questions) >= 2:
+            session_obj = publish_work_session(
+                ws.work_code, session_title=pub_title,
+                pool_mode=True, subset_size=subset_size, pass_threshold=pass_threshold,
+            )
+        else:
+            session_obj = publish_work_session(ws.work_code, session_title=pub_title)
     if session_obj:
-        st.success(f"Session publiée ! Code participant : **{session_obj.session_code}**")
+        mode_label = " (mode pool)" if pool_mode and len(questions) >= 2 else ""
+        st.success(f"Session publiée{mode_label} ! Code participant : **{session_obj.session_code}**")
         st.code(f"Code de session : {session_obj.session_code}", language=None)
     else:
         st.error("Erreur lors de la publication.")

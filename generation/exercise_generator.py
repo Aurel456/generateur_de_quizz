@@ -26,6 +26,7 @@ from core.llm_service import (
     OPENAI_API_KEY,
     MODEL_NAME,
     VISION_MODEL_NAME,
+    VISION_MODEL_NAMES,
     MODEL_CONTEXT_WINDOW,
 )
 from core.models import validate_exercise
@@ -52,10 +53,26 @@ EXERCISE_JSON_FORMAT = """FORMAT DE RÉPONSE (JSON strict) :
             "verification_code": "# Code Python COMPLET\\n# Étape 1 : Données\\ndonnee_1 = 100\\ndonnee_2 = 0.425\\n# Étape 2 : Calcul\\nresult = donnee_1 * donnee_2\\nprint(f'Résultat: {{result}}')",
             "citation": "Citation exacte du passage du texte qui inspire l'exercice...",
             "source_page": 1,
-            "related_notions": ["Titre notion 1", "Titre notion 2"]
+            "related_notions": ["Titre notion 1", "Titre notion 2"],
+            "sub_parts": [
+                {{
+                    "question": "Q1. Première question partielle...",
+                    "expected_answer": "10.0",
+                    "steps": ["Étape 1...", "Étape 2..."],
+                    "verification_code": "result = 10.0\\nprint(f'Résultat: {{result}}')"
+                }},
+                {{
+                    "question": "Q2. Deuxième question partielle...",
+                    "expected_answer": "32.5",
+                    "steps": ["Étape 1...", "Étape 2..."],
+                    "verification_code": "result = 32.5\\nprint(f'Résultat: {{result}}')"
+                }}
+            ]
         }}
     ]
-}}"""
+}}
+
+NOTE sur sub_parts : Si l'exercice comporte PLUSIEURS questions numérotées (Q1, Q2, Q3...), utilise le champ "sub_parts" pour structurer chaque sous-question avec sa propre réponse, ses étapes et son code de vérification. Dans ce cas, "expected_answer" et "steps" au niveau principal servent de résumé global (ou peuvent être vides). Si l'exercice n'a qu'UNE seule question, laisse "sub_parts" vide ([])."""
 
 EXERCISE_JSON_FORMAT_TROU = """FORMAT DE RÉPONSE (JSON strict) :
 {{
@@ -285,6 +302,7 @@ class Exercise:
     exercise_type: str = "calcul"  # "calcul" | "trou" | "cas_pratique"
     blanks: List[dict] = field(default_factory=list)  # Pour type "trou"
     sub_questions: List[dict] = field(default_factory=list)  # Pour type "cas_pratique"
+    sub_parts: List[dict] = field(default_factory=list)  # Multi-questions (Q1, Q2...) pour calcul
 
 
 def _get_langchain_llm(model: Optional[str] = None):
@@ -464,11 +482,91 @@ def _parse_numeric(value: str) -> float:
     return float(s)
 
 
+def _verify_sub_part(sub_part: dict) -> dict:
+    """Vérifie une sous-partie d'exercice multi-questions par exécution de code Python."""
+    code = sub_part.get("verification_code", "")
+    expected = str(sub_part.get("expected_answer", ""))
+    if not code:
+        return {**sub_part, "verified": False, "verification_output": "Pas de code de vérification."}
+
+    wrapper_code = code + "\n\n"
+    wrapper_code += (
+        "import json as _json\n"
+        "_result_vars = ['result', 'resultat', 'answer', 'reponse', 'res']\n"
+        "for _var in _result_vars:\n"
+        "    if _var in dir() or _var in globals():\n"
+        "        _val = globals().get(_var) or locals().get(_var)\n"
+        "        if _val is not None:\n"
+        "            print(f'__RESULT__={_val}')\n"
+        "            break\n"
+    )
+
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as tmp_file:
+            tmp_file.write(wrapper_code)
+            tmp_path = tmp_file.name
+
+        try:
+            proc = subprocess.run(
+                [sys.executable, tmp_path],
+                capture_output=True, text=True, timeout=SANDBOX_TIMEOUT,
+                cwd=tempfile.gettempdir(),
+            )
+            if proc.returncode != 0:
+                return {**sub_part, "verified": False, "verification_output": f"Erreur d'exécution: {proc.stderr[:300]}"}
+
+            result_match = re.search(r'__RESULT__=(.+)', proc.stdout)
+            if result_match:
+                result_value = result_match.group(1).strip()
+                try:
+                    exp = _parse_numeric(expected)
+                    act = _parse_numeric(result_value)
+                    verified = abs(exp - act) < abs(exp) * 0.001 + 0.01
+                except (ValueError, TypeError):
+                    verified = result_value.strip() == expected.strip()
+                return {**sub_part, "verified": verified, "verification_output": f"Résultat: {result_value} (attendu: {expected})"}
+            else:
+                return {**sub_part, "verified": False, "verification_output": "Pas de variable résultat produite."}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    except subprocess.TimeoutExpired:
+        return {**sub_part, "verified": False, "verification_output": f"Timeout ({SANDBOX_TIMEOUT}s)"}
+    except Exception as e:
+        return {**sub_part, "verified": False, "verification_output": f"Erreur: {e}"}
+
+
 def _verify_exercise_direct(exercise: Exercise) -> Exercise:
     """
     Vérification directe en exécutant le code Python dans un sous-processus isolé.
     Capture tous les résultats intermédiaires (print) et le résultat final.
     """
+    # Vérifier les sub_parts individuellement si présentes
+    if exercise.sub_parts:
+        all_verified = True
+        details = ["═══ VÉRIFICATION MULTI-QUESTIONS ═══\n"]
+        verified_parts = []
+        for idx, sp in enumerate(exercise.sub_parts):
+            if sp.get("verification_code"):
+                result_sp = _verify_sub_part(sp)
+                sp_ok = result_sp.get("verified", False)
+                icon = "✅" if sp_ok else "❌"
+                details.append(f"{icon} Q{idx+1}: {result_sp.get('verification_output', '')}")
+                if not sp_ok:
+                    all_verified = False
+                verified_parts.append(result_sp)
+            else:
+                verified_parts.append({**sp, "verified": False, "verification_output": "Pas de code."})
+                details.append(f"⚠️ Q{idx+1}: Pas de code de vérification")
+                all_verified = False
+
+        exercise.sub_parts = verified_parts
+        exercise.verified = all_verified
+        exercise.verification_output = "\n".join(details)
+        return exercise
+
     if not exercise.verification_code:
         exercise.verified = False
         exercise.verification_output = "Pas de code de vérification fourni."
@@ -686,6 +784,7 @@ def _parse_exercises(
                     difficulty_level=difficulty,
                     related_notions=validated.get("related_notions", []),
                     exercise_type="calcul",
+                    sub_parts=validated.get("sub_parts", []),
                 )
             exercises.append(exercise)
         except Exception as e:
@@ -836,7 +935,7 @@ def generate_exercises(
 
     # ─── MODE BATCH ────────────────────────────────────────────────────────
     if batch_mode and total_steps > 1:
-        from generation.batch_service import BatchRequest, run_batch_json
+        from generation.batch_service import BatchRequest, run_batch_json, run_batch_multi_model
 
         batch_requests = []
         task_map = {}  # custom_id → (chunk, diff_name, n_ex)
@@ -867,10 +966,20 @@ def generate_exercises(
         if progress_callback:
             progress_callback(0, total_steps)
 
-        results = run_batch_json(
-            batch_requests,
-            progress_callback=lambda done, total: progress_callback(done, total) if progress_callback else None,
-        )
+        # Multi-model dispatch si vision avec plusieurs modèles
+        has_vision_requests = any(r.images for r in batch_requests)
+        if has_vision_requests and len(VISION_MODEL_NAMES) > 1:
+            batch_result = run_batch_multi_model(
+                batch_requests,
+                models=VISION_MODEL_NAMES,
+                progress_callback=lambda done, total: progress_callback(done, total) if progress_callback else None,
+            )
+            results = batch_result.results
+        else:
+            results = run_batch_json(
+                batch_requests,
+                progress_callback=lambda done, total: progress_callback(done, total) if progress_callback else None,
+            )
 
         # Parse + vérification séquentielle
         for custom_id, parsed_json in results.items():

@@ -1,10 +1,12 @@
 """
 batch_service.py — Service de traitement par lots via ThreadPoolExecutor.
 Exécute plusieurs requêtes LLM en parallèle sur n'importe quel serveur OpenAI-compatible.
+Supporte le dispatch dynamique multi-modèles (les modèles rapides reçoivent plus de requêtes).
 """
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed, Future
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -167,3 +169,69 @@ def run_batch_json_with_retry(
         )
 
     return BatchResult(results=all_results, failures=all_failures, retry_count=retry_count)
+
+
+def run_batch_multi_model(
+    requests: List[BatchRequest],
+    models: List[str],
+    progress_callback: Optional[Callable] = None,
+    max_retries: int = 2,
+) -> BatchResult:
+    """
+    Dispatch dynamique multi-modèles : chaque modèle est un worker qui consomme
+    les requêtes d'une queue. Dès qu'un modèle termine, il reçoit la suivante.
+    Les modèles plus rapides traitent donc plus de requêtes.
+
+    Args:
+        requests: Liste de BatchRequest (le champ model sera écrasé par le dispatcher).
+        models: Liste de noms de modèles vision disponibles.
+        progress_callback: Callback(completed, total).
+        max_retries: Retries par requête individuelle.
+
+    Returns:
+        BatchResult avec résultats et échecs.
+    """
+    if not requests:
+        return BatchResult()
+    if not models:
+        return run_batch_json_with_retry(requests, progress_callback)
+
+    total = len(requests)
+    work_queue: queue.Queue[BatchRequest] = queue.Queue()
+    for req in requests:
+        work_queue.put(req)
+
+    all_results: Dict[str, dict] = {}
+    all_failures: Dict[str, str] = {}
+    completed_count = 0
+
+    if progress_callback:
+        progress_callback(0, total)
+
+    def _worker(model_name: str):
+        """Un worker par modèle — consomme la queue jusqu'à épuisement."""
+        nonlocal completed_count
+        worker_results = []
+        while True:
+            try:
+                req = work_queue.get_nowait()
+            except queue.Empty:
+                break
+            req.model = model_name
+            custom_id, result, error = _execute_single_request(req, max_retries)
+            worker_results.append((custom_id, result, error))
+            completed_count += 1
+            if progress_callback:
+                progress_callback(min(completed_count, total), total)
+        return worker_results
+
+    with ThreadPoolExecutor(max_workers=len(models)) as executor:
+        futures = [executor.submit(_worker, m) for m in models]
+        for future in as_completed(futures):
+            for custom_id, result, error in future.result():
+                if result is not None:
+                    all_results[custom_id] = result
+                else:
+                    all_failures[custom_id] = error or "Erreur inconnue"
+
+    return BatchResult(results=all_results, failures=all_failures)
