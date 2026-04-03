@@ -307,6 +307,25 @@ with st.sidebar:
             help="Uploadez les documents à partir desquels générer les questions."
         )
 
+        # Persistance des fichiers entre pages (cache bytes dans session_state)
+        if uploaded_files:
+            import io as _io_cache
+            _cached = []
+            for f in uploaded_files:
+                f.seek(0)
+                _cached.append({"name": f.name, "bytes": f.read()})
+                f.seek(0)
+            st.session_state["_uploaded_files_cache"] = _cached
+        elif st.session_state.get("_uploaded_files_cache") and not uploaded_files:
+            import io as _io_cache
+            uploaded_files = []
+            for fc in st.session_state["_uploaded_files_cache"]:
+                buf = _io_cache.BytesIO(fc["bytes"])
+                buf.name = fc["name"]
+                uploaded_files.append(buf)
+            if uploaded_files:
+                st.caption(f"📎 {len(uploaded_files)} document(s) en cache : {', '.join(f.name for f in uploaded_files)}")
+
         st.divider()
 
     read_mode = "token"
@@ -853,8 +872,10 @@ if app_mode == "📄 Depuis un document":
                                 st.success(f"✅ {len(_exp_quiz.questions)} question(s) ajoutées à l'atelier **{ws_target.strip().upper()}** ({len(existing_qs)} total)")
                         else:
                             ws_obj = create_work_session(quiz_data_export, notions_export, _exp_quiz.title, owner_name=ws_owner or "?")
+                            st.session_state["export_ws_code"] = ws_obj.work_code
                             st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
                             st.code(f"Code atelier : {ws_obj.work_code}", language=None)
+                            st.rerun()
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 
@@ -902,8 +923,10 @@ if app_mode == "📄 Depuis un document":
                                 owner_name=ws_owner or "?",
                                 exercises_data=exercises_data_ws,
                             )
+                            st.session_state["export_ws_code"] = ws_obj.work_code
                             st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
                             st.code(f"Code atelier : {ws_obj.work_code}", language=None)
+                            st.rerun()
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 

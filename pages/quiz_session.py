@@ -179,10 +179,16 @@ if not st.session_state.submitted:
     # ─── Bouton de soumission ─────────────────────────────────────────────────
 
     # Vérifier que toutes les questions ont une réponse
-    all_answered = all(len(answers.get(str(i), [])) > 0 for i in range(len(questions)))
+    unanswered = [i + 1 for i in range(len(questions)) if len(answers.get(str(i), [])) == 0]
+    all_answered = len(unanswered) == 0
 
     if not all_answered:
-        st.warning("Répondez à toutes les questions avant de soumettre.")
+        if len(unanswered) <= 5:
+            missing_str = ", ".join(str(n) for n in unanswered)
+            st.warning(f"⚠️ Question(s) sans réponse : **{missing_str}**")
+        else:
+            first_five = ", ".join(str(n) for n in unanswered[:5])
+            st.warning(f"⚠️ {len(unanswered)} question(s) sans réponse : **{first_five}**, …")
 
     if st.button("📤 Soumettre mes réponses", type="primary", width='stretch', disabled=not all_answered):
         with st.spinner("Envoi des résultats..."):
