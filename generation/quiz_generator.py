@@ -96,6 +96,7 @@ def _build_quiz_prompt(
     persona: str = "",
     notion_mixing: bool = True,
     max_correct: Optional[int] = None,
+    humor: bool = False,
 ) -> tuple:
     """Construit le prompt système et utilisateur pour la génération de quizz."""
 
@@ -140,6 +141,7 @@ RÈGLES STRICTES :
     les 2 raisons..." si num_correct=2 — le nombre de réponses attendues est déjà indiqué à l'étudiant).
 {"11. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions." if notions_text else ""}
 {"12. NOTIONS PAR QUESTION : Chaque question doit couvrir UNE SEULE notion à la fois. Le champ 'related_notions' doit contenir exactement 1 élément. Ne mélange pas plusieurs notions dans une même question." if (notions_text and not notion_mixing) else ""}
+{"13. HUMOUR : Pour chaque question, rends exactement UN choix parmi les mauvaises réponses légèrement humoristique ou décalé, tout en restant professionnel et pertinent par rapport au domaine." if humor else ""}
 {notions_block}{f"""
 
 QUESTIONS DÉJÀ GÉNÉRÉES — À NE PAS DUPLIQUER :
@@ -222,6 +224,7 @@ def generate_quiz_from_chunk(
     notion_mixing: bool = True,
     enable_thinking: bool = True,
     max_correct: Optional[int] = None,
+    humor: bool = False,
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -233,6 +236,7 @@ def generate_quiz_from_chunk(
         difficulty_prompts, notions_text=notions_text, source_document=chunk.source_document,
         existing_questions=existing_questions, variable_correct=variable_correct,
         persona=persona, notion_mixing=notion_mixing, max_correct=max_correct,
+        humor=humor,
     )
 
     # Appel au LLM (vision ou texte)
@@ -284,6 +288,7 @@ def generate_quiz(
     notion_mixing: bool = True,
     enable_thinking: bool = True,
     max_correct: Optional[int] = None,
+    humor: bool = False,
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -357,6 +362,7 @@ def generate_quiz(
                     variable_correct=variable_correct,
                     persona=persona, notion_mixing=notion_mixing,
                     max_correct=max_correct,
+                    humor=humor,
                 )
                 custom_id = f"quiz_{diff_name}_{idx}"
                 images = chunk.page_images if (vision_mode and chunk.page_images) else None
@@ -430,6 +436,7 @@ def generate_quiz(
                         notion_mixing=notion_mixing,
                         enable_thinking=enable_thinking,
                         max_correct=max_correct,
+                        humor=humor,
                     )
                     all_questions.extend(questions)
                     # Mettre à jour la liste pour les chunks suivants du même niveau

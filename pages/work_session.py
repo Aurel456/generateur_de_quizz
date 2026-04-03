@@ -21,6 +21,15 @@ st.set_page_config(
     layout="wide",
 )
 
+# Auth gate — désactivé temporairement
+# _ws_user = st.session_state.get("user")
+# if _ws_user is None:
+#     st.warning("Veuillez vous connecter depuis la page principale.")
+#     st.stop()
+# if _ws_user.role not in ("admin", "formateur"):
+#     st.error("Accès réservé aux formateurs et administrateurs.")
+#     st.stop()
+
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');

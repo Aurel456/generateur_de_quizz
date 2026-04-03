@@ -116,14 +116,14 @@ def render_per_question_chart(analytics: dict):
     fig.update_layout(
         yaxis_title="Taux de réussite (%)",
         yaxis_range=[0, 105],
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e8e8f0"),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(color="#1a1a1a"),
         height=350,
         margin=dict(t=10, b=40, l=40, r=10),
     )
     fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.1)")
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(0,0,0,0.1)")
 
     st.plotly_chart(fig, width='stretch')
 
@@ -157,18 +157,18 @@ def render_per_notion_chart(analytics: dict):
                 radialaxis=dict(
                     visible=True,
                     range=[0, 100],
-                    tickfont=dict(color="#a0a0b8"),
-                    gridcolor="rgba(255,255,255,0.1)",
+                    tickfont=dict(color="#1a1a1a"),
+                    gridcolor="rgba(0,0,0,0.1)",
                 ),
                 angularaxis=dict(
-                    tickfont=dict(color="#e8e8f0", size=10),
-                    gridcolor="rgba(255,255,255,0.1)",
+                    tickfont=dict(color="#1a1a1a", size=10),
+                    gridcolor="rgba(0,0,0,0.1)",
                 ),
-                bgcolor="rgba(0,0,0,0)",
+                bgcolor="white",
             ),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e8e8f0"),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            font=dict(color="#1a1a1a"),
             height=350,
             margin=dict(t=30, b=30, l=60, r=60),
             showlegend=False,
@@ -191,9 +191,9 @@ def render_per_notion_chart(analytics: dict):
         fig.update_layout(
             xaxis_title="Taux de réussite (%)",
             xaxis_range=[0, 105],
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e8e8f0"),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            font=dict(color="#1a1a1a"),
             height=350,
             margin=dict(t=10, b=40, l=10, r=10),
         )

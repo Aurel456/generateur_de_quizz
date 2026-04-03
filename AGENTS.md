@@ -4,6 +4,201 @@ Instructions pour les agents IA travaillant sur ce projet.
 
 ---
 
+## Exploration rapide de la codebase (onboarding agent IA)
+
+> **Objectif** : comprendre le projet en lisant ce fichier + les fichiers listés ci-dessous, sans exploration itérative.
+
+### Fichiers à lire en priorité (par ordre)
+
+| # | Fichier | Lignes | Rôle |
+|---|---------|--------|------|
+| 1 | `app.py` | ~2650 | Point d'entrée Streamlit. Auth (désactivé), sidebar, tabs (Exports/Notions/Quizz/Exercices/Analytics/Aperçu/Guide), génération quiz/exercices, mode libre, personas domaine. **Lire en entier.** |
+| 2 | `generation/quiz_generator.py` | 459 | Génération QCM : dataclasses Quiz/QuizQuestion, prompts, anti-doublons. **Lire en entier.** |
+| 3 | `generation/exercise_generator.py` | 1018 | Génération exercices : dataclass Exercise, 3 types (calcul/trou/cas_pratique), prompts, vérification. **Lire en entier.** |
+| 4 | `generation/notion_detector.py` | 319 | Dataclass Notion, détection/fusion/édition notions. **Lire en entier.** |
+| 5 | `core/llm_service.py` | 524 | Client LLM unifié : call_llm*, cache, token tracking, vision. **Lire en entier.** |
+| 6 | `sessions/session_store.py` | 852 | Backend SQLite : QuizSession, WorkSession, ParticipantResult, pool, CRUD. **Lire en entier.** |
+| 7 | `sessions/analytics.py` | 392 | Dashboard Plotly, sélecteur sessions, recommandations IA. **Lire en entier.** |
+| 8 | `export/quiz_exporter.py` | 516 | Export HTML/CSV quiz, exercices, combiné. **Lire en entier.** |
+| 9 | `processing/document_processor.py` | 850 | Extraction texte multi-format, chunking page/token, vision. **Lire en entier.** |
+| 10 | `pages/quiz_session.py` | 301 | Page participant quiz (pool, scoring). **Lire en entier.** |
+| 11 | `pages/work_session.py` | 388 | Page Atelier Formateurs. **Lire en entier.** |
+| 12 | `core/personas.py` | ~80 | Personas DGFiP par domaine + générique. **Lire en entier.** |
+| 13 | `core/auth.py` | ~120 | Auth SQLite PBKDF2 (désactivé temporairement). **Lire en entier.** |
+| 14 | `pages/shared_session.py` | ~150 | Page Sessions Partagées (séparée de app.py). **Lire en entier.** |
+| 15 | `pages/admin.py` | ~100 | Page admin gestion utilisateurs (désactivé temporairement). **Lire en entier.** |
+
+### Fichiers secondaires (lire si pertinent pour la tâche)
+
+| Fichier | Lignes | Rôle |
+|---------|--------|------|
+| `core/models.py` | 178 | Modèles Pydantic v2 pour validation JSON LLM |
+| `core/llm_cache.py` | 150 | Cache LLM SHA256, LRU, TTL, persistence JSON |
+| `core/token_tracker.py` | 65 | Log tokens par appel, résumé agrégé |
+| `core/stats_manager.py` | 52 | Stats globales JSON (questions, docs, tokens, sessions) |
+| `generation/chat_mode.py` | 601 | Machine à états (ChatState) pour le mode libre IA |
+| `generation/quiz_verifier.py` | 371 | Vérification IA des QCM, reformulation auto (max 3) |
+| `generation/exercise_verifier.py` | 598 | Vérification IA des exercices trou/cas_pratique |
+| `generation/question_editor.py` | 95 | Amélioration IA d'une question individuelle |
+| `generation/batch_service.py` | 237 | Traitement par lots ThreadPoolExecutor, retry |
+| `generation/calc_agent.py` | 115 | Exécution Python sandboxée pour vérification calculs |
+| `processing/vision_processor.py` | 640 | Rendu PDF→images, optimisation DPI, LibreOffice |
+| `ui/ui_components.py` | 67 | Composants UI Streamlit réutilisables |
+| `templates/quiz_template.html` | — | Template Jinja2 pour export HTML |
+
+### Dataclasses principales
+
+```python
+# generation/quiz_generator.py:22
+@dataclass
+class QuizQuestion:
+    question: str
+    choices: Dict[str, str]       # {"A": "...", "B": "..."}
+    correct_answers: List[str]    # ["A", "C"]
+    explanation: str = ""
+    source_pages: List[int]
+    difficulty_level: str = ""    # "facile" | "moyen" | "difficile"
+    source_document: str = ""
+    citation: str = ""
+    related_notions: List[str]    # Titres des notions couvertes
+
+# generation/quiz_generator.py:36
+@dataclass
+class Quiz:
+    title: str
+    difficulty: str
+    questions: List[QuizQuestion]
+    metadata: dict
+
+# generation/exercise_generator.py:287
+@dataclass
+class Exercise:
+    statement: str
+    expected_answer: str          # Réponse numérique (type "calcul")
+    steps: List[str]              # Étapes de résolution
+    num_steps: int = 0
+    correction: str = ""
+    verification_code: str = ""   # Code Python (type "calcul")
+    verified: bool = False
+    verification_output: str = ""
+    source_pages: List[int]
+    source_document: str = ""
+    citation: str = ""
+    difficulty_level: str = "moyen"
+    related_notions: List[str]
+    exercise_type: str = "calcul" # "calcul" | "trou" | "cas_pratique"
+    blanks: List[dict]            # Pour type "trou"
+    sub_questions: List[dict]     # Pour type "cas_pratique"
+    sub_parts: List[dict]         # Multi-questions calcul
+
+# generation/notion_detector.py:16
+@dataclass
+class Notion:
+    title: str
+    description: str
+    source_document: str = ""
+    source_pages: List[int]
+    enabled: bool = True
+    category: str = ""
+    question_count: int = 0
+
+# processing/document_processor.py:29
+@dataclass
+class TextChunk:
+    text: str
+    source_pages: List[int]
+    token_count: int = 0
+    source_document: str = ""
+    page_images: List[str]        # base64 images pour vision
+
+# sessions/session_store.py:26,41,57
+@dataclass
+class WorkSession:
+    work_session_id, work_code, title, draft_quiz_json, draft_notions_json,
+    owner_name, last_modified, created_at, status, draft_exercises_json, original_quiz_json
+
+@dataclass
+class QuizSession:
+    session_id, session_code, title, quiz_json, notions_json, created_at,
+    is_active, pool_json, subset_size, pass_threshold, exercises_json
+
+@dataclass
+class ParticipantResult:
+    result_id, session_id, participant_name, answers_json, score, total,
+    per_question_json, submitted_at
+
+# core/auth.py (désactivé temporairement)
+@dataclass
+class User:
+    user_id, username, display_name, role, created_at
+```
+
+### Constantes importantes
+
+| Constante | Fichier:ligne | Valeur / Usage |
+|-----------|---------------|----------------|
+| `QUIZ_DEFAULT_PERSONA` | `quiz_generator.py:45` | Persona par défaut quiz (modifiable UI) |
+| `QUIZ_FIXED_RULES_DISPLAY` | `quiz_generator.py:52` | Règles fixes affichées en lecture seule |
+| `DIFFICULTY_PROMPTS` | `quiz_generator.py:62` | Dict facile/moyen/difficile → instructions LLM |
+| `EXERCISE_DEFAULT_PERSONA` | `exercise_generator.py:114` | Persona par défaut exercices |
+| `EXERCISE_FIXED_RULES_BY_TYPE` | `exercise_generator.py:171` | Dict par type → règles fixes |
+| `DEFAULT_EXERCISE_PROMPTS` | `exercise_generator.py:257` | Dict facile/moyen/difficile (type calcul) |
+| `DEFAULT_EXERCISE_PROMPTS_TROU` | `exercise_generator.py:245` | Instructions par niveau (type trou) |
+| `DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE` | `exercise_generator.py:251` | Instructions par niveau (type cas pratique) |
+| `MODEL_NAME` | `llm_service.py:27` | Modèle LLM par défaut (env `MODEL_NAME`) |
+| `VISION_MODEL_NAME` | `llm_service.py:40` | Modèle vision (env `VISION_MODEL_NAME`) |
+| `VISION_MODEL_NAMES` | `llm_service.py:35` | Liste modèles vision (JSON ou string) |
+| `DB_PATH` | `session_store.py:22` | Chemin SQLite (env `QUIZ_SESSIONS_DB`) |
+
+### Index des fonctions clés par fichier
+
+**`core/llm_service.py`** : `call_llm()`, `call_llm_json()`, `call_llm_chat()`, `call_llm_chat_json()`, `call_llm_vision()`, `call_llm_vision_json()`, `count_tokens()`, `list_models()`, `get_model_info()`
+
+**`generation/quiz_generator.py`** : `generate_quiz()`, `generate_quiz_from_chunk()`, `_build_quiz_prompt()`, `_parse_quiz_questions()`, `_distribute_questions()`
+
+**`generation/exercise_generator.py`** : `generate_exercises()`, `generate_exercises_from_chunk()`, `_build_exercise_prompt()`, `_verify_exercise_with_agent()`, `_verify_exercise_direct()`, `_correct_exercise_with_llm()`, `_verify_and_correct_exercise()`
+
+**`generation/notion_detector.py`** : `detect_notions()`, `edit_notions_with_llm()`, `merge_similar_notions()`, `notions_to_prompt_text()`
+
+**`generation/chat_mode.py`** : `init_session()`, `process_user_message()`, `generate_notions_from_chat()`, `extract_generation_config()`, `generate_quiz_direct()`, `generate_exercises_direct()`
+
+**`generation/quiz_verifier.py`** : `verify_quiz()`, `_verify_question_with_llm()`, `_reformulate_question()`
+
+**`generation/exercise_verifier.py`** : `verify_exercises()`, `_verify_trou_with_llm()`, `_verify_cas_pratique_with_llm()`, `_verify_with_calc_agent()`, `_reformulate_exercise()`
+
+**`export/quiz_exporter.py`** : `export_quiz_html()`, `export_quiz_csv()`, `export_exercises_html()`, `export_exercises_csv()`, `export_combined_html()`, `export_combined_csv()`
+
+**`sessions/session_store.py`** : `init_db()`, `create_session()`, `get_session()`, `submit_result()`, `get_session_results()`, `get_session_analytics()`, `deactivate_session()`, `list_sessions()`, `create_pool_session()`, `get_next_subset()`, `create_work_session()`, `get_work_session()`, `update_work_session_draft()`, `publish_work_session()`, `list_work_sessions()`
+
+**`sessions/analytics.py`** : `render_analytics_dashboard()`, `render_global_metrics()`, `render_per_question_chart()`, `render_per_notion_chart()`, `render_participant_table()`, `render_session_selector()`, `generate_ai_recommendations()`
+
+**`core/personas.py`** : `get_persona_for_domain()`, `PERSONA_DOMAINS`, `DGFIP_PERSONAS`, `DEFAULT_PERSONA_GENERIC`
+
+**`core/auth.py`** *(désactivé)* : `authenticate()`, `create_user()`, `list_users()`, `update_user_role()`, `delete_user()`, `change_password()`
+
+**`processing/document_processor.py`** : `extract_and_chunk()`, `extract_and_chunk_multiple()`, `extract_and_chunk_vision()`, `extract_and_chunk_multiple_vision()`, `extract_and_chunk_vision_text()`, `extract_text_from_file()`, `chunk_text()`, `split_into_pages()`, `get_text_stats()`, `get_text_stats_multiple()`
+
+### Structure de app.py (sections par numéro de ligne approximatif)
+
+| Lignes | Section |
+|--------|---------|
+| 1-77 | Imports, st.set_page_config, auth gate (désactivé), CSS |
+| 178-230 | Initialisation session_state (18 variables) |
+| 232-456 | **Sidebar** : sessions toggle, page links, mode radio, file upload, paramètres lecture, options avancées (batch/vision/thinking), modèle LLM, session save/load, stats globales |
+| 457-714 | Traitement document : extraction, chunking, vision, DPI, aperçu |
+| 715 | **Tabs** : Notions, Quizz, Exercices, Aperçu texte, Guide |
+| 717-835 | Onglet Notions : détection, affichage, édition, fusion |
+| 836-1001 | Onglet Quizz : config (difficulté, choix, persona), génération |
+| 1002-1286 | Onglet Quizz : affichage questions, édition, vérification IA, changelog |
+| 1287-1470 | Onglet Quizz : export tabs (téléchargements, session partagée, atelier) |
+| 1471-1760 | Onglet Exercices : config, génération, affichage, vérification |
+| 1761-1870 | Onglet Exercices : export tabs |
+| 1871-2155 | Onglets Aperçu texte et Guide |
+| 2156-2539 | **Mode libre (IA)** : chat, génération directe quiz/exercices |
+| 2540-2650 | **Mode libre (IA)** suite : exports, sessions partagées |
+
+---
+
 ## Vue d'ensemble
 
 Application **Streamlit** de génération de quizz QCM et d'exercices à partir de documents (PDF, DOCX, ODT, PPTX, TXT) ou par conversation libre avec un LLM. Backend LLM via API compatible OpenAI (locale ou cloud). Inclut un système de sessions partagées (étudiantes et collaboratives), un pipeline de vérification automatique et des outils d'édition interactive.
@@ -17,7 +212,9 @@ generateur_de_quizz/
 ├── app.py                        ← point d'entrée Streamlit (racine obligatoire)
 ├── pages/
 │   ├── quiz_session.py           ← page participant (quizz partagé / pool)
-│   └── work_session.py           ← page Atelier Formateurs (collaborative)
+│   ├── work_session.py           ← page Atelier Formateurs (collaborative)
+│   ├── shared_session.py         ← page Sessions Partagées (séparée de app.py)
+│   └── admin.py                  ← page admin gestion utilisateurs (désactivé)
 ├── templates/quiz_template.html  ← template Jinja2 pour export HTML
 ├── shared_data/                  ← données persistantes (SQLite, stats JSON, cache LLM)
 ├── core/
@@ -25,7 +222,9 @@ generateur_de_quizz/
 │   ├── llm_cache.py              ← cache LLM : SHA256 key, LRU eviction, TTL, persistence JSON
 │   ├── token_tracker.py          ← suivi tokens par appel (log_token_usage, get_token_summary)
 │   ├── models.py                 ← modèles Pydantic v2 (QuizQuestionModel, ExerciseModel, NotionModel...)
-│   └── stats_manager.py          ← statistiques globales (questions, docs, tokens, sessions)
+│   ├── stats_manager.py          ← statistiques globales (questions, docs, tokens, sessions)
+│   ├── personas.py               ← personas DGFiP par domaine + générique
+│   └── auth.py                   ← auth SQLite PBKDF2 (désactivé temporairement)
 ├── processing/
 │   ├── document_processor.py     ← extraction texte multi-format + chunking
 │   └── vision_processor.py       ← rendu PDF→images via PyMuPDF, optimisation DPI
@@ -128,8 +327,13 @@ Les générations successives s'ajoutent aux exercices existants (`st.session_st
 - Pas d'affichage des infos du modèle dans la sidebar.
 - Graphiques via **Plotly** (pas de tables simples pour les analytics).
 - Badges de notions affichés en **pills violettes**.
-- **6 onglets en mode document** : Notions / Quizz / Exercices / Analytics / Aperçu texte / Guide.
-- Sidebar : sélecteur de mode (Document / Libre / Sessions Partagées / Ateliers Formateurs) + stats globales (questions, docs, tokens, sessions).
+- **7 onglets en mode document** : Exports / Notions / Quizz / Exercices / Analytics / Aperçu texte / Guide.
+- Sidebar : sélecteur de mode (Document / Libre) + liens pages (Ateliers, Sessions Partagées) + stats globales.
+- **Personas domaine** : sélecteur DGFiP (8 domaines) + Générique + Personnalisé (`core/personas.py`).
+- **Humour** : toggle dans config quiz, ajoute une mauvaise réponse décalée par question.
+- **Accumulation quiz** : les générations s'ajoutent au quiz existant (bouton Réinit. pour remettre à zéro).
+- **Notions manquantes** : bouton dédié "🎯 Notions manquantes" pour générer uniquement sur les notions non couvertes.
+- **Auth** : système login/rôles désactivé temporairement (code commenté dans app.py, work_session.py).
 
 ### Sécurité
 
