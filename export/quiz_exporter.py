@@ -421,11 +421,11 @@ def export_combined_html(quiz: Optional[Quiz], exercises: Optional[list]) -> str
     # Assembler le JS combiné (tabs + quiz + exercices)
     combined_js = f"""
     /* --- Onglets --- */
-    function switchCombinedTab(tab) {{
+    function switchCombinedTab(tab, btn) {{
         document.querySelectorAll('.combined-tab-content').forEach(el => el.classList.remove('active'));
         document.querySelectorAll('.combined-tab-btn').forEach(el => el.classList.remove('active'));
         document.getElementById('combined-tab-' + tab).classList.add('active');
-        event.target.classList.add('active');
+        if (btn) btn.classList.add('active');
     }}
     /* --- JS Quiz --- */
     {quiz_parts["js"]}
@@ -433,8 +433,8 @@ def export_combined_html(quiz: Optional[Quiz], exercises: Optional[list]) -> str
     {ex_parts["js"]}
     """
 
-    quiz_tab_btn = f'<button class="combined-tab-btn active" onclick="switchCombinedTab(\'quiz\')">QCM ({quiz_count})</button>' if quiz_count else ""
-    ex_tab_btn = f'<button class="combined-tab-btn{" active" if not quiz_count else ""}" onclick="switchCombinedTab(\'exercises\')">Exercices ({ex_count})</button>' if ex_count else ""
+    quiz_tab_btn = f'<button class="combined-tab-btn active" onclick="switchCombinedTab(\'quiz\', this)">QCM ({quiz_count})</button>' if quiz_count else ""
+    ex_tab_btn = f'<button class="combined-tab-btn{" active" if not quiz_count else ""}" onclick="switchCombinedTab(\'exercises\', this)">Exercices ({ex_count})</button>' if ex_count else ""
 
     html = f"""<!DOCTYPE html>
 <html lang="fr">

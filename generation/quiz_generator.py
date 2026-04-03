@@ -56,6 +56,7 @@ QUIZ_FIXED_RULES_DISPLAY = """RÈGLES FIXES (non modifiables — garantissent la
 • INTERDIT : "selon le texte", "d'après le document", "dans le passage"...
 • Formulations précises uniquement — pas de "Quel est le principal...", "Parmi les suivants..."
 • Ne jamais mentionner le nombre de bonnes réponses dans l'énoncé
+• LANGUE : questions et réponses en français — termes techniques/sigles conservés tels quels
 • Format de réponse : JSON strict avec champs question/choices/correct_answers/explanation/citation/source_page/related_notions"""
 
 # Mapping difficulté → instructions pour le LLM
@@ -134,14 +135,17 @@ RÈGLES STRICTES :
 9. INTERDIT : N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document",
    "dans le passage", "le texte mentionne", "l'auteur affirme", etc.
    Chaque question doit être auto-suffisante et fournir tout le contexte nécessaire dans son énoncé.
-10. FORMULATION PRÉCISE : Chaque question doit avoir un énoncé non-ambigu et spécifique.
+10. LANGUE : Rédige toutes les questions et réponses en français. Conserve les termes techniques,
+    sigles, noms propres et dénominations officielles dans leur format d'origine (ex : TVA, CGI, DGFIP,
+    arrêté du X, article L. 123-4...). Ne les traduis pas et ne les reformule pas.
+11. FORMULATION PRÉCISE : Chaque question doit avoir un énoncé non-ambigu et spécifique.
     Évite les formulations vagues comme "Quel est le principal...", "Parmi les suivants, lequel...",
     "Quelle est la meilleure...". Préfère des questions précises avec un contexte clair.
     Le nombre de bonnes réponses ne doit jamais figurer dans l'énoncé (ne pas écrire "Quelles sont
     les 2 raisons..." si num_correct=2 — le nombre de réponses attendues est déjà indiqué à l'étudiant).
-{"11. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions." if notions_text else ""}
-{"12. NOTIONS PAR QUESTION : Chaque question doit couvrir UNE SEULE notion à la fois. Le champ 'related_notions' doit contenir exactement 1 élément. Ne mélange pas plusieurs notions dans une même question." if (notions_text and not notion_mixing) else ""}
-{"13. HUMOUR : Pour chaque question, rends exactement UN choix parmi les mauvaises réponses légèrement humoristique ou décalé, tout en restant professionnel et pertinent par rapport au domaine." if humor else ""}
+{"12. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions." if notions_text else ""}
+{"13. NOTIONS PAR QUESTION : Chaque question doit couvrir UNE SEULE notion à la fois. Le champ 'related_notions' doit contenir exactement 1 élément. Ne mélange pas plusieurs notions dans une même question." if (notions_text and not notion_mixing) else ""}
+{"14. HUMOUR : Pour chaque question, rends exactement UN choix parmi les mauvaises réponses légèrement humoristique ou décalé, tout en restant professionnel et pertinent par rapport au domaine." if humor else ""}
 {notions_block}{f"""
 
 QUESTIONS DÉJÀ GÉNÉRÉES — À NE PAS DUPLIQUER :

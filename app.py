@@ -22,6 +22,7 @@ from generation.exercise_generator import (
     generate_exercises, Exercise, DEFAULT_EXERCISE_PROMPTS,
     DEFAULT_EXERCISE_PROMPTS_TROU, DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE,
     EXERCISE_DEFAULT_PERSONA, EXERCISE_FIXED_RULES_BY_TYPE,
+    generate_blank_suggestions,
 )
 from export.quiz_exporter import (
     export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html,
@@ -156,7 +157,37 @@ st.markdown("""
     div[data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f0f1a 0%, #1a1a2e 100%);
     }
+
+    /* Bouton retour en haut */
+    #back-to-top-btn {
+        position: fixed;
+        bottom: 2rem;
+        right: 2rem;
+        z-index: 9999;
+        background: #6c63ff;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 3rem;
+        height: 3rem;
+        font-size: 1.2rem;
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(108,99,255,0.4);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s, transform 0.2s;
+    }
+    #back-to-top-btn:hover { background: #5a52e0; transform: scale(1.1); }
+    #back-to-top-btn.visible { display: flex; }
 </style>
+<button id="back-to-top-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Retour en haut">↑</button>
+<script>
+    window.addEventListener('scroll', function() {
+        var btn = document.getElementById('back-to-top-btn');
+        if (btn) btn.classList.toggle('visible', window.scrollY > 300);
+    }, {passive: true});
+</script>
 """, unsafe_allow_html=True)
 
 # ─── Header ─────────────────────────────────────────────────────────────────────
@@ -1104,16 +1135,19 @@ if uploaded_files:
                 key="quiz_persona_domain",
                 help="Choisissez un domaine DGFiP ou 'Personnalisé' pour un texte libre.",
             )
-            if _quiz_domain == "Personnalisé":
-                st.session_state.quiz_persona = st.text_area(
-                    "Persona personnalisé",
-                    value=st.session_state.quiz_persona,
-                    height=80,
-                    key="quiz_persona_custom",
-                )
-            else:
-                st.session_state.quiz_persona = get_persona_for_domain(_quiz_domain)
-                st.caption(f"*{st.session_state.quiz_persona[:120]}...*")
+            if _quiz_domain != "Personnalisé":
+                # Pré-remplir avec le persona du domaine sélectionné
+                _domain_persona = get_persona_for_domain(_quiz_domain)
+                if st.session_state.quiz_persona != _domain_persona and st.session_state.get("_last_quiz_domain") != _quiz_domain:
+                    st.session_state.quiz_persona = _domain_persona
+            st.session_state["_last_quiz_domain"] = _quiz_domain
+            st.session_state.quiz_persona = st.text_area(
+                "Persona (éditable)",
+                value=st.session_state.quiz_persona,
+                height=100,
+                key="quiz_persona_text",
+                help="Modifiez librement le persona, quel que soit le domaine sélectionné.",
+            )
 
             st.markdown("**2️⃣ Instructions par niveau de difficulté** *(modifiable)*")
             st.caption("Ces instructions précisent à l'IA le type de questions à générer pour chaque niveau.")
@@ -1570,11 +1604,21 @@ if uploaded_files:
                             else:
                                 st.markdown(f"> {after_text}")
 
-                            # Montrer les changements de réponses
+                            # Montrer les changements de réponses correctes
                             before_ans = before.get("correct_answers", [])
                             after_ans = after.get("correct_answers", [])
                             if before_ans != after_ans:
-                                st.markdown(f"Réponses : `{before_ans}` → `{after_ans}`")
+                                st.markdown(f"Réponses correctes : `{before_ans}` → `{after_ans}`")
+
+                            # Montrer les choix de réponse modifiés
+                            before_choices = before.get("choices", {})
+                            after_choices = after.get("choices", {})
+                            if before_choices and after_choices and before_choices != after_choices:
+                                changed_choices = [(k, before_choices.get(k, ""), after_choices.get(k, "")) for k in after_choices if after_choices.get(k) != before_choices.get(k)]
+                                if changed_choices:
+                                    with st.expander(f"🔀 {len(changed_choices)} choix modifié(s)", expanded=False):
+                                        for key, b_val, a_val in changed_choices:
+                                            st.markdown(f"**{key} :** ~~{b_val}~~ → {a_val}")
 
                             # Montrer les changements d'explication
                             before_exp = before.get("explanation", "")
@@ -1647,15 +1691,18 @@ if uploaded_files:
                 key="ex_persona_domain",
                 help="Choisissez un domaine DGFiP ou 'Personnalisé' pour un texte libre.",
             )
-            if _ex_domain == "Personnalisé":
-                st.session_state.exercise_persona = st.text_area(
-                    "Persona personnalisé",
-                    value=st.session_state.exercise_persona,
-                    height=80, key="ex_persona_input",
-                )
-            else:
-                st.session_state.exercise_persona = get_persona_for_domain(_ex_domain)
-                st.caption(f"*{st.session_state.exercise_persona[:120]}...*")
+            if _ex_domain != "Personnalisé":
+                _ex_domain_persona = get_persona_for_domain(_ex_domain)
+                if st.session_state.exercise_persona != _ex_domain_persona and st.session_state.get("_last_ex_domain") != _ex_domain:
+                    st.session_state.exercise_persona = _ex_domain_persona
+            st.session_state["_last_ex_domain"] = _ex_domain
+            st.session_state.exercise_persona = st.text_area(
+                "Persona (éditable)",
+                value=st.session_state.exercise_persona,
+                height=100,
+                key="ex_persona_text",
+                help="Modifiez librement le persona, quel que soit le domaine sélectionné.",
+            )
 
             st.divider()
 
@@ -1818,7 +1865,37 @@ if uploaded_files:
                         if blanks:
                             st.markdown("#### ✏️ Réponses attendues")
                             for b in blanks:
-                                st.markdown(f"**Blanc {b.get('position', '?')} :** `{b.get('answer', '')}` — *{b.get('context', '')}*")
+                                b_pos = b.get('position', '?')
+                                st.markdown(f"**Blanc {b_pos} :** `{b.get('answer', '')}` — *{b.get('context', '')}*")
+                            # Bouton suggestions par blanc
+                            st.divider()
+                            _sugg_col1, _sugg_col2 = st.columns([3, 1])
+                            with _sugg_col1:
+                                _sugg_blank_idx = st.selectbox(
+                                    "Blanc à aider",
+                                    options=list(range(len(blanks))),
+                                    format_func=lambda idx: f"Blanc {blanks[idx].get('position', idx+1)} : {blanks[idx].get('context', '')[:40]}…",
+                                    key=f"sugg_blank_sel_{idx}",
+                                )
+                            with _sugg_col2:
+                                _sugg_n = st.number_input("Nb suggestions", min_value=1, max_value=5, value=3, key=f"sugg_n_{idx}")
+                            if st.button("💡 Générer des indices", key=f"sugg_btn_{idx}"):
+                                with st.spinner("Génération des indices…"):
+                                    try:
+                                        _suggestions = generate_blank_suggestions(
+                                            blank=blanks[_sugg_blank_idx],
+                                            statement=ex.statement,
+                                            n=_sugg_n,
+                                            model=selected_model,
+                                            enable_thinking=st.session_state.get("enable_thinking", True),
+                                        )
+                                        st.session_state[f"_sugg_cache_{idx}_{_sugg_blank_idx}"] = _suggestions
+                                    except Exception as e:
+                                        st.error(f"Erreur : {e}")
+                            _cached_sugg = st.session_state.get(f"_sugg_cache_{idx}_{_sugg_blank_idx}")
+                            if _cached_sugg:
+                                for _si, _s in enumerate(_cached_sugg, 1):
+                                    st.info(f"💡 **Indice {_si} :** {_s}")
                     elif ex_type == "cas_pratique":
                         sub_qs = getattr(ex, "sub_questions", [])
                         if sub_qs:
