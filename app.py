@@ -157,42 +157,10 @@ st.markdown("""
     div[data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f0f1a 0%, #1a1a2e 100%);
     }
+
+
 </style>
 """, unsafe_allow_html=True)
-
-# ─── Bouton flottant « Retour en haut » ───────────────────────────────────────
-# st.components.v1.html injecte un vrai iframe avec accès au parent Streamlit.
-# Le scroll Streamlit se fait sur section.main, pas window.
-import streamlit.components.v1 as _components
-_components.html("""
-<style>
-    #back-to-top-btn {
-        position: fixed; bottom: 2rem; right: 2rem; z-index: 9999;
-        background: #6c63ff; color: white; border: none; border-radius: 50%;
-        width: 3rem; height: 3rem; font-size: 1.4rem; cursor: pointer;
-        box-shadow: 0 4px 12px rgba(108,99,255,0.4);
-        display: none; align-items: center; justify-content: center;
-        transition: background 0.2s, transform 0.2s;
-    }
-    #back-to-top-btn:hover { background: #5a52e0; transform: scale(1.1); }
-</style>
-<button id="back-to-top-btn" title="Retour en haut">&#8593;</button>
-<script>
-    // Trouver le conteneur scrollable de Streamlit (section.main ou son enfant direct)
-    var scrollContainer = window.parent.document.querySelector('section.main');
-    var btn = document.getElementById('back-to-top-btn');
-
-    if (scrollContainer && btn) {
-        scrollContainer.addEventListener('scroll', function() {
-            btn.style.display = scrollContainer.scrollTop > 300 ? 'flex' : 'none';
-        }, {passive: true});
-
-        btn.addEventListener('click', function() {
-            scrollContainer.scrollTo({top: 0, behavior: 'smooth'});
-        });
-    }
-</script>
-""", height=0)
 
 # ─── Header ─────────────────────────────────────────────────────────────────────
 
@@ -401,215 +369,219 @@ with st.sidebar:
 
 _has_existing_data = (st.session_state.quiz is not None or st.session_state.exercises is not None or st.session_state.notions is not None)
 
-if uploaded_files:
-    # ─── Panneau Vision DPI ──────────────────────────────────────────────────
-    vision_dpi_override = None
-    if vision_enabled and _VISION_AVAILABLE:
-        # Trouver le premier fichier compatible vision (PDF ou Office)
-        vision_extensions = {".pdf"} | OFFICE_EXTENSIONS
-        vision_files = [
-            f for f in uploaded_files
-            if any(getattr(f, "name", "").lower().endswith(ext) for ext in vision_extensions)
-        ]
-        if vision_files:
-            first_file = vision_files[0]
-            first_name = getattr(first_file, "name", "")
+if app_mode == "📄 Depuis un document":
+    if uploaded_files:
+        # ─── Panneau Vision DPI ──────────────────────────────────────────────────
+        vision_dpi_override = None
+        if vision_enabled and _VISION_AVAILABLE:
+            # Trouver le premier fichier compatible vision (PDF ou Office)
+            vision_extensions = {".pdf"} | OFFICE_EXTENSIONS
+            vision_files = [
+                f for f in uploaded_files
+                if any(getattr(f, "name", "").lower().endswith(ext) for ext in vision_extensions)
+            ]
+            if vision_files:
+                first_file = vision_files[0]
+                first_name = getattr(first_file, "name", "")
 
-            # Convertir en PDF si nécessaire (cache le résultat)
-            pdf_cache_key = f"_vision_pdf_bytes_{first_name}"
-            if st.session_state.get(pdf_cache_key) is None:
-                if first_name.lower().endswith(".pdf"):
-                    first_file.seek(0)
-                    st.session_state[pdf_cache_key] = first_file.read()
-                    first_file.seek(0)
-                else:
-                    first_file.seek(0)
-                    raw = first_file.read()
-                    first_file.seek(0)
-                    converted = convert_office_to_pdf(raw, first_name)
-                    if converted:
-                        st.session_state[pdf_cache_key] = converted
+                # Convertir en PDF si nécessaire (cache le résultat)
+                pdf_cache_key = f"_vision_pdf_bytes_{first_name}"
+                if st.session_state.get(pdf_cache_key) is None:
+                    if first_name.lower().endswith(".pdf"):
+                        first_file.seek(0)
+                        st.session_state[pdf_cache_key] = first_file.read()
+                        first_file.seek(0)
                     else:
-                        st.session_state[pdf_cache_key] = None
-                        st.warning(
-                            f"Conversion vision impossible pour **{first_name}**. "
-                            f"Installez LibreOffice ou utilisez un PDF."
+                        first_file.seek(0)
+                        raw = first_file.read()
+                        first_file.seek(0)
+                        converted = convert_office_to_pdf(raw, first_name)
+                        if converted:
+                            st.session_state[pdf_cache_key] = converted
+                        else:
+                            st.session_state[pdf_cache_key] = None
+                            st.warning(
+                                f"Conversion vision impossible pour **{first_name}**. "
+                                f"Installez LibreOffice ou utilisez un PDF."
+                            )
+
+                pdf_bytes = st.session_state.get(pdf_cache_key)
+                if pdf_bytes:
+                    import io as _io
+                    pdf_io = _io.BytesIO(pdf_bytes)
+
+                    # Analyse DPI (cache)
+                    dpi_cache_key = f"_dpi_analysis_{first_name}"
+                    if st.session_state.get(dpi_cache_key) is None:
+                        st.session_state[dpi_cache_key] = analyze_pdf_dpi(pdf_io)
+
+                    dpi_info = st.session_state[dpi_cache_key]
+
+                    if dpi_info:
+                        with st.expander("🔍 Parametres Vision (DPI & Apercu)", expanded=True):
+                            col_info, col_preview = st.columns([1, 1])
+
+                            with col_info:
+                                if not first_name.lower().endswith(".pdf"):
+                                    st.info(f"📄 **{first_name}** converti en PDF pour le mode vision.")
+                                st.markdown(f"**DPI selectionne (auto) :** `{dpi_info['auto_dpi']}`")
+                                st.markdown(
+                                    f"**Pages traitees :** {dpi_info['pages_processed']} / {dpi_info['num_pages']}"
+                                )
+                                st.markdown(f"**Tokens estimes (auto) :** `{dpi_info['total_tokens']:,}`")
+
+                                st.markdown("---")
+                                col_p1, col_p2 = st.columns(2)
+                                with col_p1:
+                                    if st.button("Standard (65 DPI)", width='stretch', key="dpi_preset_65"):
+                                        st.session_state["vision_dpi_slider"] = 65
+                                with col_p2:
+                                    if st.button("Haute res (80 DPI)", width='stretch', key="dpi_preset_80"):
+                                        st.session_state["vision_dpi_slider"] = 80
+
+                                user_dpi = st.slider(
+                                    "Ajuster le DPI",
+                                    min_value=50,
+                                    max_value=90,
+                                    value=st.session_state.get("vision_dpi_slider", dpi_info["auto_dpi"]),
+                                    step=1,
+                                    key="vision_dpi_slider",
+                                    help="Standard 65 DPI (~450 tokens/page). Haute resolution 80 DPI (schemas complexes).",
+                                )
+
+                                # Estimer les tokens pour le DPI choisi
+                                user_tokens = estimate_tokens_for_dpi(
+                                    dpi_info["page_sizes_pt"], user_dpi
+                                )
+                                budget = VISION_CONTEXT_WINDOW - 2000  # text_token_buffer
+
+                                if user_tokens > budget:
+                                    st.warning(
+                                        f"Tokens estimes : **{user_tokens:,}** (budget : {budget:,}). "
+                                        f"Certaines pages seront tronquees."
+                                    )
+                                else:
+                                    st.success(f"Tokens estimes : **{user_tokens:,}** / {budget:,}")
+
+                                if user_dpi != dpi_info["auto_dpi"]:
+                                    vision_dpi_override = user_dpi
+
+                            with col_preview:
+                                preview_dpi = user_dpi
+                                preview_page = 0
+                                if dpi_info["num_pages"] > 1:
+                                    preview_page = st.number_input(
+                                        "Page a previsualiser",
+                                        min_value=1,
+                                        max_value=dpi_info["num_pages"],
+                                        value=1,
+                                        key="vision_preview_page",
+                                    ) - 1
+
+                                pdf_io.seek(0)
+                                preview_img = render_page_preview(pdf_io, page_num=preview_page, dpi=preview_dpi)
+                                if preview_img:
+                                    st.image(
+                                        preview_img,
+                                        caption=f"Page {preview_page + 1} — {preview_dpi} DPI ({preview_img.width}x{preview_img.height} px)",
+                                        width='stretch',
+                                    )
+                                else:
+                                    st.info("Apercu non disponible pour cette page.")
+
+                        # Slider pages par chunk
+                        pages_per_chunk = st.slider(
+                            "Pages par chunk (vision)",
+                            min_value=1,
+                            max_value=20,
+                            value=st.session_state.get("vision_pages_per_chunk", 10),
+                            key="vision_pages_per_chunk",
+                            help="Nombre de pages groupées par chunk pour le traitement vision. "
+                                 "Moins de pages = plus de chunks mais plus précis.",
                         )
+                        # Estimation tokens par chunk
+                        if dpi_info and dpi_info.get("page_sizes_pt"):
+                            from processing.vision_processor import calculate_page_tokens
+                            current_dpi = vision_dpi_override or dpi_info["auto_dpi"]
+                            avg_tokens_per_page = sum(
+                                calculate_page_tokens(w, h, current_dpi)
+                                for w, h in dpi_info["page_sizes_pt"]
+                            ) / max(len(dpi_info["page_sizes_pt"]), 1)
+                            tokens_per_chunk = int(avg_tokens_per_page * pages_per_chunk)
+                            st.caption(f"~{tokens_per_chunk:,} tokens/chunk ({avg_tokens_per_page:.0f} tokens/page × {pages_per_chunk} pages)")
 
-            pdf_bytes = st.session_state.get(pdf_cache_key)
-            if pdf_bytes:
-                import io as _io
-                pdf_io = _io.BytesIO(pdf_bytes)
+        # ─── Extraire les stats et chunks ────────────────────────────────────────
+        files_key = "_".join(sorted(f.name for f in uploaded_files))
+        vision_dpi_param = vision_dpi_override or "auto"
+        vision_pages_chunk = st.session_state.get("vision_pages_per_chunk", 10)
+        current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_text_mode}_{vision_dpi_param}_{vision_pages_chunk}"
 
-                # Analyse DPI (cache)
-                dpi_cache_key = f"_dpi_analysis_{first_name}"
-                if st.session_state.get(dpi_cache_key) is None:
-                    st.session_state[dpi_cache_key] = analyze_pdf_dpi(pdf_io)
+        if st.session_state.pdf_stats is None or st.session_state.get("_last_params") != current_params:
+            with st.spinner("📄 Analyse et découpage des documents en cours..."):
+                # Si les fichiers ont changé, on recalcule les stats
+                if st.session_state.get("_last_files_key") != files_key:
+                    st.session_state.pdf_stats = get_text_stats_multiple(uploaded_files)
+                    increment_stats(documents=st.session_state.pdf_stats.get('num_documents', 1))
 
-                dpi_info = st.session_state[dpi_cache_key]
-
-                if dpi_info:
-                    with st.expander("🔍 Parametres Vision (DPI & Apercu)", expanded=True):
-                        col_info, col_preview = st.columns([1, 1])
-
-                        with col_info:
-                            if not first_name.lower().endswith(".pdf"):
-                                st.info(f"📄 **{first_name}** converti en PDF pour le mode vision.")
-                            st.markdown(f"**DPI selectionne (auto) :** `{dpi_info['auto_dpi']}`")
-                            st.markdown(
-                                f"**Pages traitees :** {dpi_info['pages_processed']} / {dpi_info['num_pages']}"
-                            )
-                            st.markdown(f"**Tokens estimes (auto) :** `{dpi_info['total_tokens']:,}`")
-
-                            st.markdown("---")
-                            col_p1, col_p2 = st.columns(2)
-                            with col_p1:
-                                if st.button("Standard (65 DPI)", width='stretch', key="dpi_preset_65"):
-                                    st.session_state["vision_dpi_slider"] = 65
-                            with col_p2:
-                                if st.button("Haute res (80 DPI)", width='stretch', key="dpi_preset_80"):
-                                    st.session_state["vision_dpi_slider"] = 80
-
-                            user_dpi = st.slider(
-                                "Ajuster le DPI",
-                                min_value=50,
-                                max_value=90,
-                                value=st.session_state.get("vision_dpi_slider", dpi_info["auto_dpi"]),
-                                step=1,
-                                key="vision_dpi_slider",
-                                help="Standard 65 DPI (~450 tokens/page). Haute resolution 80 DPI (schemas complexes).",
-                            )
-
-                            # Estimer les tokens pour le DPI choisi
-                            user_tokens = estimate_tokens_for_dpi(
-                                dpi_info["page_sizes_pt"], user_dpi
-                            )
-                            budget = VISION_CONTEXT_WINDOW - 2000  # text_token_buffer
-
-                            if user_tokens > budget:
-                                st.warning(
-                                    f"Tokens estimes : **{user_tokens:,}** (budget : {budget:,}). "
-                                    f"Certaines pages seront tronquees."
-                                )
-                            else:
-                                st.success(f"Tokens estimes : **{user_tokens:,}** / {budget:,}")
-
-                            if user_dpi != dpi_info["auto_dpi"]:
-                                vision_dpi_override = user_dpi
-
-                        with col_preview:
-                            preview_dpi = user_dpi
-                            preview_page = 0
-                            if dpi_info["num_pages"] > 1:
-                                preview_page = st.number_input(
-                                    "Page a previsualiser",
-                                    min_value=1,
-                                    max_value=dpi_info["num_pages"],
-                                    value=1,
-                                    key="vision_preview_page",
-                                ) - 1
-
-                            pdf_io.seek(0)
-                            preview_img = render_page_preview(pdf_io, page_num=preview_page, dpi=preview_dpi)
-                            if preview_img:
-                                st.image(
-                                    preview_img,
-                                    caption=f"Page {preview_page + 1} — {preview_dpi} DPI ({preview_img.width}x{preview_img.height} px)",
-                                    width='stretch',
-                                )
-                            else:
-                                st.info("Apercu non disponible pour cette page.")
-
-                    # Slider pages par chunk
-                    pages_per_chunk = st.slider(
-                        "Pages par chunk (vision)",
-                        min_value=1,
-                        max_value=20,
-                        value=st.session_state.get("vision_pages_per_chunk", 10),
-                        key="vision_pages_per_chunk",
-                        help="Nombre de pages groupées par chunk pour le traitement vision. "
-                             "Moins de pages = plus de chunks mais plus précis.",
-                    )
-                    # Estimation tokens par chunk
-                    if dpi_info and dpi_info.get("page_sizes_pt"):
-                        from processing.vision_processor import calculate_page_tokens
-                        current_dpi = vision_dpi_override or dpi_info["auto_dpi"]
-                        avg_tokens_per_page = sum(
-                            calculate_page_tokens(w, h, current_dpi)
-                            for w, h in dpi_info["page_sizes_pt"]
-                        ) / max(len(dpi_info["page_sizes_pt"]), 1)
-                        tokens_per_chunk = int(avg_tokens_per_page * pages_per_chunk)
-                        st.caption(f"~{tokens_per_chunk:,} tokens/chunk ({avg_tokens_per_page:.0f} tokens/page × {pages_per_chunk} pages)")
-
-    # ─── Extraire les stats et chunks ────────────────────────────────────────
-    files_key = "_".join(sorted(f.name for f in uploaded_files))
-    vision_dpi_param = vision_dpi_override or "auto"
-    vision_pages_chunk = st.session_state.get("vision_pages_per_chunk", 10)
-    current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_text_mode}_{vision_dpi_param}_{vision_pages_chunk}"
-
-    if st.session_state.pdf_stats is None or st.session_state.get("_last_params") != current_params:
-        with st.spinner("📄 Analyse et découpage des documents en cours..."):
-            # Si les fichiers ont changé, on recalcule les stats
-            if st.session_state.get("_last_files_key") != files_key:
-                st.session_state.pdf_stats = get_text_stats_multiple(uploaded_files)
-                increment_stats(documents=st.session_state.pdf_stats.get('num_documents', 1))
-
-            # Recalculer les chunks (changement de fichier OU de mode)
-            if vision_enabled:
-                vision_kwargs = {}
-                if vision_dpi_override:
-                    vision_kwargs["min_dpi"] = vision_dpi_override
-                    vision_kwargs["max_dpi"] = vision_dpi_override
-                if vision_text_mode:
-                    vision_kwargs["max_pages_per_chunk"] = vision_pages_chunk
-                    st.session_state.chunks = extract_and_chunk_multiple_vision_text(
-                        uploaded_files, **vision_kwargs
-                    )
+                # Recalculer les chunks (changement de fichier OU de mode)
+                if vision_enabled:
+                    vision_kwargs = {}
+                    if vision_dpi_override:
+                        vision_kwargs["min_dpi"] = vision_dpi_override
+                        vision_kwargs["max_dpi"] = vision_dpi_override
+                    if vision_text_mode:
+                        vision_kwargs["max_pages_per_chunk"] = vision_pages_chunk
+                        st.session_state.chunks = extract_and_chunk_multiple_vision_text(
+                            uploaded_files, **vision_kwargs
+                        )
+                    else:
+                        vision_kwargs["max_images_per_chunk"] = vision_pages_chunk
+                        st.session_state.chunks = extract_and_chunk_multiple_vision(
+                            uploaded_files, **vision_kwargs
+                        )
                 else:
-                    vision_kwargs["max_images_per_chunk"] = vision_pages_chunk
-                    st.session_state.chunks = extract_and_chunk_multiple_vision(
-                        uploaded_files, **vision_kwargs
+                    st.session_state.chunks = extract_and_chunk_multiple(
+                        uploaded_files, mode=read_mode, max_tokens=max_chunk_tokens
                     )
-            else:
-                st.session_state.chunks = extract_and_chunk_multiple(
-                    uploaded_files, mode=read_mode, max_tokens=max_chunk_tokens
-                )
 
-            st.session_state._last_files_key = files_key
-            st.session_state._last_params = current_params
+                st.session_state._last_files_key = files_key
+                st.session_state._last_params = current_params
 
-            # Reset les résultats précédents
-            st.session_state.quiz = None
-            st.session_state.exercises = None
-            _invalidate_download_cache()
+                # Reset les résultats précédents
+                st.session_state.quiz = None
+                st.session_state.exercises = None
+                _invalidate_download_cache()
 
+
+    # Fallback si pas de fichiers uploadés
+    chunks = st.session_state.chunks or []
     stats = st.session_state.pdf_stats
-    chunks = st.session_state.chunks
 
-    # Afficher les statistiques
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        render_stat_card(stats.get('num_documents', 1), "Documents")
-    with col2:
-        render_stat_card(stats['num_pages'], "Pages / Slides")
-    with col3:
-        render_stat_card(f"{stats['total_tokens']:,}", "Tokens total")
-    with col4:
-        render_stat_card(len(chunks), "Chunks")
-    with col5:
-        render_stat_card(stats['avg_tokens_per_page'], "Tokens / page-slide")
+    if stats and chunks:
+        # Afficher les statistiques
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            render_stat_card(stats.get('num_documents', 1), "Documents")
+        with col2:
+            render_stat_card(stats['num_pages'], "Pages / Slides")
+        with col3:
+            render_stat_card(f"{stats['total_tokens']:,}", "Tokens total")
+        with col4:
+            render_stat_card(len(chunks), "Chunks")
+        with col5:
+            render_stat_card(stats['avg_tokens_per_page'], "Tokens / page-slide")
 
-    # Détails par document (repliable)
-    if stats.get('per_document'):
-        with st.expander(f"📊 Détails par document ({stats['num_documents']} documents)"):
-            for doc_stats in stats['per_document']:
-                st.markdown(
-                    f"**📄 {doc_stats['name']}** — "
-                    f"{doc_stats['num_pages']} pages, "
-                    f"{doc_stats['total_tokens']:,} tokens"
-                )
+        # Détails par document (repliable)
+        if stats.get('per_document'):
+            with st.expander(f"📊 Détails par document ({stats['num_documents']} documents)"):
+                for doc_stats in stats['per_document']:
+                    st.markdown(
+                        f"**📄 {doc_stats['name']}** — "
+                        f"{doc_stats['num_pages']} pages, "
+                        f"{doc_stats['total_tokens']:,} tokens"
+                    )
 
-    st.divider()
+        st.divider()
 
     # ─── Helper pour afficher une ligne de notion ───────────────────────────────
 
@@ -2643,46 +2615,3 @@ elif app_mode == "💬 Mode libre (IA)":
             _invalidate_download_cache()
             st.rerun()
 
-elif _has_existing_data and app_mode == "📄 Depuis un document":
-    # Afficher les données existantes même sans fichiers uploadés
-    st.info("📄 Uploadez un document pour générer de nouvelles questions, ou consultez les données déjà générées ci-dessous.")
-
-    _exp_quiz = st.session_state.quiz
-    _exp_exercises = st.session_state.exercises
-
-    if _exp_quiz is not None:
-        st.markdown(f"### 📋 {len(_exp_quiz.questions)} question(s) en mémoire")
-        for i, q in enumerate(_exp_quiz.questions):
-            diff_label = q.difficulty_level or "moyen"
-            diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
-            with st.expander(f"{diff_emoji} **Q{i+1}.** {q.question}", expanded=(i < 3)):
-                render_difficulty_badge(diff_label)
-                for label, text in q.choices.items():
-                    is_correct = label in q.correct_answers
-                    icon = "✅" if is_correct else "⬜"
-                    st.markdown(f"**{icon} {label}.** {text}")
-                if q.explanation:
-                    st.info(f"💡 **Explication :** {q.explanation}")
-
-    if _exp_exercises:
-        st.markdown(f"### 🧮 {len(_exp_exercises)} exercice(s) en mémoire")
-        for i, ex in enumerate(_exp_exercises):
-            diff_label = ex.difficulty_level or "moyen"
-            diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(diff_label, "⬜")
-            with st.expander(f"{diff_emoji} **Exercice {i+1}**", expanded=(i < 2)):
-                st.markdown(ex.statement)
-                if ex.correction:
-                    st.info(f"💡 {ex.correction}")
-
-else:
-    # Message quand aucun document n'est uploadé (mode document)
-    st.markdown("""
-    <div style="text-align: center; padding: 4rem 2rem;">
-        <div style="font-size: 4rem; margin-bottom: 1rem;">📄</div>
-        <h2 style="color: #6c63ff; margin-bottom: 0.5rem;">Aucun document uploadé</h2>
-        <p style="color: #a0a0b8; max-width: 500px; margin: 0 auto;">
-            Uploadez un ou plusieurs fichiers (PDF, DOCX, ODT...) dans la barre latérale pour commencer à
-            générer des quizz et exercices automatiquement avec l'IA.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
