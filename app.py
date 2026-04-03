@@ -644,7 +644,7 @@ if uploaded_files:
                             data=html_content,
                             file_name="quizz_interactif.html",
                             mime="text/html",
-                            type="primary",
+                            # type="primary",
                             width='stretch',
                             key="exp_tab_quiz_html",
                         )
@@ -669,7 +669,7 @@ if uploaded_files:
                             data=html_ex,
                             file_name="exercices.html",
                             mime="text/html",
-                            type="primary",
+                            # type="primary",
                             width='stretch',
                             key="exp_tab_ex_html",
                         )
@@ -694,6 +694,7 @@ if uploaded_files:
                             data=combined_html,
                             file_name="quiz_exercices.html",
                             mime="text/html",
+                            type="primary",
                             width='stretch',
                             key="exp_tab_combined_html",
                         )
