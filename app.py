@@ -157,38 +157,42 @@ st.markdown("""
     div[data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f0f1a 0%, #1a1a2e 100%);
     }
+</style>
+""", unsafe_allow_html=True)
 
-    /* Bouton retour en haut */
+# ─── Bouton flottant « Retour en haut » ───────────────────────────────────────
+# st.components.v1.html injecte un vrai iframe avec accès au parent Streamlit.
+# Le scroll Streamlit se fait sur section.main, pas window.
+import streamlit.components.v1 as _components
+_components.html("""
+<style>
     #back-to-top-btn {
-        position: fixed;
-        bottom: 2rem;
-        right: 2rem;
-        z-index: 9999;
-        background: #6c63ff;
-        color: white;
-        border: none;
-        border-radius: 50%;
-        width: 3rem;
-        height: 3rem;
-        font-size: 1.2rem;
-        cursor: pointer;
+        position: fixed; bottom: 2rem; right: 2rem; z-index: 9999;
+        background: #6c63ff; color: white; border: none; border-radius: 50%;
+        width: 3rem; height: 3rem; font-size: 1.4rem; cursor: pointer;
         box-shadow: 0 4px 12px rgba(108,99,255,0.4);
-        display: none;
-        align-items: center;
-        justify-content: center;
+        display: none; align-items: center; justify-content: center;
         transition: background 0.2s, transform 0.2s;
     }
     #back-to-top-btn:hover { background: #5a52e0; transform: scale(1.1); }
-    #back-to-top-btn.visible { display: flex; }
 </style>
-<button id="back-to-top-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Retour en haut">↑</button>
+<button id="back-to-top-btn" title="Retour en haut">&#8593;</button>
 <script>
-    window.addEventListener('scroll', function() {
-        var btn = document.getElementById('back-to-top-btn');
-        if (btn) btn.classList.toggle('visible', window.scrollY > 300);
-    }, {passive: true});
+    // Trouver le conteneur scrollable de Streamlit (section.main ou son enfant direct)
+    var scrollContainer = window.parent.document.querySelector('section.main');
+    var btn = document.getElementById('back-to-top-btn');
+
+    if (scrollContainer && btn) {
+        scrollContainer.addEventListener('scroll', function() {
+            btn.style.display = scrollContainer.scrollTop > 300 ? 'flex' : 'none';
+        }, {passive: true});
+
+        btn.addEventListener('click', function() {
+            scrollContainer.scrollTo({top: 0, behavior: 'smooth'});
+        });
+    }
 </script>
-""", unsafe_allow_html=True)
+""", height=0)
 
 # ─── Header ─────────────────────────────────────────────────────────────────────
 
@@ -1136,11 +1140,11 @@ if uploaded_files:
                 key="quiz_persona_domain",
                 help="Choisissez un domaine DGFiP ou 'Personnalisé' pour un texte libre.",
             )
-            if _quiz_domain != "Personnalisé":
-                # Pré-remplir avec le persona du domaine sélectionné
+            if _quiz_domain != "Personnalisé" and st.session_state.get("_last_quiz_domain") != _quiz_domain:
+                # Domaine vient de changer — mettre à jour le persona ET la clé du widget
                 _domain_persona = get_persona_for_domain(_quiz_domain)
-                if st.session_state.quiz_persona != _domain_persona and st.session_state.get("_last_quiz_domain") != _quiz_domain:
-                    st.session_state.quiz_persona = _domain_persona
+                st.session_state.quiz_persona = _domain_persona
+                st.session_state["quiz_persona_text"] = _domain_persona
             st.session_state["_last_quiz_domain"] = _quiz_domain
             st.session_state.quiz_persona = st.text_area(
                 "Persona (éditable)",
@@ -1692,10 +1696,10 @@ if uploaded_files:
                 key="ex_persona_domain",
                 help="Choisissez un domaine DGFiP ou 'Personnalisé' pour un texte libre.",
             )
-            if _ex_domain != "Personnalisé":
+            if _ex_domain != "Personnalisé" and st.session_state.get("_last_ex_domain") != _ex_domain:
                 _ex_domain_persona = get_persona_for_domain(_ex_domain)
-                if st.session_state.exercise_persona != _ex_domain_persona and st.session_state.get("_last_ex_domain") != _ex_domain:
-                    st.session_state.exercise_persona = _ex_domain_persona
+                st.session_state.exercise_persona = _ex_domain_persona
+                st.session_state["ex_persona_text"] = _ex_domain_persona
             st.session_state["_last_ex_domain"] = _ex_domain
             st.session_state.exercise_persona = st.text_area(
                 "Persona (éditable)",
