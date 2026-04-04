@@ -8,10 +8,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 - **Support multi-documents** : Uploadez **plusieurs fichiers simultanément** et générez des questions couvrant l'ensemble des documents.
 - **Extraction multi-format** : Support des fichiers **PDF, DOCX, ODT, ODP, PPTX et TXT**.
-- **Extraction flexible** du texte :
-  - **Mode "Page par page / Slide par slide"** : Idéal pour conserver la référence précise des sources.
-  - **Mode "Par blocs de tokens"** : Permet d'analyser de longs contextes en continu (fenêtre glissante).
-- **Sélection dynamique du modèle** : Choisissez le modèle LLM directement depuis l'interface (récupération automatique via l'API).
+- **Chunking par blocs de tokens** : Analyse par blocs de 10 000 tokens par défaut avec chevauchement et marqueurs de pages.
 - **Génération multi-niveaux** :
   - Configurez simultanément le nombre de questions pour chaque niveau (**Facile**, **Moyen**, **Difficile**) en un seul run.
   - **Anti-doublons entre niveaux** : Les questions déjà générées sont passées en contexte lors des niveaux suivants, évitant les répétitions.
@@ -71,6 +68,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 - **Partage de quizz** : Après génération, créez une **session partagée** avec un code unique (ex: `K8S42X`).
 - **Page participant** : Les participants accèdent au quizz via `/quiz_session?code=...`, saisissent leur nom et répondent aux questions.
+- **Questions manquantes** : Les numéros des questions non remplies sont affichés en temps réel ; le bouton de soumission est désactivé tant que tout n'est pas répondu.
 - **Scoring côté serveur** : Les bonnes réponses ne sont jamais envoyées au client.
 - **Correction détaillée** : Chaque participant voit son score, les bonnes réponses et les explications après soumission.
 - **Mode Pool** : Le formateur génère un **pool de questions** (ex: 50). Chaque participant reçoit un **sous-ensemble** (ex: 20 questions) tiré proportionnellement par niveau de difficulté. Si le score est en dessous du seuil, un bouton "🔁 Réessayer avec de nouvelles questions" propose un nouveau sous-ensemble depuis les questions non encore vues.
@@ -85,15 +83,21 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 ### 🛠️ Ateliers Formateurs (Sessions de travail collaboratives)
 
-- **Brouillon partageable** : Créez un atelier avec un code unique — plusieurs formateurs peuvent co-éditer le même brouillon de quizz.
+- **Brouillon partageable** : Créez un atelier avec un code unique — plusieurs formateurs peuvent co-éditer le même brouillon de quizz et d'exercices.
 - **Accès** : Via la barre latérale "🛠️ Ateliers Formateurs" ou en ajoutant `?code=XXXXXX` à l'URL.
-- **Édition complète** : Chaque question est éditable (énoncé, choix, bonnes réponses, explication), réordonnable (⬆️/⬇️) et supprimable.
-- **Ajout manuel** : Formulaire pour ajouter des questions à la main dans l'atelier.
-- **Export vers atelier** : Depuis l'onglet Quizz principal, un bouton permet d'**exporter le quizz généré vers un atelier** (nouveau ou existant) pour continuer l'édition collaborative.
-- **Import depuis session** : Importez les questions d'une session étudiante existante dans l'atelier.
-- **Fusion d'ateliers** : Fusionnez le contenu de deux ateliers en un seul.
-- **Publication** : Publiez l'atelier comme une **session étudiante** (avec code participant) directement depuis l'interface.
+- **Interface en 4 onglets** : Questions / Exercices / Notions / Outils pour une navigation claire.
+- **Édition complète des questions** : Chaque question est éditable (énoncé, choix, bonnes réponses, explication, difficulté), réordonnable (⬆️/⬇️) et supprimable. Badges de difficulté, notion tags et infos source affichés comme dans l'app principale.
+- **Affichage complet des exercices** : Les exercices sont visibles et éditables par type (calcul/trou/cas_pratique) avec énoncé, réponses, sous-questions, code de vérification et correction.
+- **Onglet Notions** : Affichage groupé par catégorie/thème, toggle actif/inactif, édition (titre, description, catégorie, source document, pages), ajout manuel.
+- **Chat LLM par onglet** : Chaque onglet de contenu (Questions, Exercices, Notions) dispose d'un champ "💬 Modifier avec l'IA" — envoyez une instruction en langage naturel et le LLM modifie la liste complète.
+- **Ajout manuel** : Formulaires pour ajouter des questions, exercices et notions à la main.
+- **Auto-remplissage du code** : Après création d'un nouvel atelier depuis l'onglet Exports, le code est automatiquement rempli pour permettre l'export direct des exercices.
+- **Export vers atelier** : Depuis l'onglet Exports, exportez quiz, exercices ET notions (avec catégorie/thème, source, pages) vers un atelier (nouveau ou existant).
+- **Import depuis session** : Importez les questions, exercices et notions d'une session étudiante dans l'atelier (dédoublonnage par titre).
+- **Fusion d'ateliers** : Fusionnez le contenu (questions + exercices + notions) de deux ateliers en un seul.
+- **Publication** : Publiez l'atelier comme une **session étudiante** (avec code participant) directement depuis l'interface, avec option mode pool.
 - **Rafraîchissement** : Bouton "🔃 Rafraîchir" pour récupérer les modifications des collègues.
+- **Persistance des documents** : Les fichiers uploadés dans l'app principale sont conservés en cache quand on navigue vers l'atelier et qu'on revient.
 
 ### ❓ Guide Formateur
 
@@ -238,7 +242,7 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 ### Mode Document (depuis un fichier)
 
 1. **Upload** : Chargez un ou **plusieurs fichiers** (PDF, DOCX, ODT...) dans la barre latérale.
-2. **Configuration** : Ajustez le mode de lecture, la taille des chunks, et sélectionnez le modèle LLM.
+2. **Configuration** : Activez les options (batch, vision, thinking) si besoin.
 3. **Onglet Notions** : Détectez les notions fondamentales, regroupez les similaires, activez/désactivez, éditez par chat.
 4. **Onglet Quizz** :
    - Configurez le nombre de questions par niveau et le mode bonnes réponses (Fixe / Variable).
@@ -259,8 +263,11 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 1. Cliquez sur **"🛠️ Ateliers Formateurs"** dans la barre latérale.
 2. Créez un nouvel atelier (titre + votre nom) ou entrez un code existant.
 3. Partagez le code avec vos collègues.
-4. Éditez les questions, importez depuis une session ou fusionnez avec un autre atelier.
-5. Cliquez sur **"📤 Publier"** pour créer une session étudiante depuis le brouillon.
+4. **Onglet Questions** : Éditez les questions (badges, notions, monter/descendre, supprimer) + chat LLM "Modifier avec l'IA".
+5. **Onglet Exercices** : Visualisez et éditez les exercices (calcul/trou/cas_pratique) + chat LLM.
+6. **Onglet Notions** : Gérez les notions (catégorie/thème, source, toggle actif) + chat LLM.
+7. **Onglet Outils** : Importez depuis une session, fusionnez avec un autre atelier (questions + exercices + notions), consultez le diff.
+8. Cliquez sur **"📤 Publier"** pour créer une session étudiante depuis le brouillon.
 
 ### Sessions Partagées
 
@@ -272,10 +279,9 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 
 ## 🧠 Fonctionnement détaillé
 
-### 📏 Stratégies de Chunking
+### 📏 Chunking
 
-- **Page par page** : Chaque page est traitée comme une unité isolée. Plus précis pour l'attribution des sources.
-- **Par blocs de tokens (Défaut)** : Segments de taille fixe avec chevauchement et marqueurs `[Début Page X] ... [Fin Page X]`.
+- **Par blocs de tokens (10 000 par défaut)** : Segments de taille fixe avec chevauchement et marqueurs `[Début Page X] ... [Fin Page X]`. Taille ajustable.
 
 ### 🎯 Anti-doublons entre niveaux
 
@@ -315,10 +321,12 @@ Le module `generation/question_editor.py` envoie la question + l'instruction du 
 
 ```text
 generateur_de_quizz/
-├── app.py                        ← point d'entrée Streamlit
+├── app.py                        ← point d'entrée Streamlit (~2700 lignes)
 ├── pages/
-│   ├── quiz_session.py           ← page participant (quizz partagé / pool)
-│   └── work_session.py           ← page Atelier Formateurs (collaborative)
+│   ├── quiz_session.py           ← page participant (quizz partagé / pool / questions manquantes)
+│   ├── work_session.py           ← page Atelier Formateurs (4 onglets : Questions/Exercices/Notions/Outils, chat LLM)
+│   ├── shared_session.py         ← page Sessions Partagées (séparée de app.py)
+│   └── admin.py                  ← page admin gestion utilisateurs (désactivé temp.)
 ├── templates/quiz_template.html  ← template Jinja2 pour export HTML
 ├── shared_data/                  ← données persistantes (SQLite, stats JSON, cache LLM)
 ├── core/
@@ -326,10 +334,12 @@ generateur_de_quizz/
 │   ├── llm_cache.py              ← cache SHA256 avec LRU, TTL et persistence JSON
 │   ├── token_tracker.py          ← suivi des tokens LLM par appel
 │   ├── models.py                 ← modèles Pydantic v2 (validation JSON LLM)
+│   ├── personas.py               ← personas DGFiP par domaine + générique
+│   ├── auth.py                   ← auth SQLite PBKDF2 (désactivé temp.)
 │   └── stats_manager.py          ← statistiques globales (questions, docs, tokens, sessions)
 ├── processing/
 │   ├── document_processor.py     ← extraction texte multi-format + chunking
-│   └── vision_processor.py       ← rendu PDF→images via PyMuPDF
+│   └── vision_processor.py       ← rendu PDF→images via PyMuPDF, optimisation DPI
 ├── generation/
 │   ├── quiz_generator.py         ← génération QCM (anti-doublons, variable_correct, persona)
 │   ├── quiz_verifier.py          ← vérification IA des QCM, reformulation auto
@@ -338,13 +348,14 @@ generateur_de_quizz/
 │   ├── question_editor.py        ← amélioration LLM d'une question existante
 │   ├── notion_detector.py        ← détection, édition, fusion des notions
 │   ├── chat_mode.py              ← machine à états pour le mode libre
-│   └── batch_service.py          ← traitement par lots (ThreadPoolExecutor, retry par requête)
+│   ├── batch_service.py          ← traitement par lots (ThreadPoolExecutor, retry par requête)
+│   └── calc_agent.py             ← exécution Python sandboxée pour vérification calculs
 ├── export/
 │   └── quiz_exporter.py          ← export HTML/CSV (quiz, exercices, combiné)
 ├── sessions/
-│   ├── session_store.py          ← backend SQLite (sessions + exercices + ateliers)
+│   ├── session_store.py          ← backend SQLite (sessions + exercices + ateliers + pool)
 │   └── analytics.py              ← dashboard Plotly + recommandations IA
-├── tests/                        ← tests unitaires (pytest)
+├── tests/                        ← tests unitaires (pytest, 51 tests)
 │   ├── conftest.py               ← fixtures partagées
 │   ├── test_llm_cache.py
 │   ├── test_llm_service.py
@@ -353,7 +364,7 @@ generateur_de_quizz/
 │   ├── test_session_store.py
 │   └── test_quiz_exporter.py
 └── ui/
-    └── ui_components.py          ← badges, stat cards, guide tab
+    └── ui_components.py          ← badges, stat cards, composants réutilisables
 ```
 
 ## 📦 Dépendances principales
@@ -380,6 +391,67 @@ generateur_de_quizz/
 - **max_tokens** : Aucune limite de tokens de réponse n'est envoyée à l'API par défaut, permettant des réponses longues sans troncature.
 - **Qualité du contenu généré** : Tout contenu généré doit être relu et validé par un formateur avant utilisation pédagogique.
 - **Batch API** : Le toggle "Traitement par lots" nécessite que votre serveur supporte la route `/v1/batches`.
+
+---
+
+## 📋 Changelog
+
+### v3.2
+
+- Onglet Notions dans l'Atelier Formateur : affichage groupé par catégorie/thème, édition, toggle actif/inactif, ajout manuel
+- Chat LLM "Modifier avec l'IA" dans les 3 onglets de contenu de l'Atelier (Questions, Exercices, Notions)
+- Export notions enrichi vers atelier (catégorie, source document, pages) + bouton d'export dédié
+- Import/fusion : récupère aussi les notions (dédoublonnage par titre)
+
+### v3.1
+
+- Auto-remplissage du code atelier après création (export exercices direct)
+- Atelier Formateur refondu : 3 onglets (Questions/Exercices/Outils), affichage complet exercices, badges, notions, sources, édition inline
+- Persistance des documents uploadés entre les pages (cache session_state)
+- Quiz session : affichage des questions non remplies avec numéros, soumission bloquée si incomplet
+
+### v3.0
+
+- Génération cumulative des quiz et exercices (les questions s'ajoutent sans écraser)
+- Personas par domaine DGFiP (contrôle fiscal, contentieux, recouvrement, etc.)
+- Bouton Humour (réponse décalée)
+- Ajout/suppression manuelle de questions
+- Onglet Exports unifié (téléchargements + sessions + ateliers)
+- Sessions Partagées : page dédiée `/shared_session`
+- Analytics : fond blanc, sélection par nom ou code, recommandations IA
+- Système de login Admin/Formateur/Utilisateur (désactivé temp.)
+- Notions non couvertes mises en avant
+- Documentation du pipeline (Guide Formateur + assistant chatbot)
+- Suggestions par trou (1 à N indices IA)
+- Export combiné Quiz + Exercices (HTML + CSV)
+- Regroupement des exercices par type avec onglets
+- Historique des modifications (avant/après, reformulations IA)
+- Compteur de sessions dans les stats globales
+
+### v2
+
+- Mode Vision (Qwen3-VL) avec optimisation DPI automatique
+- 3 types d'exercices : Calcul / Trou / Cas pratique
+- Sessions pool avec sous-ensemble aléatoire et seuil de réussite
+- Ateliers Formateurs collaboratifs
+- Vérification IA des QCM et exercices (reformulation auto, max 3 tentatives)
+- Cache LLM SHA256 avec LRU + TTL + persistence JSON
+- Token tracking automatique
+- Traitement par lots (batch API) avec retry par requête
+- Raisonnement IA (enable_thinking) configurable
+- Validation Pydantic v2 des réponses JSON LLM
+- Agent de calcul scientifique pour auto-correction
+- Pages par chunk configurables en mode vision
+- Tests unitaires (51 tests)
+
+### v1
+
+- Extraction multi-format (PDF, DOCX, ODT, PPTX, TXT)
+- Génération QCM multi-niveaux avec anti-doublons
+- Export HTML interactif et CSV
+- Chunking par blocs de tokens
+- Mode libre (conversation IA sans document)
+- Détection et édition des notions fondamentales
 
 ## 📄 Licence
 

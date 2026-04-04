@@ -21,8 +21,8 @@ Instructions pour les agents IA travaillant sur ce projet.
 | 7 | `sessions/analytics.py` | 392 | Dashboard Plotly, sélecteur sessions, recommandations IA. **Lire en entier.** |
 | 8 | `export/quiz_exporter.py` | 516 | Export HTML/CSV quiz, exercices, combiné. **Lire en entier.** |
 | 9 | `processing/document_processor.py` | 850 | Extraction texte multi-format, chunking page/token, vision. **Lire en entier.** |
-| 10 | `pages/quiz_session.py` | 301 | Page participant quiz (pool, scoring). **Lire en entier.** |
-| 11 | `pages/work_session.py` | 388 | Page Atelier Formateurs. **Lire en entier.** |
+| 10 | `pages/quiz_session.py` | ~310 | Page participant quiz (pool, scoring, affichage questions manquantes). **Lire en entier.** |
+| 11 | `pages/work_session.py` | ~680 | Page Atelier Formateurs : 4 onglets Questions/Exercices/Notions/Outils, chat LLM par onglet, édition, import/fusion, publication. **Lire en entier.** |
 | 12 | `core/personas.py` | ~80 | Personas DGFiP par domaine + générique. **Lire en entier.** |
 | 13 | `core/auth.py` | ~120 | Auth SQLite PBKDF2 (désactivé temporairement). **Lire en entier.** |
 | 14 | `pages/shared_session.py` | ~150 | Page Sessions Partagées (séparée de app.py). **Lire en entier.** |
@@ -184,7 +184,7 @@ class User:
 |--------|---------|
 | 1-77 | Imports, st.set_page_config, auth gate (désactivé), CSS |
 | 178-230 | Initialisation session_state (18 variables) |
-| 232-456 | **Sidebar** : sessions toggle, page links, mode radio, file upload, paramètres lecture, options avancées (batch/vision/thinking), modèle LLM, session save/load, stats globales |
+| 232-456 | **Sidebar** : page links, mode radio, file upload (avec cache persistant entre pages), options avancées (batch/vision/thinking), modèle LLM, stats globales |
 | 457-714 | Traitement document : extraction, chunking, vision, DPI, aperçu |
 | 715 | **Tabs** : Notions, Quizz, Exercices, Aperçu texte, Guide |
 | 717-835 | Onglet Notions : détection, affichage, édition, fusion |
@@ -211,8 +211,8 @@ Application **Streamlit** de génération de quizz QCM et d'exercices à partir 
 generateur_de_quizz/
 ├── app.py                        ← point d'entrée Streamlit (racine obligatoire)
 ├── pages/
-│   ├── quiz_session.py           ← page participant (quizz partagé / pool)
-│   ├── work_session.py           ← page Atelier Formateurs (collaborative)
+│   ├── quiz_session.py           ← page participant (quizz partagé / pool, questions manquantes)
+│   ├── work_session.py           ← page Atelier Formateurs (4 onglets : Questions/Exercices/Notions/Outils, chat LLM)
 │   ├── shared_session.py         ← page Sessions Partagées (séparée de app.py)
 │   └── admin.py                  ← page admin gestion utilisateurs (désactivé)
 ├── templates/quiz_template.html  ← template Jinja2 pour export HTML
@@ -313,8 +313,16 @@ Les générations successives s'ajoutent aux exercices existants (`st.session_st
 ### Ateliers formateurs (work sessions)
 
 - Table `work_sessions` dans SQLite, accès via `work_session.py` (Streamlit multipage).
+- Interface en **4 onglets** : Questions / Exercices / Notions / Outils (diff, import, fusion, publication).
+- **Chat LLM** dans chaque onglet de contenu (Questions, Exercices, Notions) : instruction en langage naturel → le LLM modifie la liste complète.
+- Onglet Notions : affichage groupé par catégorie/thème, toggle actif/inactif, édition (titre, description, catégorie, source), ajout manuel.
+- Export notions enrichi (`category`, `source_document`, `source_pages`) + bouton d'export dédié dans app.py.
+- Affichage complet des exercices par type (calcul/trou/cas_pratique) avec badges, notions, sources, édition inline.
+- Questions réordonnables (monter/descendre), supprimables, éditables (difficulté incluse).
+- Import/fusion depuis sessions et ateliers : récupère questions, exercices **et notions** (dédoublonnage par titre).
 - Modèle de concurrence simple : "dernier à sauvegarder gagne" — `update_work_session_draft()` est atomique + horodaté.
 - `publish_work_session()` crée une `QuizSession` étudiante depuis le brouillon.
+- **Auto-remplissage** : après création d'un atelier depuis l'onglet Exports, le code est auto-rempli dans le champ `export_ws_code` pour permettre l'export direct des exercices.
 
 ### Changelog des questions
 
@@ -334,6 +342,9 @@ Les générations successives s'ajoutent aux exercices existants (`st.session_st
 - **Accumulation quiz** : les générations s'ajoutent au quiz existant (bouton Réinit. pour remettre à zéro).
 - **Notions manquantes** : bouton dédié "🎯 Notions manquantes" pour générer uniquement sur les notions non couvertes.
 - **Auth** : système login/rôles désactivé temporairement (code commenté dans app.py, work_session.py).
+- **Persistance documents** : les fichiers uploadés sont cachés dans `session_state["_uploaded_files_cache"]` (bytes + noms) pour survivre à la navigation entre pages.
+- **Quiz session** : les questions non remplies sont affichées par numéro dans un warning, bouton de soumission désactivé tant que tout n'est pas répondu.
+- **Tag version** : popover `v3.1` en haut de page avec changelog complet (v1 → v2 → v3.0 → v3.1).
 
 ### Sécurité
 

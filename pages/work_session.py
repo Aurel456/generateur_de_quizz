@@ -15,6 +15,7 @@ from sessions.session_store import (
     publish_work_session, list_work_sessions,
 )
 from ui.ui_components import render_difficulty_badge, render_source_info
+from core.llm_service import call_llm_json
 
 st.set_page_config(
     page_title="Atelier Formateurs",
@@ -62,6 +63,8 @@ if "ws_editing_idx" not in st.session_state:
     st.session_state.ws_editing_idx = None
 if "ws_editing_ex_idx" not in st.session_state:
     st.session_state.ws_editing_ex_idx = None
+if "ws_editing_notion_idx" not in st.session_state:
+    st.session_state.ws_editing_notion_idx = None
 if "ws_last_refresh" not in st.session_state:
     st.session_state.ws_last_refresh = 0.0
 
@@ -133,6 +136,7 @@ if not ws:
 quiz_data = json.loads(ws.draft_quiz_json)
 questions = quiz_data.get("questions", [])
 exercises = json.loads(ws.draft_exercises_json or "[]")
+notions = json.loads(ws.draft_notions_json or "[]")
 
 # ─── En-tête de l'atelier ────────────────────────────────────────────────────
 
@@ -140,7 +144,7 @@ col_h1, col_h2 = st.columns([5, 2])
 with col_h1:
     st.markdown(f"## 📝 {ws.title}")
     st.caption(
-        f"Code : `{ws.work_code}` · {len(questions)} question(s) · {len(exercises)} exercice(s) · "
+        f"Code : `{ws.work_code}` · {len(questions)} question(s) · {len(exercises)} exercice(s) · {len(notions)} notion(s) · "
         f"Dernière modification : {ws.last_modified[:16].replace('T', ' ')} par **{ws.owner_name or '?'}**"
     )
 with col_h2:
@@ -312,9 +316,10 @@ def _render_ws_exercise(idx, ex, exercises_list, ws, quiz_data, editor_name):
 
 # ─── Onglets Questions / Exercices ───────────────────────────────────────────
 
-tab_quiz, tab_exercises, tab_tools = st.tabs([
+tab_quiz, tab_exercises, tab_notions, tab_tools = st.tabs([
     f"📋 Questions ({len(questions)})",
     f"🧮 Exercices ({len(exercises)})",
+    f"📚 Notions ({len(notions)})",
     "🔧 Outils",
 ])
 
@@ -447,6 +452,48 @@ with tab_quiz:
             update_work_session_draft(ws.work_code, quiz_data, editor_name or "?")
             st.rerun()
 
+    # ─── Chat LLM pour modifier les questions ────────────────────────────────
+    if questions:
+        st.divider()
+        st.markdown("#### 💬 Modifier les questions avec l'IA")
+        st.caption("Ex: *'Reformule la question 3'*, *'Ajoute une explication à la question 1'*, *'Rends la question 5 plus difficile'*")
+        ws_q_llm = st.text_input("Votre instruction", key="ws_q_llm_input", placeholder="Décrivez la modification…")
+        if st.button("💬 Envoyer au LLM", key="ws_q_llm_btn") and ws_q_llm:
+            with st.spinner("🧠 Modification des questions en cours…"):
+                try:
+                    q_text = ""
+                    for i, q in enumerate(questions, 1):
+                        choices_str = ", ".join(f"{k}: {v}" for k, v in q.get("choices", {}).items())
+                        q_text += (
+                            f"{i}. [{q.get('difficulty_level', 'moyen')}] {q.get('question', '')}\n"
+                            f"   Choix: {choices_str}\n"
+                            f"   Réponse(s): {q.get('correct_answers', [])}\n"
+                            f"   Explication: {q.get('explanation', '')}\n"
+                            f"   Notions: {q.get('related_notions', [])}\n\n"
+                        )
+                    _sys = (
+                        "Tu es un assistant pédagogique. L'utilisateur te donne une liste de questions QCM "
+                        "et une instruction pour les modifier.\n\n"
+                        "Tu dois retourner la liste COMPLÈTE des questions après modification.\n\n"
+                        "FORMAT DE RÉPONSE (JSON strict) :\n"
+                        '{"questions": [{"question": "…", "choices": {"A": "…", "B": "…", "C": "…", "D": "…"}, '
+                        '"correct_answers": ["A"], "explanation": "…", "difficulty_level": "facile|moyen|difficile", '
+                        '"related_notions": [], "source_pages": [], "source_document": "", "citation": ""}], '
+                        '"explanation": "Explication de ce qui a été modifié"}'
+                    )
+                    _usr = f"Voici les questions actuelles :\n\n{q_text}\nINSTRUCTION : {ws_q_llm}\n\nApplique cette instruction et retourne la liste complète mise à jour."
+                    result = call_llm_json(_sys, _usr, temperature=0.3)
+                    updated_qs = result.get("questions", [])
+                    if updated_qs:
+                        quiz_data["questions"] = updated_qs
+                        update_work_session_draft(ws.work_code, quiz_data, editor_name or "?")
+                        st.success(f"✅ {result.get('explanation', 'Questions mises à jour.')}")
+                        st.rerun()
+                    else:
+                        st.warning("Le LLM n'a retourné aucune question.")
+                except Exception as e:
+                    st.error(f"❌ Erreur : {e}")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ONGLET EXERCICES
@@ -518,6 +565,235 @@ with tab_exercises:
                 exercises_data=[],
             )
             st.rerun()
+
+    # ─── Chat LLM pour modifier les exercices ────────────────────────────────
+    if exercises:
+        st.divider()
+        st.markdown("#### 💬 Modifier les exercices avec l'IA")
+        st.caption("Ex: *'Simplifie l'exercice 2'*, *'Ajoute des étapes de résolution à l'exercice 1'*, *'Rends l'exercice 3 plus difficile'*")
+        ws_ex_llm = st.text_input("Votre instruction", key="ws_ex_llm_input", placeholder="Décrivez la modification…")
+        if st.button("💬 Envoyer au LLM", key="ws_ex_llm_btn") and ws_ex_llm:
+            with st.spinner("🧠 Modification des exercices en cours…"):
+                try:
+                    ex_text = ""
+                    for i, ex in enumerate(exercises, 1):
+                        ex_text += (
+                            f"{i}. [{ex.get('exercise_type', 'calcul')}] [{ex.get('difficulty_level', 'moyen')}]\n"
+                            f"   Énoncé: {ex.get('statement', '')}\n"
+                            f"   Réponse attendue: {ex.get('expected_answer', '')}\n"
+                            f"   Correction: {ex.get('correction', '')}\n"
+                            f"   Notions: {ex.get('related_notions', [])}\n\n"
+                        )
+                    _sys = (
+                        "Tu es un assistant pédagogique. L'utilisateur te donne une liste d'exercices "
+                        "et une instruction pour les modifier.\n\n"
+                        "Tu dois retourner la liste COMPLÈTE des exercices après modification.\n"
+                        "Conserve TOUS les champs existants de chaque exercice.\n\n"
+                        "FORMAT DE RÉPONSE (JSON strict) :\n"
+                        '{"exercises": [{"statement": "…", "expected_answer": "…", "steps": [], '
+                        '"correction": "…", "verification_code": "", "verified": false, '
+                        '"source_pages": [], "source_document": "", "citation": "", '
+                        '"difficulty_level": "facile|moyen|difficile", "related_notions": [], '
+                        '"exercise_type": "calcul|trou|cas_pratique", "blanks": [], "sub_questions": []}], '
+                        '"explanation": "Explication de ce qui a été modifié"}'
+                    )
+                    _usr = f"Voici les exercices actuels :\n\n{ex_text}\nINSTRUCTION : {ws_ex_llm}\n\nApplique cette instruction et retourne la liste complète mise à jour."
+                    result = call_llm_json(_sys, _usr, temperature=0.3)
+                    updated_exs = result.get("exercises", [])
+                    if updated_exs:
+                        update_work_session_draft(
+                            ws.work_code, quiz_data, editor_name or "?",
+                            exercises_data=updated_exs,
+                        )
+                        st.success(f"✅ {result.get('explanation', 'Exercices mis à jour.')}")
+                        st.rerun()
+                    else:
+                        st.warning("Le LLM n'a retourné aucun exercice.")
+                except Exception as e:
+                    st.error(f"❌ Erreur : {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ONGLET NOTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_notions:
+    if not notions:
+        st.info("Aucune notion dans ce brouillon. Exportez des notions depuis l'app principale ou ajoutez-en manuellement.")
+
+    active_count = sum(1 for n in notions if n.get("enabled", True))
+    if notions:
+        st.markdown(f"**{len(notions)} notion(s)** — {active_count} active(s)")
+
+    # Grouper par catégorie
+    from collections import defaultdict
+    notions_by_cat = defaultdict(list)
+    for idx, notion in enumerate(notions):
+        cat = notion.get("category", "") or "Général"
+        notions_by_cat[cat].append((idx, notion))
+
+    for cat, cat_notions in notions_by_cat.items():
+        if len(notions_by_cat) > 1:
+            st.markdown(f"#### 🏷️ {cat}")
+
+        for idx, notion in cat_notions:
+            is_editing = (st.session_state.ws_editing_notion_idx == idx)
+            enabled = notion.get("enabled", True)
+            enabled_icon = "✅" if enabled else "⬜"
+            title = notion.get("title", "Sans titre")
+
+            with st.expander(f"{enabled_icon} {title}", expanded=is_editing):
+                if is_editing:
+                    # ── Mode édition notion ──────────────────────────────
+                    edit_title = st.text_input("Titre", value=title, key=f"ws_n_title_{idx}")
+                    edit_desc = st.text_area("Description", value=notion.get("description", ""), key=f"ws_n_desc_{idx}", height=100)
+                    edit_cat = st.text_input("Catégorie / Thème", value=notion.get("category", ""), key=f"ws_n_cat_{idx}")
+                    edit_enabled = st.checkbox("Active", value=enabled, key=f"ws_n_enabled_{idx}")
+                    edit_src_doc = st.text_input("Document source", value=notion.get("source_document", ""), key=f"ws_n_srcdoc_{idx}")
+                    edit_src_pages_str = st.text_input(
+                        "Pages sources (séparées par des virgules)",
+                        value=", ".join(str(p) for p in notion.get("source_pages", [])),
+                        key=f"ws_n_srcpages_{idx}",
+                    )
+
+                    col_s, col_c, col_d = st.columns([2, 2, 1])
+                    with col_s:
+                        if st.button("💾 Sauvegarder", key=f"ws_n_save_{idx}", type="primary"):
+                            parsed_pages = []
+                            for p in edit_src_pages_str.split(","):
+                                p = p.strip()
+                                if p.isdigit():
+                                    parsed_pages.append(int(p))
+                            notions[idx] = {
+                                **notion,
+                                "title": edit_title,
+                                "description": edit_desc,
+                                "category": edit_cat,
+                                "enabled": edit_enabled,
+                                "source_document": edit_src_doc,
+                                "source_pages": parsed_pages,
+                            }
+                            update_work_session_draft(
+                                ws.work_code, quiz_data, editor_name or "?",
+                                notions,
+                            )
+                            st.session_state.ws_editing_notion_idx = None
+                            st.rerun()
+                    with col_c:
+                        if st.button("✖️ Annuler", key=f"ws_n_cancel_{idx}"):
+                            st.session_state.ws_editing_notion_idx = None
+                            st.rerun()
+                    with col_d:
+                        if st.button("🗑️", key=f"ws_n_del_{idx}", help="Supprimer"):
+                            notions.pop(idx)
+                            update_work_session_draft(
+                                ws.work_code, quiz_data, editor_name or "?",
+                                notions,
+                            )
+                            st.session_state.ws_editing_notion_idx = None
+                            st.rerun()
+                else:
+                    # ── Mode lecture notion ───────────────────────────────
+                    st.markdown(notion.get("description", ""))
+
+                    if notion.get("category"):
+                        st.markdown(f'🏷️ <span class="notion-tag">{notion["category"]}</span>', unsafe_allow_html=True)
+
+                    src_doc = notion.get("source_document", "")
+                    src_pages = notion.get("source_pages", [])
+                    if src_doc or src_pages:
+                        parts = []
+                        if src_doc:
+                            parts.append(f"📄 {src_doc}")
+                        if src_pages:
+                            parts.append(f"p. {', '.join(str(p) for p in src_pages)}")
+                        st.caption(" · ".join(parts))
+
+                    col_toggle, col_edit = st.columns([1, 1])
+                    with col_toggle:
+                        new_enabled = st.checkbox("Active", value=enabled, key=f"ws_n_toggle_{idx}")
+                        if new_enabled != enabled:
+                            notions[idx]["enabled"] = new_enabled
+                            update_work_session_draft(
+                                ws.work_code, quiz_data, editor_name or "?",
+                                notions,
+                            )
+                            st.rerun()
+                    with col_edit:
+                        if st.button("✏️ Éditer", key=f"ws_n_edit_{idx}"):
+                            st.session_state.ws_editing_notion_idx = idx
+                            st.rerun()
+
+    # ─── Ajout manuel de notion ──────────────────────────────────────────────
+    st.divider()
+    with st.expander("➕ Ajouter une notion manuellement"):
+        new_n_title = st.text_input("Titre de la notion", key="ws_new_n_title")
+        new_n_desc = st.text_area("Description", key="ws_new_n_desc", height=80)
+        new_n_cat = st.text_input("Catégorie / Thème", key="ws_new_n_cat")
+
+        if st.button("Ajouter la notion", disabled=not new_n_title, key="ws_add_notion_btn"):
+            notions.append({
+                "title": new_n_title,
+                "description": new_n_desc,
+                "enabled": True,
+                "category": new_n_cat,
+                "source_document": "",
+                "source_pages": [],
+            })
+            update_work_session_draft(
+                ws.work_code, quiz_data, editor_name or "?",
+                notions,
+            )
+            st.rerun()
+
+    if notions:
+        st.divider()
+        if st.button("🗑️ Effacer toutes les notions", key="ws_clear_all_notions"):
+            update_work_session_draft(
+                ws.work_code, quiz_data, editor_name or "?",
+                [],
+            )
+            st.rerun()
+
+    # ─── Chat LLM pour modifier les notions ──────────────────────────────────
+    if notions:
+        st.divider()
+        st.markdown("#### 💬 Modifier les notions avec l'IA")
+        st.caption("Ex: *'Ajoute une notion sur les dérivées partielles'*, *'Fusionne les notions 2 et 3'*, *'Reformule la notion 1'*")
+        ws_notion_llm = st.text_input("Votre instruction", key="ws_notion_llm_input", placeholder="Décrivez la modification…")
+        if st.button("💬 Envoyer au LLM", key="ws_notion_llm_btn") and ws_notion_llm:
+            with st.spinner("🧠 Modification des notions en cours…"):
+                try:
+                    notions_text = ""
+                    for i, n in enumerate(notions, 1):
+                        status = "✅ activée" if n.get("enabled", True) else "❌ désactivée"
+                        cat = n.get("category", "")
+                        cat_str = f" [Catégorie: {cat}]" if cat else ""
+                        notions_text += (
+                            f"{i}. [{status}]{cat_str} **{n.get('title', '')}**\n"
+                            f"   Description : {n.get('description', '')}\n"
+                            f"   Source : {n.get('source_document', '')}, pages {n.get('source_pages', [])}\n\n"
+                        )
+                    _sys = (
+                        "Tu es un assistant pédagogique. L'utilisateur te donne une liste de notions fondamentales "
+                        "et une instruction pour les modifier.\n\n"
+                        "Tu dois retourner la liste COMPLÈTE des notions après modification.\n\n"
+                        "FORMAT DE RÉPONSE (JSON strict) :\n"
+                        '{"notions": [{"title": "…", "description": "…", "category": "…", '
+                        '"source_document": "…", "source_pages": [], "enabled": true}], '
+                        '"explanation": "Explication de ce qui a été modifié"}'
+                    )
+                    _usr = f"Voici les notions actuelles :\n\n{notions_text}\nINSTRUCTION : {ws_notion_llm}\n\nApplique cette instruction et retourne la liste complète mise à jour."
+                    result = call_llm_json(_sys, _usr, temperature=0.3)
+                    updated = result.get("notions", [])
+                    if updated:
+                        update_work_session_draft(ws.work_code, quiz_data, editor_name or "?", updated)
+                        st.success(f"✅ {result.get('explanation', 'Notions mises à jour.')}")
+                        st.rerun()
+                    else:
+                        st.warning("Le LLM n'a retourné aucune notion.")
+                except Exception as e:
+                    st.error(f"❌ Erreur : {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -592,16 +868,25 @@ with tab_tools:
                 if source_session.pool_json:
                     imported_qs = json.loads(source_session.pool_json)
                 imported_exs = json.loads(source_session.exercises_json or "[]")
-                if not imported_qs and not imported_exs:
-                    st.warning("Cette session ne contient aucune question ni exercice.")
+                imported_notions = json.loads(source_session.notions_json or "[]")
+                if not imported_qs and not imported_exs and not imported_notions:
+                    st.warning("Cette session ne contient aucune question, exercice ni notion.")
                 else:
                     if imported_qs:
                         questions.extend(imported_qs)
                         quiz_data["questions"] = questions
                     if imported_exs:
                         exercises.extend(imported_exs)
+                    new_notions_data = None
+                    if imported_notions:
+                        existing_titles = {n.get("title") for n in notions}
+                        new_ns = [n for n in imported_notions if n.get("title") not in existing_titles]
+                        if new_ns:
+                            notions.extend(new_ns)
+                            new_notions_data = notions
                     update_work_session_draft(
                         ws.work_code, quiz_data, editor_name or "?",
+                        new_notions_data,
                         exercises_data=exercises if imported_exs else None,
                     )
                     parts = []
@@ -609,6 +894,8 @@ with tab_tools:
                         parts.append(f"{len(imported_qs)} question(s)")
                     if imported_exs:
                         parts.append(f"{len(imported_exs)} exercice(s)")
+                    if imported_notions:
+                        parts.append(f"{len(new_ns) if new_notions_data else 0} notion(s)")
                     st.success(f"✅ {' et '.join(parts)} importés.")
                     st.rerun()
 
@@ -622,16 +909,25 @@ with tab_tools:
                 merge_data = json.loads(merge_ws.draft_quiz_json)
                 merge_qs = merge_data.get("questions", [])
                 merge_exs = json.loads(merge_ws.draft_exercises_json or "[]")
-                if not merge_qs and not merge_exs:
-                    st.warning("Cet atelier ne contient aucune question ni exercice.")
+                merge_ns = json.loads(merge_ws.draft_notions_json or "[]")
+                if not merge_qs and not merge_exs and not merge_ns:
+                    st.warning("Cet atelier ne contient aucune question, exercice ni notion.")
                 else:
                     if merge_qs:
                         questions.extend(merge_qs)
                         quiz_data["questions"] = questions
                     if merge_exs:
                         exercises.extend(merge_exs)
+                    merged_notions_data = None
+                    if merge_ns:
+                        existing_titles = {n.get("title") for n in notions}
+                        new_ns = [n for n in merge_ns if n.get("title") not in existing_titles]
+                        if new_ns:
+                            notions.extend(new_ns)
+                            merged_notions_data = notions
                     update_work_session_draft(
                         ws.work_code, quiz_data, editor_name or "?",
+                        merged_notions_data,
                         exercises_data=exercises if merge_exs else None,
                     )
                     parts = []
@@ -639,6 +935,8 @@ with tab_tools:
                         parts.append(f"{len(merge_qs)} question(s)")
                     if merge_exs:
                         parts.append(f"{len(merge_exs)} exercice(s)")
+                    if merge_ns:
+                        parts.append(f"{len(new_ns) if merged_notions_data else 0} notion(s)")
                     st.success(f"✅ {' et '.join(parts)} fusionnés depuis l'atelier {merge_code.strip().upper()}.")
                     st.rerun()
 

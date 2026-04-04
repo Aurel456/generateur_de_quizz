@@ -171,22 +171,59 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.popover("🏷️ v3.0"):
+with st.popover("🏷️ v3.2"):
     st.markdown("""
-**Nouveautés v3.0 :**
-- Génération cumulative des quiz (les questions s'ajoutent)
-- Personas par domaine DGFiP (contrôle fiscal, contentieux, etc.)
-- Bouton Humour pour les quiz
-- Ajout/suppression manuelle de questions
-- Onglet Exports unifié (téléchargements + sessions + ateliers)
-- Sessions Partagées : page dédiée `/shared_session`
-- Analytics : fond blanc, sélection par nom ou code
-- Système de login (Admin / Formateur / Utilisateur)
-- Notions non couvertes mises en avant
-- Documentation du pipeline de génération
+**Nouveautés v3.2 :**
+- Onglet Notions dans l'Atelier Formateur : affichage par catégorie/thème, édition, ajout manuel
+- Chat LLM "Modifier avec l'IA" dans les 3 onglets de contenu de l'Atelier (Questions, Exercices, Notions)
+- Export notions enrichi vers atelier (catégorie, source, pages) + bouton d'export dédié
+- Import/fusion : récupère aussi les notions (dédoublonnage par titre)
 
-**Rappel v2 :**
-- Mode Vision (Qwen3-VL), 3 types d'exercices, sessions pool, ateliers formateurs, vérification IA, cache LLM, token tracking
+**v3.1 :**
+- Auto-remplissage du code atelier après création (export exercices direct)
+- Atelier Formateur refondu : onglets Questions/Exercices/Outils, affichage complet des exercices, badges, notions, sources, boutons monter/descendre
+- Persistance des documents uploadés entre les pages (cache session)
+- Quiz session : affichage des questions non remplies avec numéros
+
+**v3.0 :**
+- Génération cumulative des quiz et exercices (les questions s'ajoutent)
+- Personas par domaine DGFiP (contrôle fiscal, contentieux, recouvrement, etc.)
+- Bouton Humour pour les quiz (réponse décalée)
+- Ajout/suppression manuelle de questions
+- Onglet Exports unifié (téléchargements + sessions + ateliers) remonté en 1er onglet
+- Sessions Partagées : page dédiée `/shared_session`
+- Analytics : fond blanc, sélection par nom ou code, recommandations IA
+- Système de login Admin/Formateur/Utilisateur (désactivé temp.)
+- Notions non couvertes mises en avant (bouton "Notions manquantes")
+- Documentation du pipeline (Guide Formateur + assistant chatbot)
+- Suggestions par trou (1 à N indices IA)
+- Export combiné Quiz + Exercices (HTML + CSV)
+- Regroupement des exercices par type avec onglets
+- Historique des modifications (avant/après, reformulations IA)
+- Compteur de sessions dans les stats globales
+
+**v2 :**
+- Mode Vision (Qwen3-VL) avec optimisation DPI automatique
+- 3 types d'exercices : Calcul / Trou / Cas pratique
+- Sessions pool avec sous-ensemble aléatoire et seuil de réussite
+- Ateliers Formateurs collaboratifs
+- Vérification IA des QCM et exercices (reformulation auto, max 3 tentatives)
+- Cache LLM SHA256 avec LRU + TTL + persistence JSON
+- Token tracking automatique
+- Traitement par lots (batch API) avec retry par requête
+- Raisonnement IA (enable_thinking) configurable
+- Validation Pydantic v2 des réponses JSON LLM
+- Agent de calcul scientifique pour auto-correction
+- Pages par chunk configurables en mode vision
+- Tests unitaires (51 tests)
+
+**v1 :**
+- Extraction multi-format (PDF, DOCX, ODT, PPTX, TXT)
+- Génération QCM multi-niveaux avec anti-doublons
+- Export HTML interactif et CSV
+- Chunking par blocs de tokens
+- Mode libre (conversation IA sans document)
+- Détection et édition des notions fondamentales
 """)
 
 with st.expander("ℹ️ Comment fonctionne cet outil ?", expanded=False):
@@ -791,7 +828,9 @@ if app_mode == "📄 Depuis un document":
                         notions_data = []
                         if st.session_state.notions:
                             notions_data = [
-                                {"title": n.title, "description": n.description, "enabled": n.enabled}
+                                {"title": n.title, "description": n.description, "enabled": n.enabled,
+                                 "category": getattr(n, "category", ""), "source_document": getattr(n, "source_document", ""),
+                                 "source_pages": getattr(n, "source_pages", [])}
                                 for n in st.session_state.notions
                             ]
                         exercises_data = None
@@ -832,6 +871,7 @@ if app_mode == "📄 Depuis un document":
 
             ws_target = st.text_input(
                 "Code de l'atelier (vide = créer un nouvel atelier)",
+                value=st.session_state.get("_ws_created_code", ""),
                 key="export_ws_code", placeholder="Ex: K8S42X",
             )
             ws_owner = st.text_input("Votre nom", key="export_ws_owner", placeholder="Formateur")
@@ -854,7 +894,9 @@ if app_mode == "📄 Depuis un document":
                     notions_export = []
                     if st.session_state.notions:
                         notions_export = [
-                            {"title": n.title, "description": n.description, "enabled": n.enabled}
+                            {"title": n.title, "description": n.description, "enabled": n.enabled,
+                             "category": getattr(n, "category", ""), "source_document": getattr(n, "source_document", ""),
+                             "source_pages": getattr(n, "source_pages", [])}
                             for n in st.session_state.notions
                         ]
                     try:
@@ -872,10 +914,9 @@ if app_mode == "📄 Depuis un document":
                                 st.success(f"✅ {len(_exp_quiz.questions)} question(s) ajoutées à l'atelier **{ws_target.strip().upper()}** ({len(existing_qs)} total)")
                         else:
                             ws_obj = create_work_session(quiz_data_export, notions_export, _exp_quiz.title, owner_name=ws_owner or "?")
-                            st.session_state["export_ws_code"] = ws_obj.work_code
+                            st.session_state["_ws_created_code"] = ws_obj.work_code
                             st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
                             st.code(f"Code atelier : {ws_obj.work_code}", language=None)
-                            st.rerun()
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 
@@ -895,7 +936,9 @@ if app_mode == "📄 Depuis un document":
                     notions_export = []
                     if st.session_state.notions:
                         notions_export = [
-                            {"title": n.title, "description": n.description, "enabled": n.enabled}
+                            {"title": n.title, "description": n.description, "enabled": n.enabled,
+                             "category": getattr(n, "category", ""), "source_document": getattr(n, "source_document", ""),
+                             "source_pages": getattr(n, "source_pages", [])}
                             for n in st.session_state.notions
                         ]
                     try:
@@ -923,10 +966,48 @@ if app_mode == "📄 Depuis un document":
                                 owner_name=ws_owner or "?",
                                 exercises_data=exercises_data_ws,
                             )
-                            st.session_state["export_ws_code"] = ws_obj.work_code
+                            st.session_state["_ws_created_code"] = ws_obj.work_code
                             st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
                             st.code(f"Code atelier : {ws_obj.work_code}", language=None)
-                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+            if st.session_state.notions:
+                if st.button("📚 Exporter les notions vers l'atelier", key="notions_export_to_ws"):
+                    notions_export = [
+                        {"title": n.title, "description": n.description, "enabled": n.enabled,
+                         "category": getattr(n, "category", ""), "source_document": getattr(n, "source_document", ""),
+                         "source_pages": getattr(n, "source_pages", [])}
+                        for n in st.session_state.notions
+                    ]
+                    try:
+                        if ws_target.strip():
+                            existing_ws = get_work_session(ws_target.strip().upper())
+                            if existing_ws is None:
+                                st.error(f"Atelier introuvable : {ws_target}")
+                            else:
+                                import json as _json
+                                existing_notions = _json.loads(existing_ws.draft_notions_json or "[]")
+                                existing_titles = {n.get("title") for n in existing_notions}
+                                new_notions = [n for n in notions_export if n["title"] not in existing_titles]
+                                existing_notions.extend(new_notions)
+                                update_work_session_draft(
+                                    ws_target.strip().upper(),
+                                    _json.loads(existing_ws.draft_quiz_json),
+                                    ws_owner or "?",
+                                    existing_notions,
+                                )
+                                st.success(f"✅ {len(new_notions)} notion(s) ajoutée(s) à l'atelier **{ws_target.strip().upper()}** ({len(existing_notions)} total)")
+                        else:
+                            ws_obj = create_work_session(
+                                {"title": "Notions", "questions": []},
+                                notions_export,
+                                "Notions exportées",
+                                owner_name=ws_owner or "?",
+                            )
+                            st.session_state["_ws_created_code"] = ws_obj.work_code
+                            st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
+                            st.code(f"Code atelier : {ws_obj.work_code}", language=None)
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 
@@ -1723,21 +1804,21 @@ if app_mode == "📄 Depuis un document":
             ex_tab_f, ex_tab_m, ex_tab_d = st.tabs(["🟢 Facile", "🟡 Moyen", "🔴 Difficile"])
             with ex_tab_f:
                 _ex_current["facile"] = st.text_area(
-                    "Facile", value=_ex_current["facile"], height=120, key="ex_prompt_facile",
+                    "Facile", value=_ex_current["facile"], height=200, key="ex_prompt_facile",
                 )
                 if st.button("🔄 Réinitialiser", key="reset_ex_facile"):
                     _ex_current["facile"] = _ex_defaults["facile"]
                     st.rerun()
             with ex_tab_m:
                 _ex_current["moyen"] = st.text_area(
-                    "Moyen", value=_ex_current["moyen"], height=120, key="ex_prompt_moyen",
+                    "Moyen", value=_ex_current["moyen"], height=200, key="ex_prompt_moyen",
                 )
                 if st.button("🔄 Réinitialiser", key="reset_ex_moyen"):
                     _ex_current["moyen"] = _ex_defaults["moyen"]
                     st.rerun()
             with ex_tab_d:
                 _ex_current["difficile"] = st.text_area(
-                    "Difficile", value=_ex_current["difficile"], height=120, key="ex_prompt_difficile",
+                    "Difficile", value=_ex_current["difficile"], height=200, key="ex_prompt_difficile",
                 )
                 if st.button("🔄 Réinitialiser", key="reset_ex_difficile"):
                     _ex_current["difficile"] = _ex_defaults["difficile"]
