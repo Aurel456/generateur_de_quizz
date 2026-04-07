@@ -145,14 +145,19 @@ class User:
 | `DEFAULT_EXERCISE_PROMPTS` | `exercise_generator.py:257` | Dict facile/moyen/difficile (type calcul) |
 | `DEFAULT_EXERCISE_PROMPTS_TROU` | `exercise_generator.py:245` | Instructions par niveau (type trou) |
 | `DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE` | `exercise_generator.py:251` | Instructions par niveau (type cas pratique) |
-| `MODEL_NAME` | `llm_service.py:27` | Modèle LLM par défaut (env `MODEL_NAME`) |
+| `TEXT_MODEL_NAME` | `llm_service.py:27` | Modèle texte par défaut (env `TEXT_MODEL_NAME`, rétro-compat `MODEL_NAME`) |
+| `TEXT_MODEL_CONTEXT` | `llm_service.py:28` | Fenêtre de contexte texte (env `TEXT_MODEL_CONTEXT`, rétro-compat `MODEL_CONTEXT_WINDOW`) |
 | `VISION_MODEL_NAME` | `llm_service.py:40` | Modèle vision (env `VISION_MODEL_NAME`) |
+| `VISION_MODEL_CONTEXT` | `llm_service.py:41` | Fenêtre de contexte vision (env `VISION_MODEL_CONTEXT`, défaut 262000) |
 | `VISION_MODEL_NAMES` | `llm_service.py:35` | Liste modèles vision (JSON ou string) |
+| `ONESHOT_RESERVE_TOKENS` | `llm_service.py` | 50000 — tokens réservés pour prompts en mode one-shot |
+| `ONESHOT_DPI` | `llm_service.py` | 85 — DPI fixe en mode one-shot |
+| `ONESHOT_SLICE_TOKENS` | `llm_service.py` | 50000 — taille des tranches si document trop gros |
 | `DB_PATH` | `session_store.py:22` | Chemin SQLite (env `QUIZ_SESSIONS_DB`) |
 
 ### Index des fonctions clés par fichier
 
-**`core/llm_service.py`** : `call_llm()`, `call_llm_json()`, `call_llm_chat()`, `call_llm_chat_json()`, `call_llm_vision()`, `call_llm_vision_json()`, `count_tokens()`, `list_models()`, `get_model_info()`
+**`core/llm_service.py`** : `call_llm()`, `call_llm_json()`, `call_llm_chat()`, `call_llm_chat_json()`, `call_llm_vision()`, `call_llm_vision_json()`, `call_llm_stream()`, `call_llm_vision_stream()`, `call_llm_json_stream()`, `count_tokens()`, `list_models()`, `get_model_info()`
 
 **`generation/quiz_generator.py`** : `generate_quiz()`, `generate_quiz_from_chunk()`, `_build_quiz_prompt()`, `_parse_quiz_questions()`, `_distribute_questions()`
 
@@ -176,7 +181,7 @@ class User:
 
 **`core/auth.py`** *(désactivé)* : `authenticate()`, `create_user()`, `list_users()`, `update_user_role()`, `delete_user()`, `change_password()`
 
-**`processing/document_processor.py`** : `extract_and_chunk()`, `extract_and_chunk_multiple()`, `extract_and_chunk_vision()`, `extract_and_chunk_multiple_vision()`, `extract_and_chunk_vision_text()`, `extract_text_from_file()`, `chunk_text()`, `split_into_pages()`, `get_text_stats()`, `get_text_stats_multiple()`
+**`processing/document_processor.py`** : `extract_and_chunk()`, `extract_and_chunk_multiple()`, `extract_and_chunk_vision()`, `extract_and_chunk_multiple_vision()`, `extract_and_chunk_vision_text()`, `extract_oneshot_chunks()`, `extract_text_from_file()`, `chunk_text()`, `split_into_pages()`, `get_text_stats()`, `get_text_stats_multiple()`
 
 ### Structure de app.py (sections par numéro de ligne approximatif)
 
@@ -268,6 +273,10 @@ generateur_de_quizz/
 - **enable_thinking** : Toutes les fonctions `call_llm*` acceptent `enable_thinking: bool` (défaut `True` pour texte, `False` pour vision). Passe `extra_body={"enable_thinking": ..., "chat_template_kwargs": {"enable_thinking": ...}}` pour les modèles Qwen.
 - **Token tracking** : Tous les appels sont tracés automatiquement via `log_token_usage()` dans `_execute_completion()`.
 - **Parsing JSON résilient** : `_parse_json_response()` tente 3 stratégies (direct, bloc markdown, extraction braces).
+- **Réparation JSON** : Si le JSON est invalide après le premier essai, le JSON cassé est envoyé au LLM avec une instruction de correction (au lieu de relancer le même prompt).
+- **Streaming** : `call_llm_stream()`, `call_llm_vision_stream()` yields les fragments de texte. `call_llm_json_stream()` accumule le flux et extrait les objets JSON complets via `_extract_complete_json_objects()`. Fallback automatique vers non-streaming si l'API ne le supporte pas.
+- **Mode One-shot** : `extract_oneshot_chunks()` dans `document_processor.py` crée le minimum de chunks pour envoyer tout en une requête vision (DPI 85, 262k tokens). Découpe automatiquement si trop gros.
+- **Variables d'env** : Les nouvelles constantes sont `TEXT_MODEL_NAME`, `TEXT_MODEL_CONTEXT`, `VISION_MODEL_CONTEXT`. Les anciens noms (`MODEL_NAME`, `MODEL_CONTEXT_WINDOW`, `VISION_CONTEXT_WINDOW`) sont supportés par rétro-compatibilité via aliases.
 
 ### Structures de données clés
 
@@ -360,14 +369,16 @@ Fichier `.env` à la racine (copier depuis `.env.example`) :
 ```ini
 OPENAI_API_BASE=http://...
 OPENAI_API_KEY=sk-...
-MODEL_NAME=...
-MODEL_CONTEXT_WINDOW=32000
+TEXT_MODEL_NAME=...
+TEXT_MODEL_CONTEXT=32000
 TIKTOKEN_ENCODING=cl100k_base
 VISION_MODEL_NAME=Qwen3-VL-32B-Instruct-FP8
-VISION_CONTEXT_WINDOW=80000
+VISION_MODEL_CONTEXT=262000
 QUIZ_SESSIONS_DB=shared_data/quiz_sessions.db
 GLOBAL_STATS=shared_data/global_stats.json
 ```
+
+Note : les anciens noms `MODEL_NAME`, `MODEL_CONTEXT_WINDOW`, `VISION_CONTEXT_WINDOW` sont encore supportés par rétro-compatibilité.
 
 ---
 

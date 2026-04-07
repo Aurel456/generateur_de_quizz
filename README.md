@@ -210,18 +210,16 @@ OPENAI_API_BASE=http://votre-serveur:8080/v1
 # Clé API (si nécessaire)
 OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
 
-# Nom du modèle à utiliser
-MODEL_NAME=gtp-oss-120b
-
-# Fenêtre de contexte du modèle (en tokens)
-MODEL_CONTEXT_WINDOW=32000
+# Modèle texte
+TEXT_MODEL_NAME=gtp-oss-120b
+TEXT_MODEL_CONTEXT=32000
 
 # Encodeur tiktoken (cl100k_base pour GPT-4, o200k_base pour GPT-4o)
 TIKTOKEN_ENCODING=cl100k_base
 
 # Modèle Vision (optionnel — même endpoint API)
 VISION_MODEL_NAME=Qwen3-VL-32B-Instruct-FP8
-VISION_CONTEXT_WINDOW=80000
+VISION_MODEL_CONTEXT=262000
 
 # Base de données SQLite pour les sessions partagées
 QUIZ_SESSIONS_DB=shared_data/quiz_sessions.db
@@ -395,6 +393,16 @@ generateur_de_quizz/
 ---
 
 ## 📋 Changelog
+
+### v3.3
+
+- **Mode global One-shot** : Nouveau toggle dans les options avancées — envoie tous les documents en une seule requête au modèle vision (262k tokens, DPI 85). Découpe automatiquement par document ou par tranches si trop volumineux.
+- **Streaming LLM + affichage incrémental** : Les notions, questions et exercices s'affichent au fur et à mesure de leur génération. Extraction JSON incrémentale depuis le flux streaming. Fallback automatique vers le mode non-streaming si l'API ne le supporte pas.
+- **Réparation JSON par LLM** : Quand le LLM produit un JSON invalide, au lieu de relancer le même prompt, le JSON cassé est envoyé au LLM avec une instruction de correction. Appliqué à `call_llm_json`, `call_llm_chat_json` et `call_llm_vision_json`.
+- **Préservation des résultats** : Changer la résolution, le DPI ou le mode vision ne supprime plus les quiz et exercices déjà générés. Seul un changement de fichier les réinitialise.
+- **Fix vérification exercices** : Les exercices à trou et cas pratique ne sont plus marqués "✅ Vérifié" à la création. Le badge vérifié n'apparaît qu'après vérification effective (code Python ou LLM).
+- **Suppression des indices trou** : Retrait de la fonctionnalité "Blanc à aider" / "Générer des indices" pour les exercices à trou.
+- **Uniformisation des variables d'environnement** : `MODEL_NAME` → `TEXT_MODEL_NAME`, `MODEL_CONTEXT_WINDOW` → `TEXT_MODEL_CONTEXT`, `VISION_CONTEXT_WINDOW` → `VISION_MODEL_CONTEXT` (262 000 par défaut). Rétro-compatibilité avec les anciens noms.
 
 ### v3.2
 

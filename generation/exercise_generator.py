@@ -751,8 +751,8 @@ def _parse_exercises(
                     difficulty_level=difficulty,
                     related_notions=validated.get("related_notions", []),
                     exercise_type="trou",
-                    verified=True,
-                    verification_output="Vérification manuelle recommandée.",
+                    verified=False,
+                    verification_output="",
                 )
             elif exercise_type == "cas_pratique":
                 exercise = Exercise(
@@ -767,8 +767,8 @@ def _parse_exercises(
                     difficulty_level=difficulty,
                     related_notions=validated.get("related_notions", []),
                     exercise_type="cas_pratique",
-                    verified=True,
-                    verification_output="Vérification manuelle recommandée.",
+                    verified=False,
+                    verification_output="",
                 )
             else:
                 exercise = Exercise(
@@ -878,9 +878,12 @@ def generate_exercises(
     exercise_type: str = "calcul",
     persona: str = "",
     enable_thinking: bool = True,
+    stream: bool = False,
+    on_item: Optional[callable] = None,
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks, avec support des niveaux de difficulté.
+    Si stream=True et on_item est fourni, on_item(exercise) est appelé pour chaque exercice généré.
 
     Args:
         chunks: Liste de TextChunk.
@@ -1006,7 +1009,10 @@ def generate_exercises(
                     persona=persona,
                     enable_thinking=enable_thinking,
                 )
-                all_exercises.extend(exercises)
+                for ex in exercises:
+                    all_exercises.append(ex)
+                    if on_item:
+                        on_item(ex)
             except Exception as e:
                 print(f"Erreur sur le chunk {chunk.source_pages} ({diff_name}): {e}")
                 continue
@@ -1017,55 +1023,4 @@ def generate_exercises(
     return all_exercises
 
 
-def generate_blank_suggestions(
-    blank: dict,
-    statement: str,
-    n: int = 3,
-    model: Optional[str] = None,
-    enable_thinking: bool = True,
-) -> list:
-    """
-    Génère N suggestions (indices) pour aider à trouver la réponse d'un blanc dans un exercice à trou.
-
-    Args:
-        blank: dict avec 'position', 'answer', 'context'
-        statement: énoncé complet de l'exercice
-        n: nombre de suggestions à générer
-        model: modèle LLM à utiliser
-        enable_thinking: activer le mode thinking du modèle
-
-    Returns:
-        Liste de strings (suggestions/indices)
-    """
-    position = blank.get("position", "?")
-    answer = blank.get("answer", "")
-    context = blank.get("context", "")
-    _model = model or MODEL_NAME
-
-    system_prompt = (
-        "Tu es un assistant pédagogique. Tu dois aider un apprenant à trouver la réponse "
-        "à un exercice de texte à trous, en donnant des indices progressifs SANS révéler la réponse exacte."
-    )
-    user_prompt = f"""Exercice à trous :
-{statement}
-
-Blanc n°{position} (contexte : "{context}")
-
-Génère exactement {n} indices progressifs (du plus vague au plus précis) pour aider à trouver le terme manquant.
-Ne révèle PAS la réponse ("{answer}") directement.
-Chaque indice doit être court (1-2 phrases max).
-
-Réponds uniquement en JSON avec ce format :
-{{"suggestions": ["indice 1", "indice 2", ...]}}"""
-
-    result = call_llm_json(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        model=_model,
-        use_cache=False,
-        enable_thinking=enable_thinking,
-    )
-    if result and isinstance(result, dict) and "suggestions" in result:
-        return result["suggestions"][:n]
-    return []
 

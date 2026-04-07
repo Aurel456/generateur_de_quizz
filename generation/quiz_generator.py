@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 import logging
 
-from core.llm_service import call_llm_json, call_llm_vision_json, count_tokens, MODEL_CONTEXT_WINDOW
+from core.llm_service import call_llm_json, call_llm_vision_json, call_llm_json_stream, count_tokens, MODEL_CONTEXT_WINDOW
 from core.models import validate_quiz_question
 from processing.document_processor import TextChunk
 from typing import TYPE_CHECKING
@@ -229,9 +229,12 @@ def generate_quiz_from_chunk(
     enable_thinking: bool = True,
     max_correct: Optional[int] = None,
     humor: bool = False,
+    stream: bool = False,
+    on_item: Optional[callable] = None,
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
+    Si stream=True, utilise le streaming et appelle on_item(question) pour chaque question parsée.
     """
     choice_labels = list(string.ascii_uppercase[:num_choices])
 
@@ -243,13 +246,42 @@ def generate_quiz_from_chunk(
         humor=humor,
     )
 
-    # Appel au LLM (vision ou texte)
-    if vision_mode and chunk.page_images:
-        result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.6, enable_thinking=enable_thinking)
-    else:
-        result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.6, enable_thinking=enable_thinking)
+    if stream:
+        # Mode streaming : extraction incrémentale des questions
+        streamed_questions = []
 
-    return _parse_quiz_questions(result, chunk, difficulty)
+        def _on_object(obj):
+            # Chaque objet extrait du stream peut être une question individuelle
+            # ou le wrapper {"questions": [...]}
+            if "question" in obj and "choices" in obj:
+                parsed = _parse_quiz_questions({"questions": [obj]}, chunk, difficulty)
+                for q in parsed:
+                    streamed_questions.append(q)
+                    if on_item:
+                        on_item(q)
+
+        result = call_llm_json_stream(
+            system_prompt, user_prompt, model=model, temperature=0.6,
+            enable_thinking=enable_thinking, on_object=_on_object,
+            vision_mode=(vision_mode and bool(chunk.page_images)),
+            images=chunk.page_images if (vision_mode and chunk.page_images) else None,
+        )
+
+        # Si le streaming n'a rien extrait incrémentalement, parser le résultat final
+        if not streamed_questions:
+            final_questions = _parse_quiz_questions(result, chunk, difficulty)
+            for q in final_questions:
+                if on_item:
+                    on_item(q)
+            return final_questions
+        return streamed_questions
+    else:
+        # Mode classique
+        if vision_mode and chunk.page_images:
+            result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.6, enable_thinking=enable_thinking)
+        else:
+            result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.6, enable_thinking=enable_thinking)
+        return _parse_quiz_questions(result, chunk, difficulty)
 
 
 def _distribute_questions(chunks: List[TextChunk], count: int) -> List[int]:
@@ -293,6 +325,8 @@ def generate_quiz(
     enable_thinking: bool = True,
     max_correct: Optional[int] = None,
     humor: bool = False,
+    stream: bool = False,
+    on_item: Optional[callable] = None,
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -441,6 +475,8 @@ def generate_quiz(
                         enable_thinking=enable_thinking,
                         max_correct=max_correct,
                         humor=humor,
+                        stream=stream,
+                        on_item=on_item,
                     )
                     all_questions.extend(questions)
                     # Mettre à jour la liste pour les chunks suivants du même niveau

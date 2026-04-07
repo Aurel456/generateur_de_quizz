@@ -113,6 +113,7 @@ def detect_notions(
     progress_callback=None,
     vision_mode: bool = False,
     enable_thinking: bool = True,
+    on_item: Optional[callable] = None,
 ) -> List[Notion]:
     """
     Détecte les notions fondamentales de manière itérative, chunk par chunk.
@@ -147,7 +148,14 @@ def detect_notions(
                 result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.3, enable_thinking=enable_thinking)
             else:
                 result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3, enable_thinking=enable_thinking)
-            notions = _parse_notions_response(result)
+            new_notions = _parse_notions_response(result)
+            # Notifier les nouvelles notions ajoutées
+            if on_item:
+                old_titles = {n.title for n in notions}
+                for n in new_notions:
+                    if n.title not in old_titles:
+                        on_item(n)
+            notions = new_notions
         except Exception as e:
             print(f"Erreur détection notions chunk {i}: {e}")
             continue

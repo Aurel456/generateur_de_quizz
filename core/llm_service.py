@@ -8,7 +8,7 @@ import logging
 import os
 import re
 import time
-from typing import Dict, List, Optional
+from typing import Callable, Dict, Generator, List, Optional, Tuple
 
 import tiktoken
 from dotenv import load_dotenv
@@ -21,12 +21,18 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Configuration depuis .env
+# Configuration depuis .env — Modèle texte
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "http://OPENAI_API_BASE:8080/v1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "OPENAI_API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME", "gtp-oss-120b")
-MODEL_CONTEXT_WINDOW = int(os.getenv("MODEL_CONTEXT_WINDOW", "32000"))
+TEXT_MODEL_NAME = os.getenv("TEXT_MODEL_NAME", "Gpt-oss-120b")
+TEXT_MODEL_CONTEXT = int(os.getenv("TEXT_MODEL_CONTEXT", "32000"))
 TIKTOKEN_ENCODING = os.getenv("TIKTOKEN_ENCODING", "cl100k_base")
+
+# Rétro-compatibilité (anciens noms MODEL_NAME / MODEL_CONTEXT_WINDOW)
+if not os.getenv("TEXT_MODEL_NAME") and os.getenv("MODEL_NAME"):
+    TEXT_MODEL_NAME = os.getenv("MODEL_NAME")
+if not os.getenv("TEXT_MODEL_CONTEXT") and os.getenv("MODEL_CONTEXT_WINDOW"):
+    TEXT_MODEL_CONTEXT = int(os.getenv("MODEL_CONTEXT_WINDOW"))
 
 # Configuration Vision — supporte un seul modèle ou une liste JSON
 _raw_vision_model = os.getenv("VISION_MODEL_NAME", "")
@@ -38,7 +44,21 @@ if _raw_vision_model.strip().startswith("["):
 else:
     VISION_MODEL_NAMES = [_raw_vision_model] if _raw_vision_model else []
 VISION_MODEL_NAME = VISION_MODEL_NAMES[0] if VISION_MODEL_NAMES else ""
-VISION_CONTEXT_WINDOW = int(os.getenv("VISION_CONTEXT_WINDOW", "80000"))
+VISION_MODEL_CONTEXT = int(os.getenv("VISION_MODEL_CONTEXT", "262000"))
+
+# Rétro-compat vision (ancien nom VISION_CONTEXT_WINDOW)
+if not os.getenv("VISION_MODEL_CONTEXT") and os.getenv("VISION_CONTEXT_WINDOW"):
+    VISION_MODEL_CONTEXT = int(os.getenv("VISION_CONTEXT_WINDOW"))
+
+# Constantes One-shot (dérivées de VISION_MODEL_CONTEXT)
+ONESHOT_RESERVE_TOKENS = 50000
+ONESHOT_DPI = 85
+ONESHOT_SLICE_TOKENS = 50000
+
+# Aliases rétro-compatibles pour le code existant
+MODEL_NAME = TEXT_MODEL_NAME
+MODEL_CONTEXT_WINDOW = TEXT_MODEL_CONTEXT
+VISION_CONTEXT_WINDOW = VISION_MODEL_CONTEXT
 
 # Marge de sécurité pour les tokens (prompt system + overhead)
 SYSTEM_PROMPT_MARGIN = 500
@@ -146,6 +166,260 @@ def _execute_completion(
     raise RuntimeError(
         f"Échec de l'appel LLM ({caller_name}) avec le modèle {model} "
         f"après {retries} tentatives. Dernière erreur : {last_error}"
+    )
+
+
+# ── Streaming ────────────────────────────────────────────────────────────────
+
+def _execute_completion_stream(
+    messages: list,
+    model: str,
+    temperature: float,
+    max_tokens: Optional[int] = None,
+    enable_thinking: bool = True,
+    caller_name: str = "call_llm_stream",
+) -> Generator[str, None, None]:
+    """
+    Exécute un appel chat.completions.create en mode streaming.
+    Yields les fragments de texte au fur et à mesure.
+    """
+    client = get_client()
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": True,
+        "extra_body": {
+            "enable_thinking": enable_thinking,
+            "chat_template_kwargs": {"enable_thinking": enable_thinking},
+        },
+    }
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+
+    stream = client.chat.completions.create(**kwargs)
+    total_content = ""
+    for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+            delta = chunk.choices[0].delta.content
+            total_content += delta
+            yield delta
+
+    # Token tracking estimé (le streaming ne fournit pas toujours usage)
+    output_tokens = count_tokens(total_content) if total_content else 0
+    log_token_usage(caller_name, model, 0, output_tokens)
+
+
+def call_llm_stream(
+    system_prompt: str,
+    user_prompt: str,
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.7,
+    enable_thinking: bool = True,
+) -> Generator[str, None, None]:
+    """
+    Appel LLM en mode streaming. Yields les fragments de texte.
+    Pas de cache (le streaming est utilisé pour l'affichage progressif).
+    """
+    target_model = model or TEXT_MODEL_NAME
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    yield from _execute_completion_stream(
+        messages=messages,
+        model=target_model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        enable_thinking=enable_thinking,
+        caller_name="call_llm_stream",
+    )
+
+
+def call_llm_vision_stream(
+    system_prompt: str,
+    user_prompt: str,
+    images: List[str],
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.7,
+    enable_thinking: bool = False,
+) -> Generator[str, None, None]:
+    """
+    Appel LLM vision en mode streaming. Yields les fragments de texte.
+    """
+    target_model = model or VISION_MODEL_NAME or TEXT_MODEL_NAME
+    user_content = [{"type": "text", "text": user_prompt}]
+    for i, img_b64 in enumerate(images):
+        user_content.append({"type": "text", "text": f"--- Page {i + 1} ---"})
+        user_content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+        })
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    yield from _execute_completion_stream(
+        messages=messages,
+        model=target_model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        enable_thinking=enable_thinking,
+        caller_name="call_llm_vision_stream",
+    )
+
+
+def _extract_complete_json_objects(text: str, last_extracted: int = 0) -> Tuple[List[dict], int]:
+    """
+    Extrait les objets JSON complets depuis un texte en cours de streaming.
+
+    Cherche des objets {...} complets dans le texte à partir de last_extracted.
+    Gère les accolades imbriquées et les strings (avec échappement).
+
+    Returns:
+        (liste d'objets parsés, nouvel index après le dernier objet extrait)
+    """
+    objects = []
+    i = last_extracted
+    n = len(text)
+
+    while i < n:
+        # Chercher le prochain '{'
+        start = text.find('{', i)
+        if start == -1:
+            break
+
+        # Compter les accolades en respectant les strings
+        depth = 0
+        in_string = False
+        escape_next = False
+        j = start
+        found_end = -1
+
+        while j < n:
+            ch = text[j]
+            if escape_next:
+                escape_next = False
+                j += 1
+                continue
+            if ch == '\\' and in_string:
+                escape_next = True
+                j += 1
+                continue
+            if ch == '"':
+                in_string = not in_string
+            elif not in_string:
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        found_end = j
+                        break
+            j += 1
+
+        if found_end == -1:
+            # Objet incomplet, on s'arrête
+            break
+
+        candidate = text[start:found_end + 1]
+        try:
+            obj = json.loads(candidate)
+            objects.append(obj)
+            i = found_end + 1
+        except json.JSONDecodeError:
+            # Pas un JSON valide, avancer après ce '{'
+            i = start + 1
+
+    return objects, i
+
+
+def call_llm_json_stream(
+    system_prompt: str,
+    user_prompt: str,
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.5,
+    enable_thinking: bool = True,
+    on_object: Optional[Callable[[dict], None]] = None,
+    vision_mode: bool = False,
+    images: Optional[List[str]] = None,
+) -> dict:
+    """
+    Appel LLM JSON en mode streaming avec extraction incrémentale des objets.
+
+    Accumule le texte streamé et extrait les objets JSON complets au fur et à mesure.
+    Appelle on_object(obj) pour chaque objet JSON complet détecté dans un array.
+
+    Returns:
+        Le dict complet parsé depuis la réponse finale.
+    """
+    json_system = system_prompt + (
+        "\n\nIMPORTANT: Tu DOIS répondre UNIQUEMENT avec un objet JSON valide. "
+        "Pas de texte avant ou après le JSON. Pas de bloc markdown."
+    )
+
+    accumulated = ""
+    last_extracted = 0
+
+    try:
+        if vision_mode and images:
+            stream_gen = call_llm_vision_stream(
+                json_system, user_prompt, images, model, max_tokens, temperature,
+                enable_thinking=enable_thinking,
+            )
+        else:
+            stream_gen = call_llm_stream(
+                json_system, user_prompt, model, max_tokens, temperature,
+                enable_thinking=enable_thinking,
+            )
+
+        for chunk in stream_gen:
+            accumulated += chunk
+            if on_object:
+                new_objects, last_extracted = _extract_complete_json_objects(accumulated, last_extracted)
+                for obj in new_objects:
+                    on_object(obj)
+
+    except Exception as e:
+        logger.warning(f"Streaming failed, falling back to non-streaming: {e}")
+        # Fallback vers non-streaming
+        if vision_mode and images:
+            return call_llm_vision_json(
+                system_prompt, user_prompt, images, model, max_tokens, temperature,
+                enable_thinking=enable_thinking,
+            )
+        else:
+            return call_llm_json(
+                system_prompt, user_prompt, model, max_tokens, temperature,
+                enable_thinking=enable_thinking,
+            )
+
+    # Parse final complet
+    parsed = _parse_json_response(accumulated)
+    if parsed is not None:
+        return parsed
+
+    # Si le parse final échoue, tenter la réparation JSON
+    repair_system = (
+        "Le JSON suivant est invalide et n'a pas pu être parsé. "
+        "Corrige UNIQUEMENT la syntaxe JSON sans changer le contenu. "
+        "Renvoie UNIQUEMENT le JSON corrigé, sans texte avant ou après."
+    )
+    try:
+        raw = call_llm(repair_system, accumulated, model, max_tokens, temperature,
+                       retries=1, use_cache=False, enable_thinking=enable_thinking)
+        parsed = _parse_json_response(raw)
+        if parsed is not None:
+            return parsed
+    except Exception:
+        pass
+
+    raise ValueError(
+        f"Impossible de parser la réponse JSON (stream) après streaming.\n"
+        f"Réponse brute :\n{accumulated[:500]}"
     )
 
 
@@ -276,10 +550,23 @@ def call_llm_json(
     last_raw = None
     for attempt in range(retries):
         try:
-            raw = call_llm(
-                json_system, user_prompt, model, max_tokens, temperature,
-                retries=2, use_cache=use_cache, enable_thinking=enable_thinking,
-            )
+            if attempt == 0 or last_raw is None:
+                # Premier essai ou échec complet précédent : prompt original
+                raw = call_llm(
+                    json_system, user_prompt, model, max_tokens, temperature,
+                    retries=2, use_cache=use_cache, enable_thinking=enable_thinking,
+                )
+            else:
+                # Essais suivants : envoyer le JSON cassé au LLM pour réparation
+                repair_system = (
+                    "Le JSON suivant est invalide et n'a pas pu être parsé. "
+                    "Corrige UNIQUEMENT la syntaxe JSON sans changer le contenu. "
+                    "Renvoie UNIQUEMENT le JSON corrigé, sans texte avant ou après."
+                )
+                raw = call_llm(
+                    repair_system, last_raw, model, max_tokens, temperature,
+                    retries=1, use_cache=False, enable_thinking=enable_thinking,
+                )
         except Exception as e:
             print(f"LLM call failed (attempt {attempt + 1}/{retries}): {e}")
             continue
@@ -293,11 +580,12 @@ def call_llm_json(
         # Invalider le cache pour cette entrée car la réponse n'est pas du JSON valide
         if use_cache:
             cache = get_cache()
-            cache_key = cache._make_key(json_system, user_prompt, model or MODEL_NAME, temperature)
+            cache_key = cache._make_key(json_system, user_prompt, model or str(TEXT_MODEL_NAME), temperature)
             with cache._lock:
                 cache._cache.pop(cache_key, None)
 
-        print(f"JSON parse failed (attempt {attempt + 1}/{retries}), retrying LLM call...")
+        print(f"JSON parse failed (attempt {attempt + 1}/{retries}), "
+              f"{'retrying with repair prompt' if last_raw else 'retrying LLM call'}...")
 
     raise ValueError(
         f"Impossible de parser la réponse JSON après {retries} tentatives.\n"
@@ -390,10 +678,25 @@ def call_llm_chat_json(
     last_raw = None
     for attempt in range(retries):
         try:
-            raw = call_llm_chat(
-                json_messages, model, max_tokens, temperature,
-                retries=2, enable_thinking=enable_thinking,
-            )
+            if attempt == 0 or last_raw is None:
+                raw = call_llm_chat(
+                    json_messages, model, max_tokens, temperature,
+                    retries=2, enable_thinking=enable_thinking,
+                )
+            else:
+                # Envoyer le JSON cassé au LLM pour réparation
+                repair_messages = [
+                    {"role": "system", "content": (
+                        "Le JSON suivant est invalide et n'a pas pu être parsé. "
+                        "Corrige UNIQUEMENT la syntaxe JSON sans changer le contenu. "
+                        "Renvoie UNIQUEMENT le JSON corrigé, sans texte avant ou après."
+                    )},
+                    {"role": "user", "content": last_raw},
+                ]
+                raw = call_llm_chat(
+                    repair_messages, model, max_tokens, temperature,
+                    retries=1, enable_thinking=enable_thinking,
+                )
         except Exception as e:
             print(f"LLM chat call failed (attempt {attempt + 1}/{retries}): {e}")
             continue
@@ -404,7 +707,8 @@ def call_llm_chat_json(
         if parsed is not None:
             return parsed
 
-        print(f"JSON parse failed (chat attempt {attempt + 1}/{retries}), retrying LLM call...")
+        print(f"JSON parse failed (chat attempt {attempt + 1}/{retries}), "
+              f"{'retrying with repair prompt' if last_raw else 'retrying LLM call'}...")
 
     raise ValueError(
         f"Impossible de parser la réponse JSON (chat) après {retries} tentatives.\n"
@@ -492,10 +796,22 @@ def call_llm_vision_json(
     last_raw = None
     for attempt in range(retries):
         try:
-            raw = call_llm_vision(
-                json_system, user_prompt, images, model, max_tokens, temperature,
-                retries=2, enable_thinking=enable_thinking,
-            )
+            if attempt == 0 or last_raw is None:
+                raw = call_llm_vision(
+                    json_system, user_prompt, images, model, max_tokens, temperature,
+                    retries=2, enable_thinking=enable_thinking,
+                )
+            else:
+                # Réparation JSON via appel texte simple (pas vision, économie de tokens)
+                repair_system = (
+                    "Le JSON suivant est invalide et n'a pas pu être parsé. "
+                    "Corrige UNIQUEMENT la syntaxe JSON sans changer le contenu. "
+                    "Renvoie UNIQUEMENT le JSON corrigé, sans texte avant ou après."
+                )
+                raw = call_llm(
+                    repair_system, last_raw, model, max_tokens, temperature,
+                    retries=1, use_cache=False, enable_thinking=enable_thinking,
+                )
         except Exception as e:
             print(f"LLM vision call failed (attempt {attempt + 1}/{retries}): {e}")
             continue
@@ -506,7 +822,8 @@ def call_llm_vision_json(
         if parsed is not None:
             return parsed
 
-        print(f"JSON parse failed (vision attempt {attempt + 1}/{retries}), retrying LLM call...")
+        print(f"JSON parse failed (vision attempt {attempt + 1}/{retries}), "
+              f"{'retrying with repair prompt' if last_raw else 'retrying LLM call'}...")
 
     raise ValueError(
         f"Impossible de parser la réponse JSON (vision) après {retries} tentatives.\n"

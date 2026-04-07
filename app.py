@@ -7,7 +7,7 @@ import time
 
 from processing.document_processor import (
     extract_and_chunk_multiple, extract_and_chunk_multiple_vision,
-    extract_and_chunk_multiple_vision_text,
+    extract_and_chunk_multiple_vision_text, extract_oneshot_chunks,
     get_text_stats_multiple, count_tokens,
     TextChunk
 )
@@ -16,13 +16,12 @@ try:
     _VISION_AVAILABLE = True
 except ImportError:
     _VISION_AVAILABLE = False
-from core.llm_service import VISION_MODEL_NAME, VISION_MODEL_NAMES, VISION_CONTEXT_WINDOW, call_llm_chat
+from core.llm_service import VISION_MODEL_NAME, VISION_MODEL_NAMES, VISION_MODEL_CONTEXT, TEXT_MODEL_NAME, call_llm_chat
 from generation.quiz_generator import generate_quiz, Quiz, QuizQuestion, DIFFICULTY_PROMPTS, QUIZ_DEFAULT_PERSONA, QUIZ_FIXED_RULES_DISPLAY
 from generation.exercise_generator import (
     generate_exercises, Exercise, DEFAULT_EXERCISE_PROMPTS,
     DEFAULT_EXERCISE_PROMPTS_TROU, DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE,
     EXERCISE_DEFAULT_PERSONA, EXERCISE_FIXED_RULES_BY_TYPE,
-    generate_blank_suggestions,
 )
 from export.quiz_exporter import (
     export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html,
@@ -400,6 +399,19 @@ with st.sidebar:
             )
             vision_text_mode = vision_sub == "Images + Texte"
 
+        oneshot_mode = st.toggle(
+            "Mode global One-shot",
+            value=False,
+            disabled=not VISION_MODEL_NAME,
+            help=(
+                "Envoie tous les documents en une seule requête au modèle vision "
+                f"({VISION_MODEL_CONTEXT:,} tokens, DPI 85). "
+                "Si trop volumineux, découpe automatiquement par document ou par tranches."
+            ),
+        )
+        if oneshot_mode:
+            vision_enabled = True
+
         enable_thinking = st.toggle(
             "Raisonnement IA (thinking)",
             value=not vision_enabled,
@@ -410,7 +422,7 @@ with st.sidebar:
         st.divider()
 
     # ─── Modèle LLM (auto-switché si vision activé) ──────────────────────────
-    selected_model = VISION_MODEL_NAME if vision_enabled else "Gpt-oss-120b"
+    selected_model = VISION_MODEL_NAME if vision_enabled else TEXT_MODEL_NAME
 
     st.divider()
     st.markdown("## 🌍 Statistiques Globales")
@@ -509,7 +521,7 @@ if app_mode == "📄 Depuis un document":
                                 user_tokens = estimate_tokens_for_dpi(
                                     dpi_info["page_sizes_pt"], user_dpi
                                 )
-                                budget = VISION_CONTEXT_WINDOW - 2000  # text_token_buffer
+                                budget = VISION_MODEL_CONTEXT - 2000  # text_token_buffer
 
                                 if user_tokens > budget:
                                     st.warning(
@@ -570,17 +582,28 @@ if app_mode == "📄 Depuis un document":
         files_key = "_".join(sorted(f.name for f in uploaded_files))
         vision_dpi_param = vision_dpi_override or "auto"
         vision_pages_chunk = st.session_state.get("vision_pages_per_chunk", 10)
-        current_params = f"{files_key}_{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_text_mode}_{vision_dpi_param}_{vision_pages_chunk}"
+        processing_params = f"{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_text_mode}_{vision_dpi_param}_{vision_pages_chunk}_{oneshot_mode}"
 
-        if st.session_state.pdf_stats is None or st.session_state.get("_last_params") != current_params:
+        files_changed = st.session_state.get("_last_files_key") != files_key
+        params_changed = st.session_state.get("_last_processing_params") != processing_params
+
+        if st.session_state.pdf_stats is None or files_changed or params_changed:
             with st.spinner("📄 Analyse et découpage des documents en cours..."):
                 # Si les fichiers ont changé, on recalcule les stats
-                if st.session_state.get("_last_files_key") != files_key:
+                if files_changed:
                     st.session_state.pdf_stats = get_text_stats_multiple(uploaded_files)
                     increment_stats(documents=st.session_state.pdf_stats.get('num_documents', 1))
 
                 # Recalculer les chunks (changement de fichier OU de mode)
-                if vision_enabled:
+                if oneshot_mode:
+                    from core.llm_service import VISION_MODEL_CONTEXT, ONESHOT_RESERVE_TOKENS, ONESHOT_DPI, ONESHOT_SLICE_TOKENS
+                    st.session_state.chunks = extract_oneshot_chunks(
+                        uploaded_files,
+                        dpi=ONESHOT_DPI,
+                        max_total_tokens=VISION_MODEL_CONTEXT - ONESHOT_RESERVE_TOKENS,
+                        slice_tokens=ONESHOT_SLICE_TOKENS,
+                    )
+                elif vision_enabled:
                     vision_kwargs = {}
                     if vision_dpi_override:
                         vision_kwargs["min_dpi"] = vision_dpi_override
@@ -601,12 +624,13 @@ if app_mode == "📄 Depuis un document":
                     )
 
                 st.session_state._last_files_key = files_key
-                st.session_state._last_params = current_params
+                st.session_state._last_processing_params = processing_params
 
-                # Reset les résultats précédents
-                st.session_state.quiz = None
-                st.session_state.exercises = None
-                _invalidate_download_cache()
+                # Reset les résultats UNIQUEMENT si les fichiers ont changé
+                if files_changed:
+                    st.session_state.quiz = None
+                    st.session_state.exercises = None
+                    _invalidate_download_cache()
 
 
     # Fallback si pas de fichiers uploadés
@@ -1036,7 +1060,11 @@ if app_mode == "📄 Depuis un document":
                             text=f"🧠 Chunk {min(current + 1, total)}/{total}{eta_str}"
                         )
 
-                notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress, vision_mode=vision_enabled, enable_thinking=st.session_state.get("enable_thinking", True))
+                _notion_stream_ctn = st.container()
+                def _on_notion_item(n):
+                    with _notion_stream_ctn:
+                        st.info(f"📚 Notion détectée : **{n.title}**")
+                notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress, vision_mode=vision_enabled, enable_thinking=st.session_state.get("enable_thinking", True), on_item=_on_notion_item)
                 st.session_state.notions = notions
                 progress_bar.progress(1.0, text="✅ Notions détectées !")
                 time.sleep(0.5)
@@ -1283,6 +1311,8 @@ if app_mode == "📄 Depuis un document":
         if _gen_any_clicked:
             progress_bar = st.progress(0, text="Démarrage...")
             status_text = st.empty()
+            _stream_container = st.container()
+            _stream_count = [0]
             _quiz_start = time.time()
 
             def quiz_progress(current, total):
@@ -1308,6 +1338,15 @@ if app_mode == "📄 Depuis un document":
                     else:
                         active_notions = [n for n in st.session_state.notions if n.enabled]
 
+                def _on_quiz_item(q):
+                    _stream_count[0] += 1
+                    with _stream_container:
+                        diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(
+                            q.difficulty_level, "⬜"
+                        )
+                        st.success(f"{diff_emoji} Question {_stream_count[0]} générée : {q.question[:80]}…")
+
+                _use_stream = not batch_mode
                 quiz = generate_quiz(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts,
@@ -1325,6 +1364,8 @@ if app_mode == "📄 Depuis un document":
                     enable_thinking=st.session_state.get("enable_thinking", True),
                     max_correct=max_correct if variable_correct else None,
                     humor=humor,
+                    stream=_use_stream,
+                    on_item=_on_quiz_item if _use_stream else None,
                 )
                 if st.session_state.quiz is None:
                     st.session_state.quiz = quiz
@@ -1857,6 +1898,17 @@ if app_mode == "📄 Depuis un document":
                 _active_ex_prompts = st.session_state.get(
                     {"calcul": "exercise_prompts", "trou": "exercise_prompts_trou", "cas_pratique": "exercise_prompts_cas_pratique"}.get(exercise_type, "exercise_prompts")
                 )
+                _ex_stream_ctn = st.container()
+                _ex_stream_count = [0]
+                def _on_exercise_item(ex):
+                    _ex_stream_count[0] += 1
+                    with _ex_stream_ctn:
+                        diff_emoji = {"facile": "🟢", "moyen": "🟡", "difficile": "🔴"}.get(
+                            ex.difficulty_level, "⬜"
+                        )
+                        st.success(f"{diff_emoji} Exercice {_ex_stream_count[0]} généré")
+
+                _use_stream_ex = not batch_mode
                 exercises = generate_exercises(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts_ex,
@@ -1869,6 +1921,8 @@ if app_mode == "📄 Depuis un document":
                     exercise_type=exercise_type,
                     persona=st.session_state.exercise_persona,
                     enable_thinking=st.session_state.get("enable_thinking", True),
+                    stream=_use_stream_ex,
+                    on_item=_on_exercise_item if _use_stream_ex else None,
                 )
                 # Accumulation : ajouter sans écraser les exercices existants
                 if st.session_state.exercises is None:
@@ -1925,7 +1979,7 @@ if app_mode == "📄 Depuis un document":
                         else:
                             st.success("✅ Réponse vérifiée par auto-correction LLM")
                     else:
-                        st.warning("⚠️ La vérification automatique n'a pas pu confirmer la réponse")
+                        st.info("⏳ Non encore vérifié")
 
                     render_difficulty_badge(diff_label)
 
@@ -1948,35 +2002,6 @@ if app_mode == "📄 Depuis un document":
                             for b in blanks:
                                 b_pos = b.get('position', '?')
                                 st.markdown(f"**Blanc {b_pos} :** `{b.get('answer', '')}` — *{b.get('context', '')}*")
-                            # Bouton suggestions par blanc
-                            st.divider()
-                            _sugg_col1, _sugg_col2 = st.columns([3, 1])
-                            with _sugg_col1:
-                                _sugg_blank_idx = st.selectbox(
-                                    "Blanc à aider",
-                                    options=list(range(len(blanks))),
-                                    format_func=lambda idx: f"Blanc {blanks[idx].get('position', idx+1)} : {blanks[idx].get('context', '')[:40]}…",
-                                    key=f"sugg_blank_sel_{idx}",
-                                )
-                            with _sugg_col2:
-                                _sugg_n = st.number_input("Nb suggestions", min_value=1, max_value=5, value=3, key=f"sugg_n_{idx}")
-                            if st.button("💡 Générer des indices", key=f"sugg_btn_{idx}"):
-                                with st.spinner("Génération des indices…"):
-                                    try:
-                                        _suggestions = generate_blank_suggestions(
-                                            blank=blanks[_sugg_blank_idx],
-                                            statement=ex.statement,
-                                            n=_sugg_n,
-                                            model=selected_model,
-                                            enable_thinking=st.session_state.get("enable_thinking", True),
-                                        )
-                                        st.session_state[f"_sugg_cache_{idx}_{_sugg_blank_idx}"] = _suggestions
-                                    except Exception as e:
-                                        st.error(f"Erreur : {e}")
-                            _cached_sugg = st.session_state.get(f"_sugg_cache_{idx}_{_sugg_blank_idx}")
-                            if _cached_sugg:
-                                for _si, _s in enumerate(_cached_sugg, 1):
-                                    st.info(f"💡 **Indice {_si} :** {_s}")
                     elif ex_type == "cas_pratique":
                         sub_qs = getattr(ex, "sub_questions", [])
                         if sub_qs:
@@ -2666,7 +2691,7 @@ elif app_mode == "💬 Mode libre (IA)":
                     if ex.verified:
                         st.success("✅ Réponse vérifiée par exécution de code")
                     else:
-                        st.warning("⚠️ La vérification automatique n'a pas pu confirmer la réponse")
+                        st.info("⏳ Non encore vérifié")
                     render_difficulty_badge(diff_label)
                     if ex.related_notions:
                         tags_html = " ".join(

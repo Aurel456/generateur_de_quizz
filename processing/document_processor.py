@@ -849,3 +849,148 @@ def extract_and_chunk_multiple_vision_text(
         all_chunks.extend(chunks)
         file.seek(0)
     return all_chunks
+
+
+def extract_oneshot_chunks(
+    files: List[BinaryIO],
+    dpi: int = 85,
+    max_total_tokens: int = 212000,
+    slice_tokens: int = 50000,
+) -> List[TextChunk]:
+    """
+    Mode One-shot : crée le minimum de chunks possible pour envoyer
+    tous les documents en une seule requête au modèle vision.
+
+    Logique :
+    1. Extraire toutes les pages de tous les fichiers en images base64 à DPI fixe.
+    2. Si le total de tokens ≤ max_total_tokens → un seul TextChunk.
+    3. Si total > max_total_tokens → un TextChunk par document.
+    4. Si un document seul > max_total_tokens → découper en tranches de ~slice_tokens.
+    """
+    try:
+        from processing.vision_processor import (
+            extract_pages_as_base64, convert_office_to_pdf,
+            OFFICE_EXTENSIONS,
+        )
+    except ImportError:
+        print("vision_processor non disponible, fallback vers extraction texte multi-documents.")
+        return extract_and_chunk_multiple(files, mode="token", max_tokens=10000)
+
+    docs_page_data = []  # [(doc_name, page_data_or_None, text_chunks_or_None)]
+    for file in files:
+        file.seek(0)
+        doc_name = getattr(file, "name", "inconnu")
+        filename = doc_name.lower()
+        suffix = "." + filename.rsplit(".", 1)[-1] if "." in filename else ""
+        is_pdf = filename.endswith(".pdf")
+        is_office = suffix in OFFICE_EXTENSIONS
+
+        if not is_pdf and not is_office:
+            file.seek(0)
+            text_chunks = extract_and_chunk(file, mode="token", max_tokens=slice_tokens)
+            for c in text_chunks:
+                c.source_document = doc_name
+            docs_page_data.append((doc_name, None, text_chunks))
+            continue
+
+        if is_pdf:
+            pdf_input = file
+        else:
+            file.seek(0)
+            file_bytes = file.read()
+            file.seek(0)
+            pdf_bytes = convert_office_to_pdf(file_bytes, doc_name)
+            if pdf_bytes is None:
+                file.seek(0)
+                text_chunks = extract_and_chunk(file, mode="token", max_tokens=slice_tokens)
+                for c in text_chunks:
+                    c.source_document = doc_name
+                docs_page_data.append((doc_name, None, text_chunks))
+                continue
+            pdf_input = io.BytesIO(pdf_bytes)
+
+        pdf_input.seek(0)
+        page_data = extract_pages_as_base64(
+            pdf_input,
+            text_token_buffer=0,
+            min_dpi=dpi,
+            max_dpi=dpi,
+            model_seq_len=999999,
+        )
+        file.seek(0)
+
+        if not page_data:
+            file.seek(0)
+            text_chunks = extract_and_chunk(file, mode="token", max_tokens=slice_tokens)
+            for c in text_chunks:
+                c.source_document = doc_name
+            docs_page_data.append((doc_name, None, text_chunks))
+            continue
+
+        docs_page_data.append((doc_name, page_data, None))
+
+    vision_docs = [(name, pd) for name, pd, tc in docs_page_data if pd is not None]
+    text_fallback_chunks = []
+    for _name, _pd, tc in docs_page_data:
+        if tc is not None:
+            text_fallback_chunks.extend(tc)
+
+    total_vision_tokens = sum(sum(p["tokens"] for p in pd) for _, pd in vision_docs)
+    result_chunks = list(text_fallback_chunks)
+
+    if total_vision_tokens <= max_total_tokens and vision_docs:
+        # Tout tient en un seul chunk
+        all_pages = []
+        all_images = []
+        all_doc_names = []
+        for doc_name, page_data in vision_docs:
+            for p in page_data:
+                all_pages.append(p["page"])
+                all_images.append(p["base64"])
+            all_doc_names.append(doc_name)
+        source_label = ", ".join(all_doc_names)
+        result_chunks.append(TextChunk(
+            text=f"[One-shot — {len(all_images)} page(s) — {source_label}]",
+            source_pages=all_pages,
+            token_count=total_vision_tokens,
+            page_images=all_images,
+            source_document=source_label,
+        ))
+    else:
+        # Document par document (ou tranches si trop gros)
+        for doc_name, page_data in vision_docs:
+            doc_tokens = sum(p["tokens"] for p in page_data)
+            if doc_tokens <= max_total_tokens:
+                result_chunks.append(TextChunk(
+                    text=f"[One-shot — {len(page_data)} page(s) — {doc_name}]",
+                    source_pages=[p["page"] for p in page_data],
+                    token_count=doc_tokens,
+                    page_images=[p["base64"] for p in page_data],
+                    source_document=doc_name,
+                ))
+            else:
+                current_slice = []
+                current_tokens = 0
+                for p in page_data:
+                    if current_tokens + p["tokens"] > slice_tokens and current_slice:
+                        result_chunks.append(TextChunk(
+                            text=f"[One-shot tranche — {len(current_slice)} page(s) — {doc_name}]",
+                            source_pages=[pp["page"] for pp in current_slice],
+                            token_count=current_tokens,
+                            page_images=[pp["base64"] for pp in current_slice],
+                            source_document=doc_name,
+                        ))
+                        current_slice = []
+                        current_tokens = 0
+                    current_slice.append(p)
+                    current_tokens += p["tokens"]
+                if current_slice:
+                    result_chunks.append(TextChunk(
+                        text=f"[One-shot tranche — {len(current_slice)} page(s) — {doc_name}]",
+                        source_pages=[pp["page"] for pp in current_slice],
+                        token_count=current_tokens,
+                        page_images=[pp["base64"] for pp in current_slice],
+                        source_document=doc_name,
+                    ))
+
+    return result_chunks
