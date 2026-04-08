@@ -32,7 +32,7 @@ Instructions pour les agents IA travaillant sur ce projet.
 
 | Fichier | Lignes | Rôle |
 |---------|--------|------|
-| `core/models.py` | 178 | Modèles Pydantic v2 pour validation JSON LLM |
+| `core/models.py` | ~210 | Modèles Pydantic v2 pour validation JSON LLM + wrappers structured output |
 | `core/llm_cache.py` | 150 | Cache LLM SHA256, LRU, TTL, persistence JSON |
 | `core/token_tracker.py` | 65 | Log tokens par appel, résumé agrégé |
 | `core/stats_manager.py` | 52 | Stats globales JSON (questions, docs, tokens, sessions) |
@@ -157,7 +157,8 @@ class User:
 
 ### Index des fonctions clés par fichier
 
-**`core/llm_service.py`** : `call_llm()`, `call_llm_json()`, `call_llm_chat()`, `call_llm_chat_json()`, `call_llm_vision()`, `call_llm_vision_json()`, `call_llm_stream()`, `call_llm_vision_stream()`, `call_llm_json_stream()`, `count_tokens()`, `list_models()`, `get_model_info()`
+**`core/llm_service.py`** : `call_llm()`, `call_llm_json()`, `call_llm_chat()`, `call_llm_chat_json()`, `call_llm_vision()`, `call_llm_vision_json()`, `call_llm_stream()`, `call_llm_vision_stream()`, `call_llm_json_stream()`, `call_llm_responses_stream()`, `count_tokens()`, `list_models()`, `get_model_info()`  
+Internes streaming : `_execute_completion_stream()`, `_execute_responses_stream()`, `_scan_complete_brace_object()`, `_stream_extract_array_items()`, `_extract_complete_json_objects()`
 
 **`generation/quiz_generator.py`** : `generate_quiz()`, `generate_quiz_from_chunk()`, `_build_quiz_prompt()`, `_parse_quiz_questions()`, `_distribute_questions()`
 
@@ -267,15 +268,16 @@ generateur_de_quizz/
 
 - Toujours passer par `llm_service.py` — ne jamais appeler `openai` directement depuis les autres modules.
 - Pas de `max_tokens` envoyé à l'API par défaut (réponses longues autorisées).
-- `call_llm_json` / `call_llm_chat_json` gèrent le retry automatique (jusqu'à 3 fois) si le JSON est invalide.
+- `call_llm_json` / `call_llm_chat_json` gèrent le retry automatique (jusqu'à 3 fois) si le JSON est invalide. **Pas de réparation JSON** — chaque retry relance le prompt original.
 - `call_llm_vision` / `call_llm_vision_json` pour les requêtes avec images base64.
 - **Cache** : `call_llm()` et `call_llm_json()` utilisent le cache SHA256 par défaut (`use_cache=True`). Ne PAS cacher `call_llm_chat` (contexte conversationnel) ni `call_llm_vision` (images trop lourdes).
 - **enable_thinking** : Toutes les fonctions `call_llm*` acceptent `enable_thinking: bool` (défaut `True` pour texte, `False` pour vision). Passe `extra_body={"enable_thinking": ..., "chat_template_kwargs": {"enable_thinking": ...}}` pour les modèles Qwen.
 - **Token tracking** : Tous les appels sont tracés automatiquement via `log_token_usage()` dans `_execute_completion()`.
 - **Parsing JSON résilient** : `_parse_json_response()` tente 3 stratégies (direct, bloc markdown, extraction braces).
-- **Réparation JSON** : Si le JSON est invalide après le premier essai, le JSON cassé est envoyé au LLM avec une instruction de correction (au lieu de relancer le même prompt).
-- **Streaming** : `call_llm_stream()`, `call_llm_vision_stream()` yields les fragments de texte. `call_llm_json_stream()` accumule le flux et extrait les objets JSON complets via `_extract_complete_json_objects()`. Fallback automatique vers non-streaming si l'API ne le supporte pas.
-- **Mode One-shot** : `extract_oneshot_chunks()` dans `document_processor.py` crée le minimum de chunks pour envoyer tout en une requête vision (DPI 85, 262k tokens). Découpe automatiquement si trop gros.
+- **Streaming (chat.completions)** : `call_llm_stream()`, `call_llm_vision_stream()` yields les fragments. `call_llm_json_stream()` accumule et extrait les items via `_stream_extract_array_items(text, array_key, last_pos)` — extraction item-par-item dans un array nommé (ex: `"questions"`). Filtre les blocs `<think>...</think>` en temps réel.
+- **Streaming (API responses)** : `call_llm_responses_stream()` utilise `/v1/responses` avec `text_format` (Pydantic BaseModel) pour un JSON garanti valide. `call_llm_json_stream()` tente cette API en priorité quand `text_format` est fourni ; fallback automatique vers `chat.completions` si non supporté (flag `_responses_api_supported`).
+- **Retry hybride quiz/exercices** : En cas d'échec JSON partiel, les items déjà extraits du stream sont conservés. La génération relance uniquement pour le nombre manquant, en passant les items déjà générés en anti-doublons (`existing_questions`). Voir `generate_quiz_from_chunk()` et `generate_exercises_from_chunk()`.
+- **Mode One-shot** : `extract_oneshot_chunks()` dans `document_processor.py` crée le minimum de chunks. Mode vision (DPI 85, budget 262k-50k tokens) ou mode texte (budget `VISION_MODEL_CONTEXT - ONESHOT_RESERVE_TOKENS`). Dans les deux cas utilise le modèle vision (plus grand contexte). Découpe automatiquement par document ou par tranches si trop gros.
 - **Variables d'env** : Les nouvelles constantes sont `TEXT_MODEL_NAME`, `TEXT_MODEL_CONTEXT`, `VISION_MODEL_CONTEXT`. Les anciens noms (`MODEL_NAME`, `MODEL_CONTEXT_WINDOW`, `VISION_CONTEXT_WINDOW`) sont supportés par rétro-compatibilité via aliases.
 
 ### Structures de données clés
@@ -285,7 +287,7 @@ generateur_de_quizz/
 - `QuizSession` a des champs optionnels `pool_json`, `subset_size`, `pass_threshold` pour le mode pool, et `exercises_json` pour stocker les exercices.
 - `WorkSession` est le brouillon collaboratif formateurs (table `work_sessions` dans SQLite), avec `draft_exercises_json`.
 - Les chunks de texte portent des marqueurs `[Début Page X] ... [Fin Page X]` pour la traçabilité des sources.
-- **Modèles Pydantic v2** (`core/models.py`) : `QuizQuestionModel`, `ExerciseModel`, `NotionModel` etc. Utilisés pour valider les réponses JSON du LLM avant conversion vers les dataclasses existants (`model_validate()` → `model_dump()`). Migration graduelle — ne pas remplacer les dataclasses existants.
+- **Modèles Pydantic v2** (`core/models.py`) : `QuizQuestionModel`, `ExerciseModel`, `NotionModel` etc. pour la validation. Wrappers structured output : `QuizResponseModel` (`questions: List[...]`), `ExerciseResponseModel` (`exercises: List[...]`), `NotionResponseModel` (`notions: List[...]`) — passés comme `text_format` à `call_llm_json_stream()` pour l'API responses. Migration graduelle — ne pas remplacer les dataclasses existants.
 
 ### Structure des prompts (quiz et exercices)
 
@@ -353,7 +355,9 @@ Les générations successives s'ajoutent aux exercices existants (`st.session_st
 - **Auth** : système login/rôles désactivé temporairement (code commenté dans app.py, work_session.py).
 - **Persistance documents** : les fichiers uploadés sont cachés dans `session_state["_uploaded_files_cache"]` (bytes + noms) pour survivre à la navigation entre pages.
 - **Quiz session** : les questions non remplies sont affichées par numéro dans un warning, bouton de soumission désactivé tant que tout n'est pas répondu.
-- **Tag version** : popover `v3.1` en haut de page avec changelog complet (v1 → v2 → v3.0 → v3.1).
+- **Tag version** : popover `v3.3` en haut de page avec changelog complet.
+- **Toggle Streaming** : "Streaming (affichage progressif)" dans les options avancées. Désactivé → mode classique (batch complet). Active par défaut.
+- **Mode One-shot** : toggle indépendant du mode vision. En texte seul, utilise le modèle vision pour son grand contexte. En vision, utilise DPI 85 + slider 100-150 pages/tranche.
 
 ### Sécurité
 

@@ -41,7 +41,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Vérification IA pour tous les types** : Boucle vérifier → reformuler (max 3 tentatives) → supprimer, similaire aux QCM. Les exercices à trou et cas pratiques sont aussi vérifiés par le LLM.
 - **Vérification pas à pas** (calcul numérique) : Le code Python affiche chaque étape intermédiaire ; auto-correction LLM si le résultat ne correspond pas.
 - **Accumulation** : Les générations successives s'ajoutent sans écraser les exercices existants. Bouton "Effacer tout" disponible.
-- **Retry automatique JSON** : Si le LLM produit un JSON invalide, le système relance automatiquement l'appel jusqu'à 3 fois.
+- **Retry hybride JSON** : Si le LLM produit un JSON invalide ou incomplet, les items déjà extraits sont conservés et le système relance uniquement pour le nombre manquant (jusqu'à 3 tentatives).
 - **Validation Pydantic** : Les réponses JSON du LLM sont validées par des modèles Pydantic v2 avant traitement.
 
 ### 💬 Mode Libre (Génération par conversation IA)
@@ -116,6 +116,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 - **Modèle vision** : Utilise `Qwen3-VL-32B-Instruct-FP8` pour analyser les **images des pages PDF** (diagrammes, schémas, formules, tableaux visuels).
 - **Optimisation DPI automatique** : Le système calcule le DPI optimal pour respecter le budget de tokens (recherche binaire entre min/max DPI).
 - **Pages par chunk configurables** : Slider pour définir le nombre de pages groupées par chunk (1–20), avec estimation des tokens par chunk en temps réel.
+- **Mode One-shot** : Toggle pour envoyer tous les documents en un minimum de requêtes. En mode texte (défaut), utilise le modèle vision pour son grand contexte (262k tokens). En mode vision, envoie les pages en images (DPI 85, slider 100–150 pages/tranche). Découpe automatiquement si trop gros.
 - **Fallback automatique** : Les fichiers non-PDF restent traités en mode texte classique.
 
 ### ⚡ Traitement par lots (Batch API)
@@ -396,11 +397,11 @@ generateur_de_quizz/
 
 ### v3.3
 
-- **Mode global One-shot** : Nouveau toggle dans les options avancées — envoie tous les documents en une seule requête au modèle vision (262k tokens, DPI 85). Découpe automatiquement par document ou par tranches si trop volumineux.
-- **Streaming LLM + affichage incrémental** : Les notions, questions et exercices s'affichent au fur et à mesure de leur génération. Extraction JSON incrémentale depuis le flux streaming. Fallback automatique vers le mode non-streaming si l'API ne le supporte pas.
-- **Réparation JSON par LLM** : Quand le LLM produit un JSON invalide, au lieu de relancer le même prompt, le JSON cassé est envoyé au LLM avec une instruction de correction. Appliqué à `call_llm_json`, `call_llm_chat_json` et `call_llm_vision_json`.
+- **Mode global One-shot** : Toggle dans les options avancées — envoie tout en un minimum de requêtes. En mode texte, utilise le modèle vision (plus grand contexte, 262k tokens) avec le texte extrait. En mode vision, envoie les pages en images (DPI 85). Découpe automatiquement par document ou par tranches si trop volumineux.
+- **Streaming LLM vrai par item** : Les questions et exercices s'affichent dès qu'ils sont complets dans le flux, sans attendre la fin du batch. Extraction JSON incrémentale via `_stream_extract_array_items`. Support de l'API `/v1/responses` avec structured output Pydantic (`text_format`) pour un JSON garanti valide. Toggle "Streaming" pour comparer avec le mode classique.
+- **Retry hybride JSON** : En cas de JSON invalide ou incomplet, les items déjà extraits du stream sont conservés. Le système relance uniquement pour le nombre manquant, en passant les items déjà générés en anti-doublons. Suppression de la stratégie de réparation JSON (envoi du JSON cassé au LLM).
 - **Préservation des résultats** : Changer la résolution, le DPI ou le mode vision ne supprime plus les quiz et exercices déjà générés. Seul un changement de fichier les réinitialise.
-- **Fix vérification exercices** : Les exercices à trou et cas pratique ne sont plus marqués "✅ Vérifié" à la création. Le badge vérifié n'apparaît qu'après vérification effective (code Python ou LLM).
+- **Fix vérification exercices** : Les exercices à trou et cas pratique ne sont plus marqués "✅ Vérifié" à la création. Le badge vérifié n'apparaît qu'après vérification effective.
 - **Suppression des indices trou** : Retrait de la fonctionnalité "Blanc à aider" / "Générer des indices" pour les exercices à trou.
 - **Uniformisation des variables d'environnement** : `MODEL_NAME` → `TEXT_MODEL_NAME`, `MODEL_CONTEXT_WINDOW` → `TEXT_MODEL_CONTEXT`, `VISION_CONTEXT_WINDOW` → `VISION_MODEL_CONTEXT` (262 000 par défaut). Rétro-compatibilité avec les anciens noms.
 
