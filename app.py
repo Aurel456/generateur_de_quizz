@@ -170,9 +170,17 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.popover("🏷️ v3.2"):
+with st.popover("🏷️ v3.3"):
     st.markdown("""
-**Nouveautés v3.2 :**
+**Nouveautés v3.3 :**
+- Mode global One-shot : envoie tous les documents en une requête (vision ou texte), découpe auto si trop volumineux
+- Streaming LLM : questions et exercices s'affichent au fur et à mesure de la génération
+- Réparation JSON automatique : si le LLM renvoie du JSON invalide, une correction est tentée
+- Variables d'environnement uniformisées : `TEXT_MODEL_NAME`, `TEXT_MODEL_CONTEXT`, `VISION_MODEL_CONTEXT`
+- Suppression des indices pour exercices à trou
+- Fix : quiz/exercices conservés lors d'un changement de DPI ou de résolution
+
+**v3.2 :**
 - Onglet Notions dans l'Atelier Formateur : affichage par catégorie/thème, édition, ajout manuel
 - Chat LLM "Modifier avec l'IA" dans les 3 onglets de contenu de l'Atelier (Questions, Exercices, Notions)
 - Export notions enrichi vers atelier (catégorie, source, pages) + bouton d'export dédié
@@ -402,15 +410,21 @@ with st.sidebar:
         oneshot_mode = st.toggle(
             "Mode global One-shot",
             value=False,
-            disabled=not VISION_MODEL_NAME,
             help=(
-                "Envoie tous les documents en une seule requête au modèle vision "
+                "Envoie tous les documents en un minimum de requêtes. "
+                "En mode texte, regroupe tout le contenu en un seul chunk. "
+                "Avec le Mode Vision activé, envoie les pages en images "
                 f"({VISION_MODEL_CONTEXT:,} tokens, DPI 85). "
                 "Si trop volumineux, découpe automatiquement par document ou par tranches."
             ),
         )
-        if oneshot_mode:
-            vision_enabled = True
+        streaming_enabled = st.toggle(
+            "Streaming (affichage progressif)",
+            value=True,
+            help="Affiche les questions/exercices au fur et à mesure de la génération. "
+                 "Désactivez pour comparer avec le mode classique (batch complet).",
+        )
+        st.session_state["streaming_enabled"] = streaming_enabled
 
         enable_thinking = st.toggle(
             "Raisonnement IA (thinking)",
@@ -422,7 +436,7 @@ with st.sidebar:
         st.divider()
 
     # ─── Modèle LLM (auto-switché si vision activé) ──────────────────────────
-    selected_model = VISION_MODEL_NAME if vision_enabled else TEXT_MODEL_NAME
+    selected_model = (VISION_MODEL_NAME or TEXT_MODEL_NAME) if (vision_enabled or oneshot_mode) else TEXT_MODEL_NAME
 
     st.divider()
     st.markdown("## 🌍 Statistiques Globales")
@@ -558,15 +572,26 @@ if app_mode == "📄 Depuis un document":
                                     st.info("Apercu non disponible pour cette page.")
 
                         # Slider pages par chunk
-                        pages_per_chunk = st.slider(
-                            "Pages par chunk (vision)",
-                            min_value=1,
-                            max_value=20,
-                            value=st.session_state.get("vision_pages_per_chunk", 10),
-                            key="vision_pages_per_chunk",
-                            help="Nombre de pages groupées par chunk pour le traitement vision. "
-                                 "Moins de pages = plus de chunks mais plus précis.",
-                        )
+                        if oneshot_mode:
+                            pages_per_chunk = st.slider(
+                                "Pages par tranche (one-shot)",
+                                min_value=100,
+                                max_value=150,
+                                value=st.session_state.get("vision_pages_per_chunk", 125),
+                                key="vision_pages_per_chunk",
+                                help="Taille des tranches si le document dépasse la fenêtre contextuelle. "
+                                     "Ajuste le nombre de pages par requête vision.",
+                            )
+                        else:
+                            pages_per_chunk = st.slider(
+                                "Pages par chunk (vision)",
+                                min_value=1,
+                                max_value=20,
+                                value=st.session_state.get("vision_pages_per_chunk", 10),
+                                key="vision_pages_per_chunk",
+                                help="Nombre de pages groupées par chunk pour le traitement vision. "
+                                     "Moins de pages = plus de chunks mais plus précis.",
+                            )
                         # Estimation tokens par chunk
                         if dpi_info and dpi_info.get("page_sizes_pt"):
                             from processing.vision_processor import calculate_page_tokens
@@ -595,13 +620,21 @@ if app_mode == "📄 Depuis un document":
                     increment_stats(documents=st.session_state.pdf_stats.get('num_documents', 1))
 
                 # Recalculer les chunks (changement de fichier OU de mode)
-                if oneshot_mode:
+                if oneshot_mode and vision_enabled:
                     from core.llm_service import VISION_MODEL_CONTEXT, ONESHOT_RESERVE_TOKENS, ONESHOT_DPI, ONESHOT_SLICE_TOKENS
                     st.session_state.chunks = extract_oneshot_chunks(
                         uploaded_files,
                         dpi=ONESHOT_DPI,
                         max_total_tokens=VISION_MODEL_CONTEXT - ONESHOT_RESERVE_TOKENS,
                         slice_tokens=ONESHOT_SLICE_TOKENS,
+                    )
+                elif oneshot_mode:
+                    # One-shot texte : utilise le modèle vision (plus de contexte) même en mode texte
+                    from core.llm_service import VISION_MODEL_CONTEXT, ONESHOT_RESERVE_TOKENS
+                    oneshot_text_budget = max(VISION_MODEL_CONTEXT - ONESHOT_RESERVE_TOKENS, 10000)
+                    st.session_state.chunks = extract_and_chunk_multiple(
+                        uploaded_files, mode=read_mode,
+                        max_tokens=oneshot_text_budget,
                     )
                 elif vision_enabled:
                     vision_kwargs = {}
@@ -1346,7 +1379,7 @@ if app_mode == "📄 Depuis un document":
                         )
                         st.success(f"{diff_emoji} Question {_stream_count[0]} générée : {q.question[:80]}…")
 
-                _use_stream = not batch_mode
+                _use_stream = (not batch_mode) and st.session_state.get("streaming_enabled", True)
                 quiz = generate_quiz(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts,
@@ -1908,7 +1941,7 @@ if app_mode == "📄 Depuis un document":
                         )
                         st.success(f"{diff_emoji} Exercice {_ex_stream_count[0]} généré")
 
-                _use_stream_ex = not batch_mode
+                _use_stream_ex = (not batch_mode) and st.session_state.get("streaming_enabled", True)
                 exercises = generate_exercises(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts_ex,

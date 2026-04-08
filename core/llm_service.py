@@ -13,6 +13,7 @@ from typing import Callable, Dict, Generator, List, Optional, Tuple
 import tiktoken
 from dotenv import load_dotenv
 from openai import OpenAI
+from pydantic import BaseModel
 
 from core.llm_cache import get_cache
 from core.token_tracker import log_token_usage
@@ -271,66 +272,198 @@ def call_llm_vision_stream(
     )
 
 
-def _extract_complete_json_objects(text: str, last_extracted: int = 0) -> Tuple[List[dict], int]:
-    """
-    Extrait les objets JSON complets depuis un texte en cours de streaming.
+# ── Streaming via API Responses (/v1/responses) ────────────────────────────
 
-    Cherche des objets {...} complets dans le texte à partir de last_extracted.
-    Gère les accolades imbriquées et les strings (avec échappement).
+# Flag global : désactivé si le serveur ne supporte pas l'API responses
+_responses_api_supported = True
+
+
+def _execute_responses_stream(
+    messages: list,
+    model: str,
+    temperature: float,
+    text_format: Optional[type] = None,
+    max_tokens: Optional[int] = None,
+    caller_name: str = "call_llm_responses_stream",
+) -> Generator[str, None, None]:
+    """
+    Exécute un appel via l'API /v1/responses en mode streaming.
+    Utilise text_format (Pydantic BaseModel) pour garantir un JSON valide.
+    Yields les fragments de texte au fur et à mesure.
+    """
+    client = get_client()
+    kwargs = {
+        "model": model,
+        "input": messages,
+        "temperature": temperature,
+        "stream": True,
+    }
+    if text_format is not None:
+        kwargs["text"] = {"format": {"type": "json_schema", "schema": text_format.model_json_schema()}}
+    if max_tokens is not None:
+        kwargs["max_output_tokens"] = max_tokens
+
+    total_content = ""
+    with client.responses.create(**kwargs) as stream:
+        for event in stream:
+            event_type = getattr(event, "type", "")
+            if event_type == "response.output_text.delta":
+                delta = event.delta
+                total_content += delta
+                yield delta
+
+    output_tokens = count_tokens(total_content) if total_content else 0
+    log_token_usage(caller_name, model, 0, output_tokens)
+
+
+def call_llm_responses_stream(
+    system_prompt: str,
+    user_prompt: str,
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.5,
+    text_format: Optional[type] = None,
+    images: Optional[List[str]] = None,
+) -> Generator[str, None, None]:
+    """
+    Appel LLM via API responses en mode streaming.
+    Supporte vision (images base64) et structured output (text_format Pydantic).
+    """
+    target_model = model or TEXT_MODEL_NAME
+    messages = [{"role": "system", "content": system_prompt}]
+
+    if images:
+        user_content = [{"type": "input_text", "text": user_prompt}]
+        for i, img_b64 in enumerate(images):
+            user_content.append({"type": "input_text", "text": f"--- Page {i + 1} ---"})
+            user_content.append({
+                "type": "input_image",
+                "image_url": f"data:image/jpeg;base64,{img_b64}",
+            })
+        messages.append({"role": "user", "content": user_content})
+    else:
+        messages.append({"role": "user", "content": user_prompt})
+
+    yield from _execute_responses_stream(
+        messages=messages,
+        model=target_model,
+        temperature=temperature,
+        text_format=text_format,
+        max_tokens=max_tokens,
+        caller_name="call_llm_responses_stream",
+    )
+
+
+# ── Extraction JSON incrémentale ────────────────────────────────────────────
+
+def _scan_complete_brace_object(text: str, start: int) -> int:
+    """
+    À partir de text[start] (qui doit être '{'), retourne l'index du '}' fermant.
+    Retourne -1 si l'objet est incomplet (le stream n'a pas encore tout livré).
+    Gère les strings avec échappement.
+    """
+    n = len(text)
+    depth = 0
+    in_string = False
+    escape_next = False
+    j = start
+    while j < n:
+        ch = text[j]
+        if escape_next:
+            escape_next = False
+        elif ch == '\\' and in_string:
+            escape_next = True
+        elif ch == '"':
+            in_string = not in_string
+        elif not in_string:
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    return j
+        j += 1
+    return -1
+
+
+def _stream_extract_array_items(
+    text: str,
+    array_key: str,
+    last_pos: int = 0,
+) -> Tuple[List[dict], int]:
+    """
+    Extrait des objets JSON complets depuis un array nommé en cours de streaming.
+
+    Le LLM renvoie typiquement {"questions": [{...}, {...}, ...]}.
+    Au lieu d'attendre l'objet racine complet, on cherche directement les items
+    à l'intérieur du tableau nommé `array_key`.
 
     Returns:
-        (liste d'objets parsés, nouvel index après le dernier objet extrait)
+        (liste d'objets parsés, nouvel index de scan dans le texte)
     """
-    objects = []
+    key_pattern = f'"{array_key}"'
+    key_pos = text.find(key_pattern)
+    if key_pos == -1:
+        return [], last_pos
+
+    bracket_pos = text.find('[', key_pos + len(key_pattern))
+    if bracket_pos == -1:
+        return [], last_pos
+
+    scan_from = max(bracket_pos + 1, last_pos)
+    objects: List[dict] = []
+    i = scan_from
+    n = len(text)
+
+    while i < n:
+        # Sauter espaces et virgules séparant les items
+        while i < n and text[i] in ' \t\n\r,':
+            i += 1
+        if i >= n:
+            break
+        if text[i] == ']':  # Fin du tableau
+            break
+        if text[i] != '{':
+            i += 1
+            continue
+
+        found_end = _scan_complete_brace_object(text, i)
+        if found_end == -1:
+            break  # Item incomplet — attendre plus de données
+
+        candidate = text[i:found_end + 1]
+        try:
+            obj = json.loads(candidate)
+            objects.append(obj)
+            i = found_end + 1
+        except json.JSONDecodeError:
+            i += 1  # Sauter ce '{' et continuer
+
+    return objects, i
+
+
+def _extract_complete_json_objects(text: str, last_extracted: int = 0) -> Tuple[List[dict], int]:
+    """
+    Fallback : extrait des objets JSON de niveau racine depuis un texte streamé.
+    Utilisé quand array_key est inconnu.
+    """
+    objects: List[dict] = []
     i = last_extracted
     n = len(text)
 
     while i < n:
-        # Chercher le prochain '{'
         start = text.find('{', i)
         if start == -1:
             break
-
-        # Compter les accolades en respectant les strings
-        depth = 0
-        in_string = False
-        escape_next = False
-        j = start
-        found_end = -1
-
-        while j < n:
-            ch = text[j]
-            if escape_next:
-                escape_next = False
-                j += 1
-                continue
-            if ch == '\\' and in_string:
-                escape_next = True
-                j += 1
-                continue
-            if ch == '"':
-                in_string = not in_string
-            elif not in_string:
-                if ch == '{':
-                    depth += 1
-                elif ch == '}':
-                    depth -= 1
-                    if depth == 0:
-                        found_end = j
-                        break
-            j += 1
-
+        found_end = _scan_complete_brace_object(text, start)
         if found_end == -1:
-            # Objet incomplet, on s'arrête
             break
-
         candidate = text[start:found_end + 1]
         try:
             obj = json.loads(candidate)
             objects.append(obj)
             i = found_end + 1
         except json.JSONDecodeError:
-            # Pas un JSON valide, avancer après ce '{'
             i = start + 1
 
     return objects, i
@@ -346,9 +479,15 @@ def call_llm_json_stream(
     on_object: Optional[Callable[[dict], None]] = None,
     vision_mode: bool = False,
     images: Optional[List[str]] = None,
+    array_key: Optional[str] = None,
+    text_format: Optional[type] = None,
 ) -> dict:
     """
     Appel LLM JSON en mode streaming avec extraction incrémentale des objets.
+
+    Si text_format (Pydantic BaseModel) est fourni ET l'API responses est disponible,
+    utilise /v1/responses avec structured output (JSON garanti valide).
+    Sinon, fallback vers chat.completions.create classique.
 
     Accumule le texte streamé et extrait les objets JSON complets au fur et à mesure.
     Appelle on_object(obj) pour chaque objet JSON complet détecté dans un array.
@@ -356,30 +495,74 @@ def call_llm_json_stream(
     Returns:
         Le dict complet parsé depuis la réponse finale.
     """
+    global _responses_api_supported
+
     json_system = system_prompt + (
         "\n\nIMPORTANT: Tu DOIS répondre UNIQUEMENT avec un objet JSON valide. "
         "Pas de texte avant ou après le JSON. Pas de bloc markdown."
     )
 
     accumulated = ""
+    json_text = ""  # Texte sans les blocs <think>, utilisé pour l'extraction
     last_extracted = 0
+    _in_think = False
+    _used_responses_api = False
 
     try:
-        if vision_mode and images:
-            stream_gen = call_llm_vision_stream(
-                json_system, user_prompt, images, model, max_tokens, temperature,
-                enable_thinking=enable_thinking,
-            )
-        else:
-            stream_gen = call_llm_stream(
-                json_system, user_prompt, model, max_tokens, temperature,
-                enable_thinking=enable_thinking,
-            )
+        # ── Tenter l'API responses si text_format est fourni ──────────────
+        if text_format is not None and _responses_api_supported:
+            try:
+                stream_gen = call_llm_responses_stream(
+                    system_prompt, user_prompt,
+                    model=model, max_tokens=max_tokens,
+                    temperature=temperature,
+                    text_format=text_format,
+                    images=images if (vision_mode and images) else None,
+                )
+                _used_responses_api = True
+            except Exception as e:
+                logger.warning(f"API responses indisponible, fallback chat.completions: {e}")
+                _responses_api_supported = False
+                _used_responses_api = False
+
+        # ── Fallback vers chat.completions ────────────────────────────────
+        if not _used_responses_api:
+            if vision_mode and images:
+                stream_gen = call_llm_vision_stream(
+                    json_system, user_prompt, images, model, max_tokens, temperature,
+                    enable_thinking=enable_thinking,
+                )
+            else:
+                stream_gen = call_llm_stream(
+                    json_system, user_prompt, model, max_tokens, temperature,
+                    enable_thinking=enable_thinking,
+                )
 
         for chunk in stream_gen:
             accumulated += chunk
+
+            if _used_responses_api:
+                # API responses : pas de <think> blocks, le JSON est garanti valide
+                json_text += chunk
+            else:
+                # chat.completions : filtrer les blocs <think>
+                if '<think>' in chunk:
+                    _in_think = True
+                if '</think>' in accumulated and _in_think:
+                    _in_think = False
+                    json_text = re.sub(r'<think>.*?</think>', '', accumulated, flags=re.DOTALL)
+                    last_extracted = 0
+                    continue
+                if _in_think:
+                    continue
+                json_text += chunk
+
+            # Extraction incrémentale des objets JSON
             if on_object:
-                new_objects, last_extracted = _extract_complete_json_objects(accumulated, last_extracted)
+                if array_key:
+                    new_objects, last_extracted = _stream_extract_array_items(json_text, array_key, last_extracted)
+                else:
+                    new_objects, last_extracted = _extract_complete_json_objects(json_text, last_extracted)
                 for obj in new_objects:
                     on_object(obj)
 
@@ -397,25 +580,13 @@ def call_llm_json_stream(
                 enable_thinking=enable_thinking,
             )
 
-    # Parse final complet
-    parsed = _parse_json_response(accumulated)
+    # Parse final complet — essayer d'abord le texte nettoyé, puis le brut
+    final_text = json_text.strip() or accumulated
+    parsed = _parse_json_response(final_text)
+    if parsed is None:
+        parsed = _parse_json_response(accumulated)
     if parsed is not None:
         return parsed
-
-    # Si le parse final échoue, tenter la réparation JSON
-    repair_system = (
-        "Le JSON suivant est invalide et n'a pas pu être parsé. "
-        "Corrige UNIQUEMENT la syntaxe JSON sans changer le contenu. "
-        "Renvoie UNIQUEMENT le JSON corrigé, sans texte avant ou après."
-    )
-    try:
-        raw = call_llm(repair_system, accumulated, model, max_tokens, temperature,
-                       retries=1, use_cache=False, enable_thinking=enable_thinking)
-        parsed = _parse_json_response(raw)
-        if parsed is not None:
-            return parsed
-    except Exception:
-        pass
 
     raise ValueError(
         f"Impossible de parser la réponse JSON (stream) après streaming.\n"
@@ -550,23 +721,10 @@ def call_llm_json(
     last_raw = None
     for attempt in range(retries):
         try:
-            if attempt == 0 or last_raw is None:
-                # Premier essai ou échec complet précédent : prompt original
-                raw = call_llm(
-                    json_system, user_prompt, model, max_tokens, temperature,
-                    retries=2, use_cache=use_cache, enable_thinking=enable_thinking,
-                )
-            else:
-                # Essais suivants : envoyer le JSON cassé au LLM pour réparation
-                repair_system = (
-                    "Le JSON suivant est invalide et n'a pas pu être parsé. "
-                    "Corrige UNIQUEMENT la syntaxe JSON sans changer le contenu. "
-                    "Renvoie UNIQUEMENT le JSON corrigé, sans texte avant ou après."
-                )
-                raw = call_llm(
-                    repair_system, last_raw, model, max_tokens, temperature,
-                    retries=1, use_cache=False, enable_thinking=enable_thinking,
-                )
+            raw = call_llm(
+                json_system, user_prompt, model, max_tokens, temperature,
+                retries=2, use_cache=use_cache, enable_thinking=enable_thinking,
+            )
         except Exception as e:
             print(f"LLM call failed (attempt {attempt + 1}/{retries}): {e}")
             continue
@@ -584,8 +742,7 @@ def call_llm_json(
             with cache._lock:
                 cache._cache.pop(cache_key, None)
 
-        print(f"JSON parse failed (attempt {attempt + 1}/{retries}), "
-              f"{'retrying with repair prompt' if last_raw else 'retrying LLM call'}...")
+        print(f"JSON parse failed (attempt {attempt + 1}/{retries}), retrying...")
 
     raise ValueError(
         f"Impossible de parser la réponse JSON après {retries} tentatives.\n"
@@ -678,25 +835,10 @@ def call_llm_chat_json(
     last_raw = None
     for attempt in range(retries):
         try:
-            if attempt == 0 or last_raw is None:
-                raw = call_llm_chat(
-                    json_messages, model, max_tokens, temperature,
-                    retries=2, enable_thinking=enable_thinking,
-                )
-            else:
-                # Envoyer le JSON cassé au LLM pour réparation
-                repair_messages = [
-                    {"role": "system", "content": (
-                        "Le JSON suivant est invalide et n'a pas pu être parsé. "
-                        "Corrige UNIQUEMENT la syntaxe JSON sans changer le contenu. "
-                        "Renvoie UNIQUEMENT le JSON corrigé, sans texte avant ou après."
-                    )},
-                    {"role": "user", "content": last_raw},
-                ]
-                raw = call_llm_chat(
-                    repair_messages, model, max_tokens, temperature,
-                    retries=1, enable_thinking=enable_thinking,
-                )
+            raw = call_llm_chat(
+                json_messages, model, max_tokens, temperature,
+                retries=2, enable_thinking=enable_thinking,
+            )
         except Exception as e:
             print(f"LLM chat call failed (attempt {attempt + 1}/{retries}): {e}")
             continue
@@ -707,8 +849,7 @@ def call_llm_chat_json(
         if parsed is not None:
             return parsed
 
-        print(f"JSON parse failed (chat attempt {attempt + 1}/{retries}), "
-              f"{'retrying with repair prompt' if last_raw else 'retrying LLM call'}...")
+        print(f"JSON parse failed (chat attempt {attempt + 1}/{retries}), retrying...")
 
     raise ValueError(
         f"Impossible de parser la réponse JSON (chat) après {retries} tentatives.\n"
@@ -796,22 +937,10 @@ def call_llm_vision_json(
     last_raw = None
     for attempt in range(retries):
         try:
-            if attempt == 0 or last_raw is None:
-                raw = call_llm_vision(
-                    json_system, user_prompt, images, model, max_tokens, temperature,
-                    retries=2, enable_thinking=enable_thinking,
-                )
-            else:
-                # Réparation JSON via appel texte simple (pas vision, économie de tokens)
-                repair_system = (
-                    "Le JSON suivant est invalide et n'a pas pu être parsé. "
-                    "Corrige UNIQUEMENT la syntaxe JSON sans changer le contenu. "
-                    "Renvoie UNIQUEMENT le JSON corrigé, sans texte avant ou après."
-                )
-                raw = call_llm(
-                    repair_system, last_raw, model, max_tokens, temperature,
-                    retries=1, use_cache=False, enable_thinking=enable_thinking,
-                )
+            raw = call_llm_vision(
+                json_system, user_prompt, images, model, max_tokens, temperature,
+                retries=2, enable_thinking=enable_thinking,
+            )
         except Exception as e:
             print(f"LLM vision call failed (attempt {attempt + 1}/{retries}): {e}")
             continue
@@ -822,8 +951,7 @@ def call_llm_vision_json(
         if parsed is not None:
             return parsed
 
-        print(f"JSON parse failed (vision attempt {attempt + 1}/{retries}), "
-              f"{'retrying with repair prompt' if last_raw else 'retrying LLM call'}...")
+        print(f"JSON parse failed (vision attempt {attempt + 1}/{retries}), retrying...")
 
     raise ValueError(
         f"Impossible de parser la réponse JSON (vision) après {retries} tentatives.\n"

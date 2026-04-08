@@ -830,18 +830,23 @@ def generate_exercises_from_chunk(
     Génère des exercices à partir d'un chunk de texte avec vérification.
     Si la vérification échoue, demande au LLM de corriger puis re-vérifie.
     """
-    system_prompt, user_prompt = _build_exercise_prompt(
-        chunk.text, num_exercises, notions_text=notions_text,
-        source_document=chunk.source_document,
-        difficulty=difficulty,
-        custom_exercise_prompts=custom_exercise_prompts,
-        exercise_type=exercise_type,
-        persona=persona,
-    )
-
     exercises = []
 
     for attempt in range(max_retries):
+        remaining = num_exercises - len(exercises)
+        if remaining <= 0:
+            break
+
+        # Reconstruire le prompt avec le nombre d'exercices manquants
+        system_prompt, user_prompt = _build_exercise_prompt(
+            chunk.text, remaining, notions_text=notions_text,
+            source_document=chunk.source_document,
+            difficulty=difficulty,
+            custom_exercise_prompts=custom_exercise_prompts,
+            exercise_type=exercise_type,
+            persona=persona,
+        )
+
         try:
             if vision_mode and chunk.page_images:
                 result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.5, enable_thinking=enable_thinking)
@@ -853,10 +858,6 @@ def generate_exercises_from_chunk(
             for exercise in parsed:
                 exercise = _verify_and_correct_exercise(exercise, model=model, enable_thinking=enable_thinking)
                 exercises.append(exercise)
-
-            verified_count = sum(1 for ex in exercises if ex.verified)
-            if verified_count >= num_exercises:
-                break
 
         except Exception as e:
             print(f"Tentative {attempt + 1}/{max_retries} échouée : {e}")

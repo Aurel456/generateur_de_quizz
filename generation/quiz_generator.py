@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 import logging
 
 from core.llm_service import call_llm_json, call_llm_vision_json, call_llm_json_stream, count_tokens, MODEL_CONTEXT_WINDOW
-from core.models import validate_quiz_question
+from core.models import validate_quiz_question, QuizResponseModel
 from processing.document_processor import TextChunk
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -251,8 +251,6 @@ def generate_quiz_from_chunk(
         streamed_questions = []
 
         def _on_object(obj):
-            # Chaque objet extrait du stream peut être une question individuelle
-            # ou le wrapper {"questions": [...]}
             if "question" in obj and "choices" in obj:
                 parsed = _parse_quiz_questions({"questions": [obj]}, chunk, difficulty)
                 for q in parsed:
@@ -260,20 +258,32 @@ def generate_quiz_from_chunk(
                     if on_item:
                         on_item(q)
 
-        result = call_llm_json_stream(
-            system_prompt, user_prompt, model=model, temperature=0.6,
-            enable_thinking=enable_thinking, on_object=_on_object,
-            vision_mode=(vision_mode and bool(chunk.page_images)),
-            images=chunk.page_images if (vision_mode and chunk.page_images) else None,
-        )
+        try:
+            result = call_llm_json_stream(
+                system_prompt, user_prompt, model=model, temperature=0.6,
+                enable_thinking=enable_thinking, on_object=_on_object,
+                vision_mode=(vision_mode and bool(chunk.page_images)),
+                images=chunk.page_images if (vision_mode and chunk.page_images) else None,
+                array_key="questions",
+                text_format=QuizResponseModel,
+            )
 
-        # Si le streaming n'a rien extrait incrémentalement, parser le résultat final
-        if not streamed_questions:
-            final_questions = _parse_quiz_questions(result, chunk, difficulty)
-            for q in final_questions:
-                if on_item:
-                    on_item(q)
-            return final_questions
+            # Si le streaming n'a rien extrait incrémentalement, parser le résultat final
+            if not streamed_questions:
+                final_questions = _parse_quiz_questions(result, chunk, difficulty)
+                for q in final_questions:
+                    if on_item:
+                        on_item(q)
+                return final_questions
+        except Exception as e:
+            # Garder les questions déjà extraites du stream même si le parse final échoue
+            if streamed_questions:
+                logger.warning(
+                    f"JSON parse échoué mais {len(streamed_questions)} question(s) "
+                    f"récupérées du stream: {e}"
+                )
+            else:
+                raise
         return streamed_questions
     else:
         # Mode classique
@@ -449,41 +459,57 @@ def generate_quiz(
 
     # ─── MODE SÉQUENTIEL ───────────────────────────────────────────────────
     else:
+        max_retries_per_chunk = 2
         for diff_name, diff_tasks in tasks_by_diff.items():
-            # Questions déjà accumulées des niveaux précédents
             accumulated_q_texts = [q.question for q in all_questions] if all_questions else None
 
             for chunk, n_q in diff_tasks:
                 step_idx += 1
                 if progress_callback:
                     progress_callback(step_idx, total_steps)
-                try:
-                    questions = generate_quiz_from_chunk(
-                        chunk=chunk,
-                        difficulty=diff_name,
-                        num_questions=n_q,
-                        num_choices=num_choices,
-                        num_correct=num_correct,
-                        difficulty_prompts=difficulty_prompts,
-                        model=model,
-                        notions_text=notions_text,
-                        vision_mode=vision_mode,
-                        existing_questions=accumulated_q_texts,
-                        variable_correct=variable_correct,
-                        persona=persona,
-                        notion_mixing=notion_mixing,
-                        enable_thinking=enable_thinking,
-                        max_correct=max_correct,
-                        humor=humor,
-                        stream=stream,
-                        on_item=on_item,
-                    )
-                    all_questions.extend(questions)
-                    # Mettre à jour la liste pour les chunks suivants du même niveau
-                    accumulated_q_texts = [q.question for q in all_questions]
-                except Exception as e:
-                    print(f"Erreur sur chunk ({diff_name}): {e}")
-                    continue
+
+                remaining = n_q
+                chunk_questions = []
+
+                for attempt in range(max_retries_per_chunk):
+                    if remaining <= 0:
+                        break
+                    try:
+                        # Inclure les questions déjà récupérées dans l'anti-doublons
+                        existing = (accumulated_q_texts or []) + [q.question for q in chunk_questions]
+                        questions = generate_quiz_from_chunk(
+                            chunk=chunk,
+                            difficulty=diff_name,
+                            num_questions=remaining,
+                            num_choices=num_choices,
+                            num_correct=num_correct,
+                            difficulty_prompts=difficulty_prompts,
+                            model=model,
+                            notions_text=notions_text,
+                            vision_mode=vision_mode,
+                            existing_questions=existing if existing else None,
+                            variable_correct=variable_correct,
+                            persona=persona,
+                            notion_mixing=notion_mixing,
+                            enable_thinking=enable_thinking,
+                            max_correct=max_correct,
+                            humor=humor,
+                            stream=stream,
+                            on_item=on_item,
+                        )
+                        chunk_questions.extend(questions)
+                        remaining = n_q - len(chunk_questions)
+                        if remaining > 0:
+                            logger.info(
+                                f"Chunk ({diff_name}): {len(chunk_questions)}/{n_q} questions, "
+                                f"relance pour {remaining} manquante(s)"
+                            )
+                    except Exception as e:
+                        print(f"Erreur sur chunk ({diff_name}, tentative {attempt + 1}): {e}")
+                        continue
+
+                all_questions.extend(chunk_questions)
+                accumulated_q_texts = [q.question for q in all_questions]
 
     if progress_callback:
         progress_callback(total_steps, total_steps)

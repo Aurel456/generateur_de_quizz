@@ -133,6 +133,28 @@ class NotionModel(BaseModel):
         return v.strip()
 
 
+class NotionListModel(BaseModel):
+    """Wrapper pour la réponse JSON du LLM contenant des notions."""
+    notions: List[NotionModel]
+
+
+# ── Réponses LLM (wrappers pour streaming structured output) ────────────────
+
+class QuizResponseModel(BaseModel):
+    """Réponse LLM pour la génération de quiz."""
+    questions: List[QuizQuestionModel]
+
+
+class ExerciseResponseModel(BaseModel):
+    """Réponse LLM pour la génération d'exercices."""
+    exercises: List[ExerciseModel]
+
+
+class NotionResponseModel(BaseModel):
+    """Réponse LLM pour la détection de notions."""
+    notions: List[NotionModel]
+
+
 # ── TextChunk ────────────────────────────────────────────────────────────────
 
 class TextChunkModel(BaseModel):
