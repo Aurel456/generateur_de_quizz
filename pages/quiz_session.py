@@ -128,6 +128,15 @@ if not st.session_state.submitted:
 
     st.divider()
 
+    # ─── Glossaire des acronymes (si disponible) ─────────────────────────────
+    _acr_json = getattr(session, "acronyms_json", "[]") or "[]"
+    _acronyms_list = json.loads(_acr_json)
+    _active_acrs = [a for a in _acronyms_list if a.get("enabled", True)]
+    if _active_acrs:
+        with st.expander(f"📖 Glossaire des acronymes ({len(_active_acrs)})"):
+            for a in sorted(_active_acrs, key=lambda x: x.get("acronym", "")):
+                st.markdown(f"**{a.get('acronym', '')}** : {a.get('definition', '')}")
+
     # ─── Affichage des questions ──────────────────────────────────────────────
 
     answers = {}

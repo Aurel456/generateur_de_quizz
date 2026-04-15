@@ -16,21 +16,43 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 TEMPLATE_FILE = os.path.join(TEMPLATE_DIR, "quiz_template.html")
 
 
-def export_quiz_html(quiz: Quiz) -> str:
+def _build_acronyms_glossary_html(acronyms: Optional[list] = None) -> str:
+    """Construit le HTML d'un glossaire d'acronymes."""
+    if not acronyms:
+        return ""
+    active = [a for a in acronyms if a.get("enabled", True)]
+    if not active:
+        return ""
+    items = "".join(
+        f'<li><strong>{a["acronym"]}</strong> : {a.get("definition", "")}</li>'
+        for a in sorted(active, key=lambda x: x["acronym"])
+    )
+    return (
+        '<div class="glossary-section" style="max-width:900px;margin:1.5rem auto;padding:1rem 1.5rem;'
+        'background:rgba(108,99,255,0.05);border:1px solid rgba(108,99,255,0.2);border-radius:10px;">'
+        '<details><summary style="cursor:pointer;font-weight:600;color:#6c63ff;font-size:1.05rem;">'
+        f'📖 Glossaire des acronymes ({len(active)})</summary>'
+        f'<ul style="margin-top:0.7rem;padding-left:1.2rem;color:#d0d0e0;line-height:1.8;">{items}</ul>'
+        '</details></div>'
+    )
+
+
+def export_quiz_html(quiz: Quiz, acronyms: Optional[list] = None) -> str:
     """
     Génère un fichier HTML interactif standalone pour le quizz.
-    
+
     Args:
         quiz: Objet Quiz contenant les questions.
-    
+        acronyms: Liste de dicts d'acronymes (optionnel) pour le glossaire.
+
     Returns:
         Contenu HTML sous forme de string.
     """
     with open(TEMPLATE_FILE, "r", encoding="utf-8") as f:
         template_str = f.read()
-    
+
     template = Template(template_str)
-    
+
     # Préparer les données pour le template
     questions_data = []
     for i, q in enumerate(quiz.questions):
@@ -48,7 +70,7 @@ def export_quiz_html(quiz: Quiz) -> str:
             "source_pages": q.source_pages,
             "related_notions": getattr(q, 'related_notions', []) or [],
         })
-    
+
     html = template.render(
         title=quiz.title,
         difficulty=quiz.difficulty,
@@ -56,7 +78,15 @@ def export_quiz_html(quiz: Quiz) -> str:
         total_questions=len(questions_data),
         metadata=quiz.metadata,
     )
-    
+
+    # Injecter le glossaire des acronymes après le <body> ou le header
+    glossary_html = _build_acronyms_glossary_html(acronyms)
+    if glossary_html:
+        # Injecter juste avant les questions (après le premier <div class="container">)
+        insert_marker = '<div class="container">'
+        if insert_marker in html:
+            html = html.replace(insert_marker, insert_marker + glossary_html, 1)
+
     return html
 
 
@@ -144,12 +174,13 @@ def export_exercises_csv(exercises: list) -> str:
     return output.getvalue()
 
 
-def export_exercises_html(exercises: list) -> str:
+def export_exercises_html(exercises: list, acronyms: Optional[list] = None) -> str:
     """
     Génère un fichier HTML interactif standalone pour les exercices.
-    
+
     Args:
         exercises: Liste d'objets Exercise.
+        acronyms: Liste de dicts d'acronymes (optionnel) pour le glossaire.
     
     Returns:
         Contenu HTML sous forme de string.
@@ -348,6 +379,13 @@ function toggleAnswer(exId) {{
 </script>
 </body>
 </html>"""
+    # Injecter le glossaire des acronymes
+    glossary_html = _build_acronyms_glossary_html(acronyms)
+    if glossary_html:
+        insert_marker = '<div class="container">'
+        if insert_marker in html:
+            html = html.replace(insert_marker, insert_marker + glossary_html, 1)
+
     return html
 
 
@@ -371,7 +409,7 @@ def _extract_html_parts(html: str) -> dict:
     return {"css": css, "js": js, "body": body}
 
 
-def export_combined_html(quiz: Optional[Quiz], exercises: Optional[list]) -> str:
+def export_combined_html(quiz: Optional[Quiz], exercises: Optional[list], acronyms: Optional[list] = None) -> str:
     """
     Génère un fichier HTML combiné avec quiz QCM + exercices dans un seul document.
     Extrait proprement CSS, JS et body de chaque export pour les assembler.
@@ -383,12 +421,12 @@ def export_combined_html(quiz: Optional[Quiz], exercises: Optional[list]) -> str
 
     if quiz and quiz.questions:
         quiz_count = len(quiz.questions)
-        quiz_html = export_quiz_html(quiz)
+        quiz_html = export_quiz_html(quiz, acronyms=acronyms)
         quiz_parts = _extract_html_parts(quiz_html)
 
     if exercises:
         ex_count = len(exercises)
-        ex_html = export_exercises_html(exercises)
+        ex_html = export_exercises_html(exercises, acronyms=acronyms if not quiz_count else None)
         ex_parts = _extract_html_parts(ex_html)
 
     title = quiz.title if quiz else "Export combiné"

@@ -27,7 +27,11 @@ from export.quiz_exporter import (
     export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html,
     export_combined_html, export_combined_csv,
 )
-from generation.notion_detector import detect_notions, edit_notions_with_llm, merge_similar_notions, Notion
+from generation.notion_detector import detect_notions_and_acronyms, edit_notions_with_llm, merge_similar_notions, Notion
+from generation.acronym_detector import (
+    Acronym, load_acronym_reference, detect_acronyms_from_text,
+    edit_acronyms_with_llm,
+)
 from ui.ui_components import render_stat_card, render_source_info, render_difficulty_badge
 from core.stats_manager import load_stats, increment_stats
 from core.personas import PERSONA_DOMAINS, get_persona_for_domain
@@ -274,6 +278,10 @@ if "quiz_persona" not in st.session_state:
     st.session_state.quiz_persona = QUIZ_DEFAULT_PERSONA
 if "notions" not in st.session_state:
     st.session_state.notions = None
+if "acronyms" not in st.session_state:
+    st.session_state.acronyms = None
+if "acronym_reference" not in st.session_state:
+    st.session_state.acronym_reference = None
 if "exercise_prompts" not in st.session_state:
     st.session_state.exercise_prompts = {k: v for k, v in DEFAULT_EXERCISE_PROMPTS.items()}
 if "exercise_prompts_trou" not in st.session_state:
@@ -664,6 +672,18 @@ if app_mode == "📄 Depuis un document":
                     st.session_state.quiz = None
                     st.session_state.exercises = None
                     _invalidate_download_cache()
+                    # Auto-détection des acronymes dès l'upload
+                    import os as _os_acr_auto
+                    _acr_auto_path = _os_acr_auto.path.join(_os_acr_auto.path.dirname(__file__), "shared_data", "acronyms.json")
+                    if _os_acr_auto.path.isfile(_acr_auto_path):
+                        try:
+                            _ref_auto = load_acronym_reference(_acr_auto_path)
+                            st.session_state.acronym_reference = _ref_auto
+                            st.session_state.acronyms = detect_acronyms_from_text(st.session_state.chunks, _ref_auto)
+                        except Exception:
+                            st.session_state.acronyms = None
+                    else:
+                        st.session_state.acronyms = None
 
 
     # Fallback si pas de fichiers uploadés
@@ -695,6 +715,59 @@ if app_mode == "📄 Depuis un document":
                     )
 
         st.divider()
+
+    # ─── Helper pour sérialiser les acronymes ───────────────────────────────────
+
+    def _serialize_acronyms():
+        """Sérialise les acronymes du session_state en liste de dicts."""
+        if not st.session_state.acronyms:
+            return None
+        return [
+            {"acronym": a.acronym, "definition": a.definition,
+             "all_definitions": a.all_definitions, "source_document": a.source_document,
+             "source_pages": a.source_pages, "enabled": a.enabled,
+             "from_reference": a.from_reference}
+            for a in st.session_state.acronyms
+        ]
+
+    # ─── Helper pour afficher une ligne d'acronyme ──────────────────────────────
+
+    def _render_acronym_row(idx, acronym):
+        col_check, col_text, col_def, col_del = st.columns([0.5, 3, 5, 1])
+        with col_check:
+            new_enabled = st.checkbox(
+                "act", value=acronym.enabled, key=f"acr_check_{idx}", label_visibility="collapsed"
+            )
+            if new_enabled != acronym.enabled:
+                st.session_state.acronyms[idx].enabled = new_enabled
+        with col_text:
+            style = "" if acronym.enabled else "opacity: 0.5;"
+            source_info = ""
+            if acronym.source_document:
+                source_info = f" — 📄 {acronym.source_document}"
+            if acronym.source_pages:
+                source_info += f", p. {', '.join(map(str, acronym.source_pages[:5]))}"
+            ref_badge = " 📖" if acronym.from_reference else " 🤖"
+            st.markdown(
+                f"<div style='{style}'><strong>{acronym.acronym}</strong>{ref_badge}"
+                f"<br/><span style='color: #a0a0b8; font-size: 0.8em;'>{source_info.lstrip(' — ')}</span></div>",
+                unsafe_allow_html=True
+            )
+        with col_def:
+            new_def = st.text_input(
+                "Définition", value=acronym.definition,
+                key=f"acr_def_{idx}", label_visibility="collapsed"
+            )
+            if new_def != acronym.definition:
+                st.session_state.acronyms[idx].definition = new_def
+            if len(acronym.all_definitions) > 1:
+                other_defs = [d for d in acronym.all_definitions if d != acronym.definition]
+                if other_defs:
+                    st.caption("Autres : " + " | ".join(other_defs[:3]))
+        with col_del:
+            if st.button("🗑️", key=f"acr_del_{idx}", help="Supprimer cet acronyme"):
+                st.session_state.acronyms.pop(idx)
+                st.rerun()
 
     # ─── Helper pour afficher une ligne de notion ───────────────────────────────
 
@@ -758,7 +831,7 @@ if app_mode == "📄 Depuis un document":
                     st.markdown("**Quiz**")
                     col_q1, col_q2 = st.columns(2)
                     with col_q1:
-                        html_content = _get_cached("quiz_html", export_quiz_html, _exp_quiz)
+                        html_content = _get_cached("quiz_html", export_quiz_html, _exp_quiz, _serialize_acronyms())
                         st.download_button(
                             label=f"📥 HTML Quiz ({len(_exp_quiz.questions)}Q)",
                             data=html_content,
@@ -783,7 +856,7 @@ if app_mode == "📄 Depuis un document":
                     st.markdown("**Exercices**")
                     col_e1, col_e2 = st.columns(2)
                     with col_e1:
-                        html_ex = _get_cached("ex_html", export_exercises_html, _exp_exercises)
+                        html_ex = _get_cached("ex_html", export_exercises_html, _exp_exercises, _serialize_acronyms())
                         st.download_button(
                             label=f"📥 HTML Exercices ({len(_exp_exercises)}Ex)",
                             data=html_ex,
@@ -808,7 +881,7 @@ if app_mode == "📄 Depuis un document":
                     st.markdown("**Export combiné (Quiz + Exercices)**")
                     col_c1, col_c2 = st.columns(2)
                     with col_c1:
-                        combined_html = export_combined_html(_exp_quiz, _exp_exercises)
+                        combined_html = export_combined_html(_exp_quiz, _exp_exercises, _serialize_acronyms())
                         st.download_button(
                             label=f"📥 HTML Combiné ({len(_exp_quiz.questions)}Q + {len(_exp_exercises)}Ex)",
                             data=combined_html,
@@ -903,16 +976,18 @@ if app_mode == "📄 Depuis un document":
                                     "blanks": ex.blanks, "sub_questions": ex.sub_questions,
                                 } for ex in _exp_exercises
                             ]
+                        acronyms_data = _serialize_acronyms()
                         if use_pool and total_q > 1:
                             session_obj = create_pool_session(
                                 quiz_data, notions_data, share_title,
                                 subset_size=int(st.session_state.get("share_subset_size", min(20, total_q))),
                                 pass_threshold=st.session_state.get("share_pass_threshold", 70) / 100,
+                                acronyms_data=acronyms_data,
                             )
                             st.success(f"Session pool créée ! Code : **{session_obj.session_code}**")
                             st.caption(f"Chaque participant verra {session_obj.subset_size} questions sur {total_q}.")
                         else:
-                            session_obj = create_quiz_session(quiz_data, notions_data, share_title, exercises_data=exercises_data)
+                            session_obj = create_quiz_session(quiz_data, notions_data, share_title, exercises_data=exercises_data, acronyms_data=acronyms_data)
                             st.success(f"Session créée ! Code : **{session_obj.session_code}**")
                         st.code(f"Code de session : {session_obj.session_code}", language=None)
                         st.caption("Les participants accèdent au quizz via la page quiz_session avec `?code=" + session_obj.session_code + "`.")
@@ -970,7 +1045,8 @@ if app_mode == "📄 Depuis un document":
                                 update_work_session_draft(ws_target.strip().upper(), existing_data, ws_owner or "?", notions_export)
                                 st.success(f"✅ {len(_exp_quiz.questions)} question(s) ajoutées à l'atelier **{ws_target.strip().upper()}** ({len(existing_qs)} total)")
                         else:
-                            ws_obj = create_work_session(quiz_data_export, notions_export, _exp_quiz.title, owner_name=ws_owner or "?")
+                            _acr_export = _serialize_acronyms()
+                            ws_obj = create_work_session(quiz_data_export, notions_export, _exp_quiz.title, owner_name=ws_owner or "?", acronyms_data=_acr_export)
                             st.session_state["_ws_created_code"] = ws_obj.work_code
                             st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
                             st.code(f"Code atelier : {ws_obj.work_code}", language=None)
@@ -1022,6 +1098,7 @@ if app_mode == "📄 Depuis un document":
                                 "Exercices générés",
                                 owner_name=ws_owner or "?",
                                 exercises_data=exercises_data_ws,
+                                acronyms_data=_serialize_acronyms(),
                             )
                             st.session_state["_ws_created_code"] = ws_obj.work_code
                             st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
@@ -1061,6 +1138,7 @@ if app_mode == "📄 Depuis un document":
                                 notions_export,
                                 "Notions exportées",
                                 owner_name=ws_owner or "?",
+                                acronyms_data=_serialize_acronyms(),
                             )
                             st.session_state["_ws_created_code"] = ws_obj.work_code
                             st.success(f"Atelier créé ! Code : **{ws_obj.work_code}**")
@@ -1097,8 +1175,31 @@ if app_mode == "📄 Depuis un document":
                 def _on_notion_item(n):
                     with _notion_stream_ctn:
                         st.info(f"📚 Notion détectée : **{n.title}**")
-                notions = detect_notions(chunks, model=selected_model, progress_callback=notion_progress, vision_mode=vision_enabled, enable_thinking=st.session_state.get("enable_thinking", True), on_item=_on_notion_item)
+                _known_acr = [a.acronym for a in (st.session_state.acronyms or [])]
+                notions, _new_acrs = detect_notions_and_acronyms(
+                    chunks, known_acronyms=_known_acr,
+                    model=selected_model, progress_callback=notion_progress,
+                    vision_mode=vision_enabled,
+                    enable_thinking=st.session_state.get("enable_thinking", True),
+                    on_item=_on_notion_item,
+                )
                 st.session_state.notions = notions
+                # Fusionner les nouveaux acronymes inconnus détectés par le LLM
+                if _new_acrs:
+                    if st.session_state.acronyms is None:
+                        st.session_state.acronyms = []
+                    _existing_set = {a.acronym for a in st.session_state.acronyms}
+                    for _acr_d in _new_acrs:
+                        if _acr_d["acronym"] not in _existing_set:
+                            st.session_state.acronyms.append(Acronym(
+                                acronym=_acr_d["acronym"],
+                                definition=_acr_d["definition"],
+                                all_definitions=[_acr_d["definition"]],
+                                source_document=_acr_d.get("source_document", ""),
+                                source_pages=_acr_d.get("source_pages", []),
+                                enabled=True,
+                                from_reference=False,
+                            ))
                 progress_bar.progress(1.0, text="✅ Notions détectées !")
                 time.sleep(0.5)
                 progress_bar.empty()
@@ -1191,6 +1292,90 @@ if app_mode == "📄 Depuis un document":
 
         else:
             st.info("👆 Cliquez sur le bouton ci-dessus pour détecter automatiquement les notions fondamentales de vos documents.")
+
+        # ─── Section Acronymes ────────────────────────────────────────────────
+        st.divider()
+        st.markdown("### 🔤 Acronymes")
+        st.caption("Détectez les acronymes/sigles présents dans vos documents à partir du dictionnaire de référence.")
+
+        import os as _os
+        _acronyms_path = _os.path.join(_os.path.dirname(__file__), "shared_data", "acronyms.json")
+        _acr_ref_available = _os.path.isfile(_acronyms_path)
+
+        if not _acr_ref_available:
+            st.warning("⚠️ Fichier `shared_data/acronyms.json` introuvable. Placez votre dictionnaire d'acronymes pour activer la détection.")
+
+        if st.button("🔍 Re-scanner les acronymes", type="primary", disabled=not _acr_ref_available, width='stretch',
+                     help="Re-scanne les documents pour détecter les acronymes du dictionnaire de référence"):
+            with st.spinner("🔤 Scan des acronymes en cours..."):
+                try:
+                    reference = load_acronym_reference(_acronyms_path)
+                    st.session_state.acronym_reference = reference
+                    acronyms = detect_acronyms_from_text(chunks, reference)
+                    # Fusionner avec les acronymes existants (ajout, pas écrasement)
+                    if st.session_state.acronyms:
+                        existing_set = {a.acronym for a in st.session_state.acronyms}
+                        added = 0
+                        for acr in acronyms:
+                            if acr.acronym not in existing_set:
+                                st.session_state.acronyms.append(acr)
+                                added += 1
+                        st.success(f"✅ {added} nouvel(aux) acronyme(s) ajouté(s).")
+                    else:
+                        st.session_state.acronyms = acronyms
+                        st.success(f"✅ {len(acronyms)} acronyme(s) détecté(s).")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erreur : {str(e)}")
+
+        # Affichage des acronymes détectés
+        if st.session_state.acronyms:
+            acronyms_list = st.session_state.acronyms
+            active_acr = sum(1 for a in acronyms_list if a.enabled)
+            st.markdown(f"**{len(acronyms_list)} acronyme(s)** — {active_acr} actif(s)")
+            st.divider()
+
+            for idx, acr in enumerate(acronyms_list):
+                _render_acronym_row(idx, acr)
+
+            st.divider()
+
+            # Ajout manuel
+            with st.expander("➕ Ajouter un acronyme manuellement"):
+                col_acr, col_def = st.columns([1, 3])
+                with col_acr:
+                    new_acr = st.text_input("Acronyme", key="new_acr_input", placeholder="ex: TVA")
+                with col_def:
+                    new_acr_def = st.text_input("Définition", key="new_acr_def_input", placeholder="ex: Taxe sur la Valeur Ajoutée")
+                if st.button("Ajouter", key="add_acr_btn") and new_acr and new_acr_def:
+                    if st.session_state.acronyms is None:
+                        st.session_state.acronyms = []
+                    st.session_state.acronyms.append(Acronym(
+                        acronym=new_acr.strip().upper(),
+                        definition=new_acr_def.strip(),
+                        all_definitions=[new_acr_def.strip()],
+                        enabled=True,
+                        from_reference=False,
+                    ))
+                    st.rerun()
+
+            # Chat LLM pour modifier les acronymes
+            st.divider()
+            st.markdown("#### 💬 Modifier les acronymes avec l'IA")
+            st.caption("Ex: *'Ajoute l'acronyme IRPP'*, *'Corrige la définition de TVA'*")
+            acr_llm_instruction = st.text_input("Votre instruction", key="acr_llm_input", placeholder="Décrivez la modification...")
+            if st.button("💬 Envoyer au LLM", key="acr_llm_btn") and acr_llm_instruction:
+                with st.spinner("🧠 Modification en cours..."):
+                    try:
+                        updated_acrs, explanation = edit_acronyms_with_llm(
+                            st.session_state.acronyms, acr_llm_instruction, model=selected_model,
+                            enable_thinking=st.session_state.get("enable_thinking", True)
+                        )
+                        st.session_state.acronyms = updated_acrs
+                        st.success(f"✅ {explanation}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erreur : {str(e)}")
 
     # ═══ ONGLET QUIZZ ═══════════════════════════════════════════════════════════
 
@@ -1380,6 +1565,7 @@ if app_mode == "📄 Depuis un document":
                         st.success(f"{diff_emoji} Question {_stream_count[0]} générée : {q.question[:80]}…")
 
                 _use_stream = (not batch_mode) and st.session_state.get("streaming_enabled", True)
+                _active_acronyms = [a for a in (st.session_state.acronyms or []) if a.enabled]
                 quiz = generate_quiz(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts,
@@ -1399,6 +1585,7 @@ if app_mode == "📄 Depuis un document":
                     humor=humor,
                     stream=_use_stream,
                     on_item=_on_quiz_item if _use_stream else None,
+                    acronyms=_active_acronyms if _active_acronyms else None,
                 )
                 if st.session_state.quiz is None:
                     st.session_state.quiz = quiz
@@ -1942,6 +2129,7 @@ if app_mode == "📄 Depuis un document":
                         st.success(f"{diff_emoji} Exercice {_ex_stream_count[0]} généré")
 
                 _use_stream_ex = (not batch_mode) and st.session_state.get("streaming_enabled", True)
+                _active_acronyms_ex = [a for a in (st.session_state.acronyms or []) if a.enabled]
                 exercises = generate_exercises(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts_ex,
@@ -1956,6 +2144,7 @@ if app_mode == "📄 Depuis un document":
                     enable_thinking=st.session_state.get("enable_thinking", True),
                     stream=_use_stream_ex,
                     on_item=_on_exercise_item if _use_stream_ex else None,
+                    acronyms=_active_acronyms_ex if _active_acronyms_ex else None,
                 )
                 # Accumulation : ajouter sans écraser les exercices existants
                 if st.session_state.exercises is None:

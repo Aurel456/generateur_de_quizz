@@ -98,6 +98,7 @@ def _build_quiz_prompt(
     notion_mixing: bool = True,
     max_correct: Optional[int] = None,
     humor: bool = False,
+    acronyms_text: str = "",
 ) -> tuple:
     """Construit le prompt système et utilisateur pour la génération de quizz."""
 
@@ -108,6 +109,10 @@ def _build_quiz_prompt(
     notions_block = ""
     if notions_text:
         notions_block = f"""\n\n{notions_text}\nLes questions doivent prioritairement couvrir ces notions fondamentales."""
+
+    acronyms_block = ""
+    if acronyms_text:
+        acronyms_block = f"\n\n{acronyms_text}\nUtilise ces acronymes avec leurs définitions correctes dans les questions et explications."
 
     # Déterminer le N max pour le mode variable
     effective_max = max_correct if max_correct is not None else (num_choices - 1)
@@ -146,7 +151,7 @@ RÈGLES STRICTES :
 {"12. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions." if notions_text else ""}
 {"13. NOTIONS PAR QUESTION : Chaque question doit couvrir UNE SEULE notion à la fois. Le champ 'related_notions' doit contenir exactement 1 élément. Ne mélange pas plusieurs notions dans une même question." if (notions_text and not notion_mixing) else ""}
 {"14. HUMOUR : Pour chaque question, rends exactement UN choix parmi les mauvaises réponses légèrement humoristique ou décalé, tout en restant professionnel et pertinent par rapport au domaine." if humor else ""}
-{notions_block}{f"""
+{notions_block}{acronyms_block}{f"""
 
 QUESTIONS DÉJÀ GÉNÉRÉES — À NE PAS DUPLIQUER :
 Les questions suivantes ont déjà été générées pour ce quizz. Tes nouvelles questions doivent porter sur des sujets différents et ne pas être similaires à celles-ci :
@@ -231,6 +236,7 @@ def generate_quiz_from_chunk(
     humor: bool = False,
     stream: bool = False,
     on_item: Optional[callable] = None,
+    acronyms_text: str = "",
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -243,7 +249,7 @@ def generate_quiz_from_chunk(
         difficulty_prompts, notions_text=notions_text, source_document=chunk.source_document,
         existing_questions=existing_questions, variable_correct=variable_correct,
         persona=persona, notion_mixing=notion_mixing, max_correct=max_correct,
-        humor=humor,
+        humor=humor, acronyms_text=acronyms_text,
     )
 
     if stream:
@@ -337,6 +343,7 @@ def generate_quiz(
     humor: bool = False,
     stream: bool = False,
     on_item: Optional[callable] = None,
+    acronyms: Optional[list] = None,
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -378,6 +385,12 @@ def generate_quiz(
         from generation.notion_detector import notions_to_prompt_text
         notions_text = notions_to_prompt_text(notions)
 
+    # Préparer le texte des acronymes
+    acronyms_text = ""
+    if acronyms:
+        from generation.acronym_detector import acronyms_to_prompt_text
+        acronyms_text = acronyms_to_prompt_text(acronyms)
+
     # Construire les tâches groupées par niveau de difficulté (pour l'anti-doublons)
     tasks_by_diff: Dict[str, List[tuple]] = {}
     for diff_name, diff_count in difficulty_counts.items():
@@ -410,7 +423,7 @@ def generate_quiz(
                     variable_correct=variable_correct,
                     persona=persona, notion_mixing=notion_mixing,
                     max_correct=max_correct,
-                    humor=humor,
+                    humor=humor, acronyms_text=acronyms_text,
                 )
                 custom_id = f"quiz_{diff_name}_{idx}"
                 images = chunk.page_images if (vision_mode and chunk.page_images) else None
@@ -496,6 +509,7 @@ def generate_quiz(
                             humor=humor,
                             stream=stream,
                             on_item=on_item,
+                            acronyms_text=acronyms_text,
                         )
                         chunk_questions.extend(questions)
                         remaining = n_q - len(chunk_questions)

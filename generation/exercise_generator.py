@@ -324,6 +324,7 @@ def _build_exercise_prompt(
     custom_exercise_prompts: Optional[dict] = None,
     exercise_type: str = "calcul",
     persona: str = "",
+    acronyms_text: str = "",
 ) -> tuple:
     """
     Construit le prompt pour la génération d'exercices.
@@ -335,6 +336,10 @@ def _build_exercise_prompt(
     notions_block = ""
     if notions_text:
         notions_block = f"\n\n{notions_text}\nLes exercices doivent tester la maîtrise pratique de ces notions fondamentales."
+
+    acronyms_block = ""
+    if acronyms_text:
+        acronyms_block = f"\n\n{acronyms_text}\nUtilise ces acronymes avec leurs définitions correctes dans les énoncés et corrections."
 
     # Persona active
     active_persona = persona.strip() if persona and persona.strip() else EXERCISE_DEFAULT_PERSONA
@@ -358,8 +363,8 @@ def _build_exercise_prompt(
 
     difficulty_instructions = prompts.get(difficulty, prompts.get("moyen", ""))
 
-    # Injecter notions dans les règles communes
-    rules_block = common_rules.replace("{notions_block}", notions_block)
+    # Injecter notions et acronymes dans les règles communes
+    rules_block = common_rules.replace("{notions_block}", notions_block + acronyms_block)
 
     # Assembler le system prompt : persona + task + rules + difficulty + JSON
     system_prompt = (
@@ -825,6 +830,7 @@ def generate_exercises_from_chunk(
     exercise_type: str = "calcul",
     persona: str = "",
     enable_thinking: bool = True,
+    acronyms_text: str = "",
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
@@ -845,6 +851,7 @@ def generate_exercises_from_chunk(
             custom_exercise_prompts=custom_exercise_prompts,
             exercise_type=exercise_type,
             persona=persona,
+            acronyms_text=acronyms_text,
         )
 
         try:
@@ -881,6 +888,7 @@ def generate_exercises(
     enable_thinking: bool = True,
     stream: bool = False,
     on_item: Optional[callable] = None,
+    acronyms: Optional[list] = None,
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks, avec support des niveaux de difficulté.
@@ -897,6 +905,7 @@ def generate_exercises(
         batch_mode: Si True, utilise l'API Batch pour la génération initiale.
         vision_mode: Si True, envoie les images des chunks au modèle vision.
         enable_thinking: Si True, active le mode thinking du LLM.
+        acronyms: Liste d'Acronym pour le glossaire du domaine.
 
     Returns:
         Liste d'Exercise.
@@ -915,6 +924,12 @@ def generate_exercises(
     if notions:
         from generation.notion_detector import notions_to_prompt_text
         notions_text = notions_to_prompt_text(notions)
+
+    # Préparer le texte des acronymes
+    acronyms_text = ""
+    if acronyms:
+        from generation.acronym_detector import acronyms_to_prompt_text
+        acronyms_text = acronyms_to_prompt_text(acronyms)
 
     # Pré-calculer toutes les tâches (difficulté, chunk, n_exercices)
     all_tasks = []
@@ -952,6 +967,7 @@ def generate_exercises(
                 custom_exercise_prompts=custom_exercise_prompts,
                 exercise_type=exercise_type,
                 persona=persona,
+                acronyms_text=acronyms_text,
             )
             custom_id = f"exercise_{diff_name}_{idx}"
             images = chunk.page_images if (vision_mode and chunk.page_images) else None
@@ -1009,6 +1025,7 @@ def generate_exercises(
                     exercise_type=exercise_type,
                     persona=persona,
                     enable_thinking=enable_thinking,
+                    acronyms_text=acronyms_text,
                 )
                 for ex in exercises:
                     all_exercises.append(ex)

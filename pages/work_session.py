@@ -137,6 +137,7 @@ quiz_data = json.loads(ws.draft_quiz_json)
 questions = quiz_data.get("questions", [])
 exercises = json.loads(ws.draft_exercises_json or "[]")
 notions = json.loads(ws.draft_notions_json or "[]")
+acronyms_ws = json.loads(ws.draft_acronyms_json or "[]")
 
 # ─── En-tête de l'atelier ────────────────────────────────────────────────────
 
@@ -794,6 +795,77 @@ with tab_notions:
                         st.warning("Le LLM n'a retourné aucune notion.")
                 except Exception as e:
                     st.error(f"❌ Erreur : {e}")
+
+    # ─── Section Acronymes dans l'onglet Notions ─────────────────────────────
+    st.divider()
+    st.markdown("### 🔤 Acronymes")
+
+    if not acronyms_ws:
+        st.info("Aucun acronyme dans ce brouillon. Exportez des acronymes depuis l'app principale ou ajoutez-en manuellement.")
+
+    if acronyms_ws:
+        active_acr = sum(1 for a in acronyms_ws if a.get("enabled", True))
+        st.markdown(f"**{len(acronyms_ws)} acronyme(s)** — {active_acr} actif(s)")
+        st.divider()
+
+        for idx, acr in enumerate(acronyms_ws):
+            col_chk, col_txt, col_def, col_del = st.columns([0.5, 3, 5, 1])
+            with col_chk:
+                new_en = st.checkbox("act", value=acr.get("enabled", True), key=f"ws_acr_chk_{idx}", label_visibility="collapsed")
+                if new_en != acr.get("enabled", True):
+                    acronyms_ws[idx]["enabled"] = new_en
+                    update_work_session_draft(ws.work_code, quiz_data, editor_name or "?", acronyms_data=acronyms_ws)
+                    st.rerun()
+            with col_txt:
+                style = "" if acr.get("enabled", True) else "opacity: 0.5;"
+                ref_badge = " 📖" if acr.get("from_reference", True) else " 🤖"
+                src = ""
+                if acr.get("source_document"):
+                    src = f" — 📄 {acr['source_document']}"
+                st.markdown(
+                    f"<div style='{style}'><strong>{acr.get('acronym', '')}</strong>{ref_badge}"
+                    f"<br/><span style='color: #a0a0b8; font-size: 0.8em;'>{src.lstrip(' — ')}</span></div>",
+                    unsafe_allow_html=True
+                )
+            with col_def:
+                new_def = st.text_input(
+                    "Déf", value=acr.get("definition", ""),
+                    key=f"ws_acr_def_{idx}", label_visibility="collapsed"
+                )
+                if new_def != acr.get("definition", ""):
+                    acronyms_ws[idx]["definition"] = new_def
+                    update_work_session_draft(ws.work_code, quiz_data, editor_name or "?", acronyms_data=acronyms_ws)
+                    st.rerun()
+                all_defs = acr.get("all_definitions", [])
+                if len(all_defs) > 1:
+                    other_defs = [d for d in all_defs if d != acr.get("definition", "")]
+                    if other_defs:
+                        st.caption("Autres : " + " | ".join(other_defs[:3]))
+            with col_del:
+                if st.button("🗑️", key=f"ws_acr_del_{idx}", help="Supprimer"):
+                    acronyms_ws.pop(idx)
+                    update_work_session_draft(ws.work_code, quiz_data, editor_name or "?", acronyms_data=acronyms_ws)
+                    st.rerun()
+
+    # Ajout manuel d'acronyme
+    with st.expander("➕ Ajouter un acronyme manuellement"):
+        col_a, col_d = st.columns([1, 3])
+        with col_a:
+            ws_new_acr = st.text_input("Acronyme", key="ws_new_acr", placeholder="ex: TVA")
+        with col_d:
+            ws_new_acr_def = st.text_input("Définition", key="ws_new_acr_def", placeholder="ex: Taxe sur la Valeur Ajoutée")
+        if st.button("Ajouter", key="ws_add_acr_btn") and ws_new_acr and ws_new_acr_def:
+            acronyms_ws.append({
+                "acronym": ws_new_acr.strip().upper(),
+                "definition": ws_new_acr_def.strip(),
+                "all_definitions": [ws_new_acr_def.strip()],
+                "enabled": True,
+                "from_reference": False,
+                "source_document": "",
+                "source_pages": [],
+            })
+            update_work_session_draft(ws.work_code, quiz_data, editor_name or "?", acronyms_data=acronyms_ws)
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

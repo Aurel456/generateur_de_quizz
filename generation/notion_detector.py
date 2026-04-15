@@ -166,6 +166,170 @@ def detect_notions(
     return notions
 
 
+def _build_combined_detection_prompt(
+    chunk: TextChunk,
+    existing_notions: List[Notion],
+    all_known_acronyms: List[str],
+) -> tuple:
+    """Prompt combiné : notions (incrémental) + acronymes inconnus dans ce chunk."""
+
+    doc_label = f"[Document: {chunk.source_document}]" if chunk.source_document else ""
+    pages_label = f"[Pages: {', '.join(map(str, chunk.source_pages))}]"
+    chunk_context = f"{doc_label} {pages_label}\n{chunk.text}"
+
+    existing_text = ""
+    if existing_notions:
+        existing_text = "\n\nNOTIONS FONDAMENTALES DÉJÀ IDENTIFIÉES :\n"
+        for i, n in enumerate(existing_notions, 1):
+            src = ""
+            if n.source_document:
+                src += f" (Source: {n.source_document}"
+                if n.source_pages:
+                    src += f", p. {', '.join(map(str, n.source_pages))}"
+                src += ")"
+            existing_text += f"{i}. {n.title} : {n.description}{src}\n"
+
+    known_list = ", ".join(all_known_acronyms) if all_known_acronyms else "(aucun)"
+
+    system_prompt = f"""Tu es un expert pédagogique. Tu dois analyser un passage de texte et produire deux choses :
+
+1. La liste mise à jour des NOTIONS FONDAMENTALES (concepts, définitions, théorèmes, principes clés).
+2. Les ACRONYMES/SIGLES présents dans ce passage qui ne sont PAS déjà connus.
+
+RÈGLES POUR LES NOTIONS :
+1. CONSERVE toutes les notions existantes (enrichis leur description si utile)
+2. AJOUTE les nouvelles notions identifiées dans ce passage
+3. FUSIONNE les notions redondantes ou similaires
+4. Chaque notion doit avoir un titre concis et une description claire
+5. Cite le document source et les pages
+6. Ordonne les notions par importance pédagogique
+7. Attribue une catégorie thématique à chaque notion (ex: "Fondements", "Procédures", "Calculs", "Définitions")
+
+RÈGLES POUR LES ACRONYMES :
+1. N'inclus PAS les acronymes déjà connus : {known_list}
+2. Cherche : mots en MAJUSCULES de 2 à 8 lettres, sigles avec expansion entre parenthèses
+3. Pour chaque acronyme, donne sa définition si tu la connais, sinon "Définition inconnue"
+4. Cite le document source et les pages
+
+FORMAT DE RÉPONSE (JSON strict) :
+{{
+    "notions": [
+        {{
+            "title": "Titre concis de la notion",
+            "description": "Description claire en 1-3 phrases",
+            "source_document": "nom_du_fichier.pdf",
+            "source_pages": [1, 2, 3],
+            "category": "Fondements"
+        }}
+    ],
+    "acronyms": [
+        {{
+            "acronym": "SIGLE",
+            "definition": "Définition ou expansion du sigle",
+            "source_document": "nom_du_fichier.pdf",
+            "source_pages": [1, 2]
+        }}
+    ]
+}}"""
+
+    user_prompt = f"""Voici le passage à analyser :
+
+---
+{chunk_context}
+---
+{existing_text}
+Retourne la liste COMPLÈTE mise à jour des notions + les nouveaux acronymes trouvés dans ce passage."""
+
+    return system_prompt, user_prompt
+
+
+def detect_notions_and_acronyms(
+    chunks: List[TextChunk],
+    known_acronyms: Optional[List[str]] = None,
+    model: Optional[str] = None,
+    progress_callback=None,
+    vision_mode: bool = False,
+    enable_thinking: bool = True,
+    on_item: Optional[callable] = None,
+) -> tuple:
+    """
+    Détecte les notions fondamentales ET les acronymes inconnus en un seul appel LLM par chunk.
+
+    Les notions sont accumulées de façon incrémentale (chaque chunk reçoit les notions précédentes).
+    Les acronymes retournés sont uniquement ceux NON présents dans `known_acronyms`.
+
+    Args:
+        chunks: Liste de TextChunk à analyser.
+        known_acronyms: Acronymes déjà connus (ex: détectés par regex), à exclure.
+        model: Modèle LLM à utiliser.
+        progress_callback: Fonction callback(current, total) pour la progression.
+        vision_mode: Si True, envoie les images des chunks au modèle vision.
+        enable_thinking: Activer le mode raisonnement.
+        on_item: Callback appelé à chaque nouvelle notion détectée.
+
+    Returns:
+        (List[Notion], List[dict]) — notions consolidées + nouveaux acronymes
+        Les dicts d'acronymes ont le format :
+        {"acronym": str, "definition": str, "source_document": str, "source_pages": List[int]}
+    """
+    if not chunks:
+        return [], []
+
+    known_set = set(known_acronyms or [])
+    notions: List[Notion] = []
+    new_acronyms: List[dict] = []
+    found_acronyms_set: set = set()
+
+    for i, chunk in enumerate(chunks):
+        if progress_callback:
+            progress_callback(i, len(chunks))
+
+        all_known = list(known_set | found_acronyms_set)
+        system_prompt, user_prompt = _build_combined_detection_prompt(chunk, notions, all_known)
+
+        try:
+            if vision_mode and chunk.page_images:
+                result = call_llm_vision_json(
+                    system_prompt, user_prompt, chunk.page_images,
+                    model=model, temperature=0.3, enable_thinking=enable_thinking,
+                )
+            else:
+                result = call_llm_json(
+                    system_prompt, user_prompt,
+                    model=model, temperature=0.3, enable_thinking=enable_thinking,
+                )
+
+            # Parse notions
+            new_notions = _parse_notions_response(result)
+            if on_item:
+                old_titles = {n.title for n in notions}
+                for n in new_notions:
+                    if n.title not in old_titles:
+                        on_item(n)
+            notions = new_notions
+
+            # Parse acronyms
+            for a_data in result.get("acronyms", []):
+                acr = a_data.get("acronym", "").strip()
+                if acr and len(acr) >= 2 and acr not in known_set and acr not in found_acronyms_set:
+                    found_acronyms_set.add(acr)
+                    new_acronyms.append({
+                        "acronym": acr,
+                        "definition": a_data.get("definition", "Définition inconnue").strip() or "Définition inconnue",
+                        "source_document": a_data.get("source_document", chunk.source_document or ""),
+                        "source_pages": a_data.get("source_pages", chunk.source_pages or []),
+                    })
+
+        except Exception as e:
+            print(f"Erreur détection combinée chunk {i}: {e}")
+            continue
+
+    if progress_callback:
+        progress_callback(len(chunks), len(chunks))
+
+    return notions, new_acronyms
+
+
 def edit_notions_with_llm(
     current_notions: List[Notion],
     user_instruction: str,

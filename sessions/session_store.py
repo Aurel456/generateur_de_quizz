@@ -35,6 +35,7 @@ class WorkSession:
     status: str = "draft"  # "draft" | "published"
     draft_exercises_json: str = "[]"  # Exercices brouillon de l'atelier
     original_quiz_json: str = "[]"  # Snapshot initial pour la vue diff
+    draft_acronyms_json: str = "[]"  # Acronymes brouillon de l'atelier
 
 
 @dataclass
@@ -51,6 +52,7 @@ class QuizSession:
     subset_size: Optional[int] = None
     pass_threshold: float = 0.7
     exercises_json: str = "[]"  # Exercices associés à la session
+    acronyms_json: str = "[]"  # Acronymes associés à la session
 
 
 @dataclass
@@ -124,6 +126,8 @@ def init_db():
             "ALTER TABLE quiz_sessions ADD COLUMN exercises_json TEXT DEFAULT '[]'",
             "ALTER TABLE work_sessions ADD COLUMN draft_exercises_json TEXT DEFAULT '[]'",
             "ALTER TABLE work_sessions ADD COLUMN original_quiz_json TEXT DEFAULT '[]'",
+            "ALTER TABLE quiz_sessions ADD COLUMN acronyms_json TEXT DEFAULT '[]'",
+            "ALTER TABLE work_sessions ADD COLUMN draft_acronyms_json TEXT DEFAULT '[]'",
         ]:
             try:
                 conn.execute(alter_sql)
@@ -145,6 +149,7 @@ def create_session(
     notions_data: list,
     title: str,
     exercises_data: Optional[list] = None,
+    acronyms_data: Optional[list] = None,
 ) -> QuizSession:
     """
     Crée une nouvelle session de quizz partagée.
@@ -154,6 +159,7 @@ def create_session(
         notions_data: Liste de dicts sérialisables des Notions
         title: Titre de la session
         exercises_data: Liste de dicts sérialisables des Exercices (optionnel)
+        acronyms_data: Liste de dicts sérialisables des Acronymes (optionnel)
 
     Returns:
         QuizSession créée
@@ -174,12 +180,13 @@ def create_session(
         quiz_json = json.dumps(quiz_data, ensure_ascii=False)
         notions_json = json.dumps(notions_data, ensure_ascii=False)
         exercises_json = json.dumps(exercises_data or [], ensure_ascii=False)
+        acronyms_json = json.dumps(acronyms_data or [], ensure_ascii=False)
 
         conn.execute(
             """INSERT INTO quiz_sessions
-            (session_id, session_code, title, quiz_json, notions_json, created_at, is_active, exercises_json)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
-            (session_id, session_code, title, quiz_json, notions_json, created_at, exercises_json),
+            (session_id, session_code, title, quiz_json, notions_json, created_at, is_active, exercises_json, acronyms_json)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+            (session_id, session_code, title, quiz_json, notions_json, created_at, exercises_json, acronyms_json),
         )
         conn.commit()
 
@@ -192,6 +199,7 @@ def create_session(
             created_at=created_at,
             is_active=True,
             exercises_json=exercises_json,
+            acronyms_json=acronyms_json,
         )
     finally:
         conn.close()
@@ -219,6 +227,7 @@ def get_session(session_code: str) -> Optional[QuizSession]:
             subset_size=row["subset_size"],
             pass_threshold=row["pass_threshold"] if row["pass_threshold"] is not None else 0.7,
             exercises_json=row["exercises_json"] if "exercises_json" in row.keys() else "[]",
+            acronyms_json=row["acronyms_json"] if "acronyms_json" in row.keys() else "[]",
         )
     finally:
         conn.close()
@@ -474,6 +483,8 @@ def list_sessions() -> List[QuizSession]:
                 pool_json=r["pool_json"],
                 subset_size=r["subset_size"],
                 pass_threshold=r["pass_threshold"] if r["pass_threshold"] is not None else 0.7,
+                exercises_json=r["exercises_json"] if "exercises_json" in r.keys() else "[]",
+                acronyms_json=r["acronyms_json"] if "acronyms_json" in r.keys() else "[]",
             )
             for r in rows
         ]
@@ -489,6 +500,7 @@ def create_pool_session(
     title: str,
     subset_size: int,
     pass_threshold: float = 0.7,
+    acronyms_data: Optional[list] = None,
 ) -> QuizSession:
     """
     Crée une session avec un pool de questions.
@@ -522,14 +534,15 @@ def create_pool_session(
         quiz_meta["questions"] = []
         quiz_json = json.dumps(quiz_meta, ensure_ascii=False)
         notions_json = json.dumps(notions_data, ensure_ascii=False)
+        acronyms_json = json.dumps(acronyms_data or [], ensure_ascii=False)
 
         conn.execute(
             """INSERT INTO quiz_sessions
             (session_id, session_code, title, quiz_json, notions_json, created_at, is_active,
-             pool_json, subset_size, pass_threshold)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)""",
+             pool_json, subset_size, pass_threshold, acronyms_json)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
             (session_id, session_code, title, quiz_json, notions_json, created_at,
-             pool_json, subset_size, pass_threshold),
+             pool_json, subset_size, pass_threshold, acronyms_json),
         )
         conn.commit()
 
@@ -544,6 +557,7 @@ def create_pool_session(
             pool_json=pool_json,
             subset_size=subset_size,
             pass_threshold=pass_threshold,
+            acronyms_json=acronyms_json,
         )
     finally:
         conn.close()
@@ -666,6 +680,7 @@ def create_work_session(
     title: str,
     owner_name: str = "",
     exercises_data: Optional[list] = None,
+    acronyms_data: Optional[list] = None,
 ) -> WorkSession:
     """
     Crée un atelier de travail collaboratif pour formateurs.
@@ -695,14 +710,16 @@ def create_work_session(
         draft_quiz_json = json.dumps(quiz_data, ensure_ascii=False)
         draft_notions_json = json.dumps(notions_data, ensure_ascii=False)
         draft_exercises_json = json.dumps(exercises_data or [], ensure_ascii=False)
+        draft_acronyms_json = json.dumps(acronyms_data or [], ensure_ascii=False)
 
         conn.execute(
             """INSERT INTO work_sessions
             (work_session_id, work_code, title, draft_quiz_json, draft_notions_json,
-             owner_name, last_modified, created_at, status, draft_exercises_json, original_quiz_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)""",
+             owner_name, last_modified, created_at, status, draft_exercises_json, original_quiz_json,
+             draft_acronyms_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)""",
             (work_session_id, work_code, title, draft_quiz_json, draft_notions_json,
-             owner_name, now, now, draft_exercises_json, draft_quiz_json),
+             owner_name, now, now, draft_exercises_json, draft_quiz_json, draft_acronyms_json),
         )
         conn.commit()
 
@@ -718,6 +735,7 @@ def create_work_session(
             status="draft",
             draft_exercises_json=draft_exercises_json,
             original_quiz_json=draft_quiz_json,
+            draft_acronyms_json=draft_acronyms_json,
         )
     finally:
         conn.close()
@@ -745,6 +763,7 @@ def get_work_session(work_code: str) -> Optional[WorkSession]:
             status=row["status"],
             draft_exercises_json=row["draft_exercises_json"] if "draft_exercises_json" in row.keys() else "[]",
             original_quiz_json=row["original_quiz_json"] if "original_quiz_json" in row.keys() else "[]",
+            draft_acronyms_json=row["draft_acronyms_json"] if "draft_acronyms_json" in row.keys() else "[]",
         )
     finally:
         conn.close()
@@ -756,6 +775,7 @@ def update_work_session_draft(
     editor_name: str = "",
     notions_data: Optional[list] = None,
     exercises_data: Optional[list] = None,
+    acronyms_data: Optional[list] = None,
 ) -> bool:
     """Sauvegarde le brouillon d'un atelier (dernier à sauvegarder gagne)."""
     conn = _get_connection()
@@ -767,6 +787,8 @@ def update_work_session_draft(
             updates["draft_notions_json"] = json.dumps(notions_data, ensure_ascii=False)
         if exercises_data is not None:
             updates["draft_exercises_json"] = json.dumps(exercises_data, ensure_ascii=False)
+        if acronyms_data is not None:
+            updates["draft_acronyms_json"] = json.dumps(acronyms_data, ensure_ascii=False)
 
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [work_code]
@@ -804,12 +826,13 @@ def publish_work_session(
     quiz_data = json.loads(ws.draft_quiz_json)
     notions_data = json.loads(ws.draft_notions_json)
     exercises_data = json.loads(ws.draft_exercises_json) if ws.draft_exercises_json else []
+    acronyms_data = json.loads(ws.draft_acronyms_json) if ws.draft_acronyms_json else []
     title = session_title or ws.title
 
     if pool_mode and subset_size:
-        session = create_pool_session(quiz_data, notions_data, title, subset_size=subset_size, pass_threshold=pass_threshold)
+        session = create_pool_session(quiz_data, notions_data, title, subset_size=subset_size, pass_threshold=pass_threshold, acronyms_data=acronyms_data)
     else:
-        session = create_session(quiz_data, notions_data, title, exercises_data=exercises_data)
+        session = create_session(quiz_data, notions_data, title, exercises_data=exercises_data, acronyms_data=acronyms_data)
 
     # Marquer l'atelier comme publié
     conn = _get_connection()
@@ -845,6 +868,7 @@ def list_work_sessions() -> List[WorkSession]:
                 status=r["status"],
                 draft_exercises_json=r["draft_exercises_json"] if "draft_exercises_json" in r.keys() else "[]",
                 original_quiz_json=r["original_quiz_json"] if "original_quiz_json" in r.keys() else "[]",
+                draft_acronyms_json=r["draft_acronyms_json"] if "draft_acronyms_json" in r.keys() else "[]",
             )
             for r in rows
         ]

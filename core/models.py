@@ -138,6 +138,31 @@ class NotionListModel(BaseModel):
     notions: List[NotionModel]
 
 
+# ── Acronymes ───────────────────────────────────────────────────────────────
+
+class AcronymModel(BaseModel):
+    """Validation d'un acronyme détecté."""
+    acronym: str
+    definition: str
+    all_definitions: List[str] = []
+    source_document: str = ""
+    source_pages: List[int] = []
+    enabled: bool = True
+    from_reference: bool = True
+
+    @field_validator("acronym")
+    @classmethod
+    def acronym_not_empty(cls, v):
+        if not v.strip():
+            raise ValueError("L'acronyme ne peut pas être vide")
+        return v.strip()
+
+
+class AcronymListModel(BaseModel):
+    """Wrapper pour la réponse JSON du LLM contenant des acronymes."""
+    acronyms: List[AcronymModel]
+
+
 # ── Réponses LLM (wrappers pour streaming structured output) ────────────────
 
 class QuizResponseModel(BaseModel):
