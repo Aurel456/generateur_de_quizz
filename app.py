@@ -4,6 +4,11 @@ app.py — Interface Streamlit principale pour le générateur de quizz et exerc
 
 import streamlit as st
 import time
+from pathlib import Path
+
+# Répertoire racine du projet (absolu, robuste en Docker et en local)
+_PROJECT_ROOT = Path(__file__).resolve().parent
+_ACRONYMS_PATH = _PROJECT_ROOT / "shared_data" / "acronyms.json"
 
 from processing.document_processor import (
     extract_and_chunk_multiple, extract_and_chunk_multiple_vision,
@@ -673,11 +678,9 @@ if app_mode == "📄 Depuis un document":
                     st.session_state.exercises = None
                     _invalidate_download_cache()
                     # Auto-détection des acronymes dès l'upload
-                    import os as _os_acr_auto
-                    _acr_auto_path = _os_acr_auto.path.join(_os_acr_auto.path.dirname(__file__), "shared_data", "acronyms.json")
-                    if _os_acr_auto.path.isfile(_acr_auto_path):
+                    if _ACRONYMS_PATH.is_file():
                         try:
-                            _ref_auto = load_acronym_reference(_acr_auto_path)
+                            _ref_auto = load_acronym_reference(str(_ACRONYMS_PATH))
                             st.session_state.acronym_reference = _ref_auto
                             st.session_state.acronyms = detect_acronyms_from_text(st.session_state.chunks, _ref_auto)
                         except Exception:
@@ -1298,9 +1301,7 @@ if app_mode == "📄 Depuis un document":
         st.markdown("### 🔤 Acronymes")
         st.caption("Détectez les acronymes/sigles présents dans vos documents à partir du dictionnaire de référence.")
 
-        import os as _os
-        _acronyms_path = _os.path.join(_os.path.dirname(__file__), "shared_data", "acronyms.json")
-        _acr_ref_available = _os.path.isfile(_acronyms_path)
+        _acr_ref_available = _ACRONYMS_PATH.is_file()
 
         if not _acr_ref_available:
             st.warning("⚠️ Fichier `shared_data/acronyms.json` introuvable. Placez votre dictionnaire d'acronymes pour activer la détection.")
@@ -1309,7 +1310,7 @@ if app_mode == "📄 Depuis un document":
                      help="Re-scanne les documents pour détecter les acronymes du dictionnaire de référence"):
             with st.spinner("🔤 Scan des acronymes en cours..."):
                 try:
-                    reference = load_acronym_reference(_acronyms_path)
+                    reference = load_acronym_reference(str(_ACRONYMS_PATH))
                     st.session_state.acronym_reference = reference
                     acronyms = detect_acronyms_from_text(chunks, reference)
                     # Fusionner avec les acronymes existants (ajout, pas écrasement)
