@@ -5,6 +5,7 @@ app.py — Interface Streamlit principale pour le générateur de quizz et exerc
 import streamlit as st
 import time
 from pathlib import Path
+import dsfr
 
 # Répertoire racine du projet (absolu, robuste en Docker et en local)
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -61,6 +62,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+dsfr.apply()
+
 # ─── Authentification (désactivé temporairement) ──────────────────────────────
 # from core.auth import authenticate
 #
@@ -87,12 +90,6 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-    .stApp {
-        font-family: 'Inter', sans-serif;
-    }
-
     .main-header {
         text-align: center;
         padding: 1.5rem 0;
@@ -100,45 +97,44 @@ st.markdown("""
     }
 
     .main-header h1 {
-        background: linear-gradient(135deg, #6c63ff 0%, #3f51b5 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        color: var(--dsfr-blue);
         font-size: 2.2rem;
         font-weight: 700;
     }
 
     .stat-card {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border-radius: 12px;
+        background-color: var(--dsfr-bg-alt);
+        border-radius: 0;
         padding: 1.2rem;
-        border: 1px solid #2a2a40;
+        border: 1px solid var(--dsfr-border);
+        border-left: 4px solid var(--dsfr-blue);
         text-align: center;
     }
 
     .stat-card .stat-value {
         font-size: 1.8rem;
         font-weight: 700;
-        color: #6c63ff;
+        color: var(--dsfr-blue);
     }
 
     .stat-card .stat-label {
         font-size: 0.85rem;
-        color: #a0a0b8;
+        color: var(--dsfr-text-mention);
         margin-top: 0.3rem;
     }
 
     .question-box {
-        background: #16213e;
-        border: 1px solid #2a2a40;
-        border-radius: 12px;
+        background-color: var(--dsfr-bg-alt);
+        border: 1px solid var(--dsfr-border);
+        border-radius: 0;
         padding: 1.5rem;
         margin-bottom: 1rem;
     }
 
     .exercise-box {
-        background: #16213e;
-        border: 1px solid #2a2a40;
-        border-radius: 12px;
+        background-color: var(--dsfr-bg-alt);
+        border: 1px solid var(--dsfr-border);
+        border-radius: 0;
         padding: 1.5rem;
         margin-bottom: 1rem;
     }
@@ -146,28 +142,22 @@ st.markdown("""
     .verified-badge {
         display: inline-block;
         padding: 0.3rem 0.8rem;
-        border-radius: 20px;
+        border-radius: 0;
         font-size: 0.8rem;
         font-weight: 600;
     }
 
     .verified-ok {
-        background: rgba(0, 200, 83, 0.15);
-        color: #00c853;
-        border: 1px solid rgba(0, 200, 83, 0.3);
+        background-color: var(--dsfr-success-bg);
+        color: var(--dsfr-success);
+        border: 1px solid var(--dsfr-success);
     }
 
     .verified-fail {
-        background: rgba(255, 23, 68, 0.15);
-        color: #ff1744;
-        border: 1px solid rgba(255, 23, 68, 0.3);
+        background-color: var(--dsfr-error-bg);
+        color: var(--dsfr-error);
+        border: 1px solid var(--dsfr-error);
     }
-
-    div[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0f0f1a 0%, #1a1a2e 100%);
-    }
-
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -408,6 +398,7 @@ with st.sidebar:
     batch_mode = False
     vision_enabled = False
     vision_text_mode = False
+    oneshot_mode = False
     if app_mode == "📄 Depuis un document":
         st.markdown("### 🔍 Mode Vision (recommandé)")
         vision_enabled = st.toggle(
@@ -919,6 +910,7 @@ if app_mode == "📄 Depuis un document":
                             mime="text/html",
                             width='stretch',
                             key="exp_tab_quiz_html",
+                            help="Export html interactif"
                         )
                     with col_q2:
                         csv_content = _get_cached("quiz_csv", export_quiz_csv, _exp_quiz)
@@ -929,6 +921,7 @@ if app_mode == "📄 Depuis un document":
                             mime="text/csv",
                             width='stretch',
                             key="exp_tab_quiz_csv",
+                            help="Export csv"
                         )
                     with col_q3:
                         moodle_xml = _get_cached("quiz_moodle", export_quiz_moodle_xml, _exp_quiz, _exp_quiz.title or "Quiz")
@@ -955,6 +948,7 @@ if app_mode == "📄 Depuis un document":
                             # type="primary",
                             width='stretch',
                             key="exp_tab_ex_html",
+                            help="Export html interactif"
                         )
                     with col_e2:
                         csv_ex = _get_cached("ex_csv", export_exercises_csv, _exp_exercises)
@@ -965,6 +959,7 @@ if app_mode == "📄 Depuis un document":
                             mime="text/csv",
                             width='stretch',
                             key="exp_tab_ex_csv",
+                            help="Export csv"
                         )
 
                 if _exp_quiz and _exp_quiz.questions and _exp_exercises:
@@ -980,6 +975,7 @@ if app_mode == "📄 Depuis un document":
                             type="primary",
                             width='stretch',
                             key="exp_tab_combined_html",
+                            help="Export html interactif"
                         )
                     with col_c2:
                         combined_csv = export_combined_csv(_exp_quiz, _exp_exercises)
@@ -990,6 +986,7 @@ if app_mode == "📄 Depuis un document":
                             mime="text/csv",
                             width='stretch',
                             key="exp_tab_combined_csv",
+                            help="Export csv"
                         )
 
                 st.caption("Les fichiers HTML sont standalone — ouvrez-les dans n'importe quel navigateur.")
@@ -1243,7 +1240,7 @@ if app_mode == "📄 Depuis un document":
         st.caption("Identifiez les concepts clés des documents. Ces notions guideront la génération des quizz et exercices.")
 
         # Bouton de détection
-        if st.button("🔍 Détecter les notions fondamentales", type="primary", width='stretch'):
+        if st.button("🔍 Détecter les notions fondamentales", type="primary", width='stretch', help="cliquer pour lancer la détection des notions"):
             progress_bar = st.progress(0, text="🧠 Démarrage...")
             try:
                 _notion_start = time.time()
@@ -1628,7 +1625,7 @@ if app_mode == "📄 Depuis un document":
                     _invalidate_download_cache()
                     st.rerun()
         with col_gen:
-            _gen_quiz_clicked = st.button("🚀 Générer le Quizz", type="primary", use_container_width=True)
+            _gen_quiz_clicked = st.button("🚀 Générer le Quizz", type="primary", use_container_width=True, help="cliquer pour lancer la génération des Quizz")
         with col_uncov:
             _gen_uncovered_clicked = st.button(
                 f"🎯 Notions manquantes ({len(_uncovered_notions_for_btn)})",
@@ -1823,7 +1820,7 @@ if app_mode == "📄 Depuis un document":
 
                         col_save, col_cancel, col_delete = st.columns([2, 2, 1])
                         with col_save:
-                            if st.button("💾 Sauvegarder", key=f"save_q_{i}", type="primary"):
+                            if st.button("💾 Sauvegarder", key=f"save_q_{i}", type="primary", help="Sauvegarder les modifications de cette question"):
                                 from dataclasses import replace as dc_replace
                                 before_q = {"question": q.question, "choices": dict(q.choices), "correct_answers": list(q.correct_answers), "explanation": q.explanation, "difficulty_level": q.difficulty_level}
                                 new_q = dc_replace(
@@ -2321,7 +2318,7 @@ if app_mode == "📄 Depuis un document":
             st.markdown("**3. Règles fixes du pipeline** (non modifiables)")
             st.code(EXERCISE_FIXED_RULES_BY_TYPE.get(exercise_type, ""), language=None)
 
-        if st.button("🧮 Générer les Exercices", type="primary", width='stretch', disabled=(total_ex == 0)):
+        if st.button("🧮 Générer les Exercices", type="primary", width='stretch', help="cliquer pour lancer la génération des Exercices", disabled=(total_ex == 0)):
             progress_bar = st.progress(0, text="Démarrage...")
             _ex_start = time.time()
 
@@ -2626,13 +2623,16 @@ if app_mode == "📄 Depuis un document":
 
     # ═══ ONGLET GUIDE FORMATEUR ══════════════════════════════════════════════════
 
-    GUIDE_SYSTEM_PROMPT = """Tu es un assistant pédagogique intégré au Générateur de Quizz & Exercices IA.
+    GUIDE_SYSTEM_PROMPT = """Tu es un assistant pédagogique intégré au Générateur de Quizz & Exercices IA (v4.0).
 Tu aides les formateurs à utiliser l'outil efficacement, à interpréter les résultats, et à adopter les meilleures pratiques pédagogiques.
 
 CONTEXTE DE L'OUTIL :
 - L'application génère des QCM et exercices à partir de documents (PDF, DOCX, PPTX, ODT, TXT) ou en mode libre par conversation.
-- Pipeline : Upload document → Extraction texte → Détection notions fondamentales → Génération QCM / Exercices → Export / Session partagée.
+- Pipeline : Upload document → Extraction texte → Détection notions fondamentales → [optionnel] Filtrage des chunks par consigne → Génération QCM / Exercices → Export / Session partagée.
 - Le formateur peut intervenir à chaque étape : activer/désactiver des notions, personnaliser les prompts, ajuster la difficulté, vérifier les questions par IA, éditer manuellement.
+- **Consigne libre (v4)** : un seul champ "💬 Consignes libres" remplace les anciens champs séparés. Le LLM classe automatiquement le texte en consignes de formulation (injectées dans le prompt) et en périmètre documentaire (filtrage des chunks). Un expander "🔍 Voir l'interprétation" affiche la classification.
+- **Amélioration IA des exercices (v4)** : bouton "🤖 Améliorer par IA" disponible sur chaque exercice (calcul, trou, cas pratique), identique à celui des questions QCM.
+- **Export Moodle XML (v4)** : les quiz peuvent être exportés au format XML Moodle importable directement.
 - Les sessions partagées permettent aux étudiants de passer le quizz en ligne avec un code d'accès. Le formateur voit les résultats en temps réel dans l'onglet Analytics.
 - La vérification IA (onglet Quizz > Vérification) détecte les questions ambiguës et peut les reformuler automatiquement.
 - Les niveaux de difficulté (Facile / Moyen / Difficile) génèrent des questions distinctes sans doublons entre niveaux.
@@ -2661,6 +2661,15 @@ RÈGLES DE RÉPONSE :
     ▼
 📚 Détection des notions fondamentales  ◄── [Formateur] Activer / Désactiver / Éditer les notions
     │
+    ▼
+💬 Consigne libre (optionnel)           ◄── [Formateur] Texte libre classé en 2 volets par IA :
+    │                                         → Formulation (injectée dans le prompt)
+    │                                         → Périmètre documentaire (filtrage des chunks)
+    │
+    ▼
+🎯 Filtrage intelligent des chunks      ◄── automatique si périmètre documentaire détecté
+    │      (notions + titre + description + pages)
+    │
     ├──► 🎯 Génération QCM              ◄── [Formateur] Configurer difficulté, prompts, nombre de réponses
     │         │
     │         ▼
@@ -2670,7 +2679,7 @@ RÈGLES DE RÉPONSE :
     │    ✏️ Édition manuelle (optionnel)◄── [Formateur] Modifier, supprimer, améliorer par IA
     │         │
     │         ▼
-    │    📤 Export (HTML / CSV)
+    │    📤 Export (HTML / CSV / Moodle XML)
     │         │
     │         ▼
     │    📡 Session partagée            ◄── [Formateur] Partager le code aux étudiants
@@ -2679,6 +2688,9 @@ RÈGLES DE RÉPONSE :
     │    📊 Analytics                   ◄── [Formateur] Analyser résultats, identifier lacunes
     │
     └──► 🧮 Génération exercices        ◄── [Formateur] Choisir type (calcul / trou / cas pratique)
+                │
+                ▼
+          🤖 Amélioration IA par exercice ◄── [Formateur] Bouton "Améliorer par IA" sur chaque exercice
 ```
 """)
 
@@ -2721,15 +2733,19 @@ Les résultats sont exportables en HTML interactif ou CSV. Les sessions partagé
 - Configurer le nombre de questions par niveau
 - Choisir difficulté fixe ou variable en bonnes réponses
 - Personnaliser le persona de l'expert et les instructions par niveau
+- Saisir une **consigne libre** (style, focus, périmètre documentaire) — le LLM classe automatiquement
 - Lancer la vérification IA après génération
 - Éditer manuellement une question ou demander une amélioration IA
+- Exporter en HTML, CSV ou **Moodle XML**
 """)
         with col2:
             st.markdown("""
 **🧮 Onglet Exercices**
 - Choisir le type : calcul numérique, questions à trou, cas pratique
 - Personnaliser les instructions par niveau
+- Saisir une **consigne libre** (idem onglet Quizz)
 - Vérification automatique du code Python (exercices calcul)
+- Améliorer un exercice par IA via le bouton **🤖 Améliorer par IA**
 
 **📊 Onglet Analytics**
 - Voir les taux de réussite par question et par notion
@@ -2747,6 +2763,18 @@ Les résultats sont exportables en HTML interactif ou CSV. Les sessions partagé
         st.markdown("### 💬 Questions fréquentes")
 
         faq_items = [
+            (
+                "À quoi sert le champ 'Consignes libres' et comment l'utiliser ?",
+                """Le champ **💬 Consignes libres** (onglets Quizz et Exercices) remplace les anciens champs séparés "Instructions supplémentaires" et "Contexte utilisateur". Vous pouvez y écrire un texte libre mêlant les deux aspects, par exemple :
+
+> *« Couvre uniquement le chapitre 3 sur la TVA intracommunautaire, évite les questions sur les dates, et utilise un ton professionnel. »*
+
+Avant la génération, le LLM analyse votre texte et le découpe automatiquement en deux volets :
+- **Formulation** : consignes sur le style, le ton, les pièges, le type de questions à privilégier — injectées dans le prompt de chaque question.
+- **Périmètre documentaire** : chapitres, sujets ou sections à couvrir — utilisés pour **filtrer les chunks** du document avant la génération.
+
+Après chaque génération, l'expander **🔍 Voir l'interprétation** affiche ce que le LLM a extrait dans chaque catégorie. Si la classification ne correspond pas à votre intention, reformulez votre consigne en séparant plus clairement les deux aspects."""
+            ),
             (
                 "Pourquoi certaines questions sont-elles imprécises ou mal formulées ?",
                 """Le LLM génère des questions à partir des passages du document mais peut produire des formulations vagues ou des explications incorrectes, surtout sur des documents techniques complexes.
@@ -2905,7 +2933,7 @@ elif app_mode == "💬 Mode libre (IA)":
                     unsafe_allow_html=True
                 )
 
-        if st.button("✅ Valider les notions et configurer le quizz", type="primary", width='stretch'):
+        if st.button("✅ Valider les notions et configurer le quizz", type="primary", width='stretch', help="Confirmer les notions détectées et passer à la configuration du quizz"):
             st.session_state.chat_session.state = ChatState.GENERATION_CONFIG
             st.session_state.chat_session.notions = [n for n in chat_session.notions if n.enabled]
             # Stocker les notions dans le session state global aussi
@@ -2957,7 +2985,7 @@ elif app_mode == "💬 Mode libre (IA)":
         }
         chat_total = sum(chat_difficulty_counts.values())
 
-        if st.button("🚀 Générer", type="primary", width='stretch', disabled=(chat_total == 0)):
+        if st.button("🚀 Générer", type="primary", width='stretch', disabled=(chat_total == 0), help="Lancer la génération du quizz en mode libre"):
             progress_bar = st.progress(0, text="🧠 Génération directe des questions...")
 
             try:
