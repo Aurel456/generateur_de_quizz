@@ -170,15 +170,17 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.popover("🏷️ v4.0"):
+with st.popover("🏷️ v4.1"):
     st.markdown("""
+**Nouveautés v4.1 :**
+- **DSFR**
 **Nouveautés v4.0 :**
-- Zone d'instructions libres : texte libre transmis au LLM lors de la génération (quiz & exercices)
-- Contexte utilisateur additionnel : sélection intelligente des chunks les plus pertinents avant génération
-- Toggle "Mélanger plusieurs notions" pour les exercices (comme le quiz)
-- Changement de difficulté d'une question + adaptation IA automatique
-- Export Moodle XML (format multichoice importable directement)
-- Auto-lancement de la vérification IA après chaque génération de quiz
+- **Zone d'instructions libres :** texte libre transmis au LLM lors de la génération (quiz & exercices)
+- **Contexte utilisateur additionnel :** sélection intelligente des chunks les plus pertinents avant génération
+- Toggle **"Mélanger plusieurs notions" pour les exercices** (comme le quiz)
+- **Changement de difficulté d'une question** + adaptation IA automatique
+- **Export Moodle XML** (format multichoice importable directement)
+- **Auto-lancement de la vérification IA** après chaque génération de quiz
 - Disclaimer "cas pratiques" + bouton "Améliorer avec l'IA" par exercice
 - Mode Vision déplacé en section dédiée et bien visible dans la sidebar
 - Acronymes multi-définitions : sélecteur déroulant si plusieurs définitions disponibles
