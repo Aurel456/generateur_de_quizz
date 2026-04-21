@@ -6,6 +6,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 ### 🎯 Quizz QCM
 
+- **Consigne libre unifiée** : Un seul champ **"💬 Consignes libres"** — le LLM classe automatiquement votre texte en deux volets : la **formulation** (style, focus, pièges, ton — injectée dans le prompt de génération) et le **périmètre documentaire** (chapitres/sujets à couvrir — utilisé pour filtrer les chunks pertinents). Un expander "🔍 Voir l'interprétation" affiche la classification après chaque génération.
 - **Support multi-documents** : Uploadez **plusieurs fichiers simultanément** et générez des questions couvrant l'ensemble des documents.
 - **Extraction multi-format** : Support des fichiers **PDF, DOCX, ODT, ODP, PPTX et TXT**.
 - **Chunking par blocs de tokens** : Analyse par blocs de 10 000 tokens par défaut avec chevauchement et marqueurs de pages.

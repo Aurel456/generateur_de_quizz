@@ -8,7 +8,7 @@ from pathlib import Path
 
 # Répertoire racine du projet (absolu, robuste en Docker et en local)
 _PROJECT_ROOT = Path(__file__).resolve().parent
-_ACRONYMS_PATH = _PROJECT_ROOT / "shared_data" / "acronyms.json"
+_ACRONYMS_PATH = _PROJECT_ROOT / "reference_data" / "acronyms.json"
 
 from processing.document_processor import (
     extract_and_chunk_multiple, extract_and_chunk_multiple_vision,
@@ -30,7 +30,7 @@ from generation.exercise_generator import (
 )
 from export.quiz_exporter import (
     export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html,
-    export_combined_html, export_combined_csv,
+    export_combined_html, export_combined_csv, export_quiz_moodle_xml,
 )
 from generation.notion_detector import detect_notions_and_acronyms, edit_notions_with_llm, merge_similar_notions, Notion
 from generation.acronym_detector import (
@@ -50,6 +50,7 @@ from sessions.session_store import (
 )
 from generation.quiz_verifier import verify_quiz, QuestionVerificationResult
 from generation.question_editor import improve_question_with_llm
+from generation.instruction_classifier import classify_user_input
 
 # ─── Configuration de la page ───────────────────────────────────────────────────
 
@@ -179,9 +180,24 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.popover("🏷️ v3.3"):
+with st.popover("🏷️ v4.0"):
     st.markdown("""
-**Nouveautés v3.3 :**
+**Nouveautés v4.0 :**
+- Zone d'instructions libres : texte libre transmis au LLM lors de la génération (quiz & exercices)
+- Contexte utilisateur additionnel : sélection intelligente des chunks les plus pertinents avant génération
+- Toggle "Mélanger plusieurs notions" pour les exercices (comme le quiz)
+- Changement de difficulté d'une question + adaptation IA automatique
+- Export Moodle XML (format multichoice importable directement)
+- Auto-lancement de la vérification IA après chaque génération de quiz
+- Disclaimer "cas pratiques" + bouton "Améliorer avec l'IA" par exercice
+- Mode Vision déplacé en section dédiée et bien visible dans la sidebar
+- Acronymes multi-définitions : sélecteur déroulant si plusieurs définitions disponibles
+- Landing page centrale avec upload quand aucun fichier n'est chargé
+- Explication des mauvaises réponses dans les prompts + prévention des choix dupliqués
+- Formatage markdown (listes à puces) préservé dans les énoncés d'exercices
+- Suppression du parallélisme LLM (ThreadPoolExecutor) : génération séquentielle et stable
+
+**v3.3 :**
 - Mode global One-shot : envoie tous les documents en une requête (vision ou texte), découpe auto si trop volumineux
 - Streaming LLM : questions et exercices s'affichent au fur et à mesure de la génération
 - Réparation JSON automatique : si le LLM renvoie du JSON invalide, une correction est tentée
@@ -388,37 +404,49 @@ with st.sidebar:
     read_mode = "token"
     max_chunk_tokens = 10000
 
-    # ─── Options avancées (Batch + Vision) — avant le sélecteur de modèle ───
+    # ─── Mode Vision — section dédiée et proéminente ────────────────────────
     batch_mode = False
     vision_enabled = False
     vision_text_mode = False
     if app_mode == "📄 Depuis un document":
-        st.markdown("## Options avancees")
-
-        batch_mode = st.toggle(
-            "Traitement parallele",
-            value=False,
-            help="Execute les requetes LLM independantes en parallele. Plus rapide pour les gros quizz."
-        )
-
+        st.markdown("### 🔍 Mode Vision (recommandé)")
         vision_enabled = st.toggle(
-            "Mode Vision",
+            "Activer le Mode Vision",
             value=False,
-            help="Analyse les pages du document comme images avec Qwen3-VL."
+            key="vision_toggle",
+            help="Analyse les pages du document comme images avec le modèle vision.",
         )
-
         if vision_enabled:
+            st.info(
+                "📸 Le Mode Vision analyse les pages comme **images**. "
+                "Recommandé pour les documents avec **tableaux, schémas ou formules**.\n\n"
+                "⏱️ Augmente le temps de traitement de **2 à 5×** par rapport au mode texte."
+            )
             vision_sub = st.radio(
                 "Sous-mode vision",
                 ["Images seules", "Images + Texte"],
                 horizontal=True,
                 label_visibility="collapsed",
                 help=(
-                    "**Images seules** : envoie uniquement les images au modele vision.\n\n"
+                    "**Images seules** : envoie uniquement les images au modèle vision.\n\n"
                     "**Images + Texte** : envoie les images ET le texte extrait de chaque page."
                 ),
             )
             vision_text_mode = vision_sub == "Images + Texte"
+        else:
+            st.caption("💡 Activez ce mode si votre document contient des tableaux, diagrammes ou formules.")
+            st.caption("⚠️ Attention : le temps de traitement des documents est plus long")
+
+        st.divider()
+
+        # ─── Options avancées ───────────────────────────────────────────────
+        st.markdown("## ⚙️ Options avancées")
+
+        batch_mode = st.toggle(
+            "Traitement par lots (batch)",
+            value=False,
+            help="Regroupe les requêtes LLM en un lot. Utile pour les gros documents.",
+        )
 
         oneshot_mode = st.toggle(
             "Mode global One-shot",
@@ -442,7 +470,7 @@ with st.sidebar:
         enable_thinking = st.toggle(
             "Raisonnement IA (thinking)",
             value=not vision_enabled,
-            help="Active le mode raisonnement du LLM. Desactive par defaut en mode vision pour de meilleures performances.",
+            help="Active le mode raisonnement du LLM. Désactivé par défaut en mode vision pour de meilleures performances.",
         )
         st.session_state["enable_thinking"] = enable_thinking
 
@@ -465,6 +493,43 @@ with st.sidebar:
 _has_existing_data = (st.session_state.quiz is not None or st.session_state.exercises is not None or st.session_state.notions is not None)
 
 if app_mode == "📄 Depuis un document":
+    # ─── Landing page — aucun fichier uploadé ────────────────────────────────
+    if not uploaded_files:
+        st.markdown("")
+        col_land_l, col_land_c, col_land_r = st.columns([1, 3, 1])
+        with col_land_c:
+            st.markdown(
+                "<div style='text-align:center; padding: 2rem 0 1rem 0;'>"
+                "<span style='font-size:3.5rem;'>📄</span>"
+                "<h2 style='margin: 0.5rem 0 0.5rem 0;'>Chargez vos documents</h2>"
+                "<p style='color:#a0a0b8; font-size:1.05rem;'>Uploadez un ou plusieurs fichiers pour générer automatiquement des quizz QCM et exercices avec l'IA.</p>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            uploaded_landing = st.file_uploader(
+                "Choisir un ou plusieurs fichiers",
+                type=["pdf", "docx", "odt", "odp", "pptx", "txt"],
+                accept_multiple_files=True,
+                label_visibility="collapsed",
+                key="landing_uploader",
+                help="Formats supportés : PDF, DOCX, ODT, ODP, PPTX, TXT",
+            )
+            if uploaded_landing:
+                _cached_land = []
+                for f in uploaded_landing:
+                    f.seek(0)
+                    _cached_land.append({"name": f.name, "bytes": f.read()})
+                    f.seek(0)
+                st.session_state["_uploaded_files_cache"] = _cached_land
+                st.rerun()
+            st.markdown(
+                "<p style='text-align:center; color:#a0a0b8; font-size:0.9rem; margin-top:1rem;'>"
+                "Ou utilisez le <strong>Mode libre (IA)</strong> dans le menu à gauche pour générer sans document."
+                "</p>",
+                unsafe_allow_html=True,
+            )
+        st.stop()
+
     if uploaded_files:
         # ─── Panneau Vision DPI ──────────────────────────────────────────────────
         vision_dpi_override = None
@@ -757,16 +822,28 @@ if app_mode == "📄 Depuis un document":
                 unsafe_allow_html=True
             )
         with col_def:
-            new_def = st.text_input(
-                "Définition", value=acronym.definition,
-                key=f"acr_def_{idx}", label_visibility="collapsed"
-            )
-            if new_def != acronym.definition:
-                st.session_state.acronyms[idx].definition = new_def
             if len(acronym.all_definitions) > 1:
-                other_defs = [d for d in acronym.all_definitions if d != acronym.definition]
-                if other_defs:
-                    st.caption("Autres : " + " | ".join(other_defs[:3]))
+                # Selectbox pour choisir parmi les définitions connues
+                _all_defs = acronym.all_definitions if acronym.definition in acronym.all_definitions else [acronym.definition] + acronym.all_definitions
+                _def_idx = _all_defs.index(acronym.definition) if acronym.definition in _all_defs else 0
+                selected_def = st.selectbox(
+                    "Définition",
+                    options=_all_defs,
+                    index=_def_idx,
+                    key=f"acr_sel_{idx}",
+                    label_visibility="collapsed",
+                    help="Plusieurs définitions connues — sélectionnez celle qui s'applique au contexte.",
+                )
+                if selected_def != acronym.definition:
+                    st.session_state.acronyms[idx].definition = selected_def
+                    st.rerun()
+            else:
+                new_def = st.text_input(
+                    "Définition", value=acronym.definition,
+                    key=f"acr_def_{idx}", label_visibility="collapsed"
+                )
+                if new_def != acronym.definition:
+                    st.session_state.acronyms[idx].definition = new_def
         with col_del:
             if st.button("🗑️", key=f"acr_del_{idx}", help="Supprimer cet acronyme"):
                 st.session_state.acronyms.pop(idx)
@@ -832,7 +909,7 @@ if app_mode == "📄 Depuis un document":
             try:
                 if _exp_quiz is not None and _exp_quiz.questions:
                     st.markdown("**Quiz**")
-                    col_q1, col_q2 = st.columns(2)
+                    col_q1, col_q2, col_q3 = st.columns(3)
                     with col_q1:
                         html_content = _get_cached("quiz_html", export_quiz_html, _exp_quiz, _serialize_acronyms())
                         st.download_button(
@@ -840,7 +917,6 @@ if app_mode == "📄 Depuis un document":
                             data=html_content,
                             file_name="quizz_interactif.html",
                             mime="text/html",
-                            # type="primary",
                             width='stretch',
                             key="exp_tab_quiz_html",
                         )
@@ -853,6 +929,17 @@ if app_mode == "📄 Depuis un document":
                             mime="text/csv",
                             width='stretch',
                             key="exp_tab_quiz_csv",
+                        )
+                    with col_q3:
+                        moodle_xml = _get_cached("quiz_moodle", export_quiz_moodle_xml, _exp_quiz, _exp_quiz.title or "Quiz")
+                        st.download_button(
+                            label=f"🎓 Moodle XML ({len(_exp_quiz.questions)}Q)",
+                            data=moodle_xml,
+                            file_name="quizz_moodle.xml",
+                            mime="application/xml",
+                            width='stretch',
+                            key="exp_tab_quiz_moodle",
+                            help="Format XML compatible Moodle pour l'import de questions (type multichoice).",
                         )
 
                 if _exp_exercises:
@@ -1304,7 +1391,7 @@ if app_mode == "📄 Depuis un document":
         _acr_ref_available = _ACRONYMS_PATH.is_file()
 
         if not _acr_ref_available:
-            st.warning("⚠️ Fichier `shared_data/acronyms.json` introuvable. Placez votre dictionnaire d'acronymes pour activer la détection.")
+            st.warning("⚠️ Fichier `reference_data/acronyms.json` introuvable. Placez votre dictionnaire d'acronymes pour activer la détection.")
 
         if st.button("🔍 Re-scanner les acronymes", type="primary", disabled=not _acr_ref_available, width='stretch',
                      help="Re-scanne les documents pour détecter les acronymes du dictionnaire de référence"):
@@ -1452,6 +1539,29 @@ if app_mode == "📄 Depuis un document":
                 help="Activé : le LLM ajoute un choix de réponse légèrement humoristique ou décalé parmi les mauvaises réponses.",
             )
 
+        st.text_area(
+            "💬 Consignes libres (optionnel)",
+            value=st.session_state.get("quiz_user_input", ""),
+            height=100,
+            key="quiz_user_input",
+            placeholder="Ex: Couvre uniquement la partie sur les droits de mutation et les successions, "
+                        "focalise sur les procédures de contrôle et évite les questions sur les dates.",
+            help=(
+                "Décrivez librement vos attentes. Le système classe automatiquement votre consigne "
+                "en deux volets :\n"
+                "• **Formulation** (style, focus, pièges, ton) → injectée dans le prompt de génération.\n"
+                "• **Périmètre documentaire** (chapitres/sujets à couvrir) → utilisée pour filtrer les pages pertinentes.\n\n"
+                "Vous pouvez mélanger les deux aspects dans un seul texte."
+            ),
+        )
+        _last_quiz_class = st.session_state.get("_quiz_last_classification")
+        if _last_quiz_class and (_last_quiz_class.get("generation") or _last_quiz_class.get("chunk_filter")):
+            with st.expander("🔍 Voir l'interprétation de la dernière consigne", expanded=False):
+                st.caption("**Formulation (injectée dans le prompt) :**")
+                st.write(_last_quiz_class.get("generation") or "_(aucune)_")
+                st.caption("**Périmètre documentaire (filtrage des chunks) :**")
+                st.write(_last_quiz_class.get("chunk_filter") or "_(aucun)_")
+
         # 📝 Édition des prompts
         with st.expander("📝 Personnaliser les Prompts"):
             st.markdown("**1️⃣ Domaine d'expertise** *(persona)*")
@@ -1567,6 +1677,16 @@ if app_mode == "📄 Depuis un document":
 
                 _use_stream = (not batch_mode) and st.session_state.get("streaming_enabled", True)
                 _active_acronyms = [a for a in (st.session_state.acronyms or []) if a.enabled]
+
+                _quiz_gen_instr, _quiz_chunk_instr = classify_user_input(
+                    st.session_state.get("quiz_user_input", ""),
+                    model=selected_model,
+                )
+                st.session_state["_quiz_last_classification"] = {
+                    "generation": _quiz_gen_instr,
+                    "chunk_filter": _quiz_chunk_instr,
+                }
+
                 quiz = generate_quiz(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts,
@@ -1587,6 +1707,8 @@ if app_mode == "📄 Depuis un document":
                     stream=_use_stream,
                     on_item=_on_quiz_item if _use_stream else None,
                     acronyms=_active_acronyms if _active_acronyms else None,
+                    user_instructions=_quiz_gen_instr,
+                    user_context=_quiz_chunk_instr,
                 )
                 if st.session_state.quiz is None:
                     st.session_state.quiz = quiz
@@ -1599,6 +1721,7 @@ if app_mode == "📄 Depuis un document":
                     st.session_state._quiz_original_snapshot = len(st.session_state.quiz.questions)
                 _invalidate_download_cache()
                 increment_stats(questions=len(quiz.questions))
+                st.session_state.pending_verification = True
                 progress_bar.progress(1.0, text="✅ Quizz généré !")
                 time.sleep(0.5)
                 progress_bar.empty()
@@ -1608,6 +1731,46 @@ if app_mode == "📄 Depuis un document":
             except Exception as e:
                 progress_bar.empty()
                 st.error(f"❌ Erreur lors de la génération : {str(e)}")
+
+        # ── Auto-vérification après génération ───────────────────────────────
+        if st.session_state.get("pending_verification") and st.session_state.quiz is not None and chunks:
+            st.session_state.pending_verification = False
+            st.info("🔍 Vérification IA des réponses lancée automatiquement…")
+            _auto_verify_bar = st.progress(0, text="Vérification en cours…")
+            _auto_verify_start = time.time()
+
+            def _auto_verify_progress(current, total):
+                if total > 0:
+                    pct = current / total
+                    elapsed = time.time() - _auto_verify_start
+                    eta_str = f" — ~{int(elapsed / pct - elapsed)}s" if pct > 0.01 else ""
+                    _auto_verify_bar.progress(max(0.01, pct), text=f"Question {min(current + 1, total)}/{total}{eta_str}")
+
+            try:
+                _auto_verified_quiz, _auto_vr_results = verify_quiz(
+                    quiz=st.session_state.quiz,
+                    chunks=chunks,
+                    model=selected_model,
+                    max_reformulations=3,
+                    progress_callback=_auto_verify_progress,
+                    batch_mode=batch_mode,
+                    enable_thinking=st.session_state.get("enable_thinking", True),
+                )
+                st.session_state.quiz = _auto_verified_quiz
+                st.session_state.verification_results = _auto_vr_results
+                for vr in _auto_vr_results:
+                    if vr.status == "reformulated" and vr.final_question:
+                        st.session_state._quiz_changelog.append({"action": "🔄 Reformulée (vérification auto)", "index": vr.question_index + 1, "before": {"question": vr.original_question.question}, "after": {"question": vr.final_question.question}})
+                    elif vr.status == "deleted":
+                        st.session_state._quiz_changelog.append({"action": "🗑️ Supprimée (vérification auto)", "index": vr.question_index + 1, "before": {"question": vr.original_question.question}, "after": None})
+                _invalidate_download_cache()
+                _auto_verify_bar.progress(1.0, text="✅ Vérification terminée !")
+                time.sleep(0.5)
+                _auto_verify_bar.empty()
+                st.rerun()
+            except Exception as _e:
+                _auto_verify_bar.empty()
+                st.warning(f"⚠️ Vérification automatique échouée : {_e}")
 
         # Affichage du quizz
         if st.session_state.quiz is not None:
@@ -1648,12 +1811,21 @@ if app_mode == "📄 Depuis un document":
                         edit_citation = st.text_input(
                             "Citation source", value=q.citation, key=f"edit_cit_{i}",
                         )
+                        _diff_options = ["facile", "moyen", "difficile"]
+                        _diff_index = _diff_options.index(q.difficulty_level) if q.difficulty_level in _diff_options else 1
+                        edit_difficulty = st.selectbox(
+                            "Niveau de difficulté",
+                            options=_diff_options,
+                            index=_diff_index,
+                            key=f"edit_diff_{i}",
+                            format_func=lambda d: {"facile": "🟢 Facile", "moyen": "🟡 Moyen", "difficile": "🔴 Difficile"}.get(d, str(d)),
+                        )
 
                         col_save, col_cancel, col_delete = st.columns([2, 2, 1])
                         with col_save:
                             if st.button("💾 Sauvegarder", key=f"save_q_{i}", type="primary"):
                                 from dataclasses import replace as dc_replace
-                                before_q = {"question": q.question, "choices": dict(q.choices), "correct_answers": list(q.correct_answers), "explanation": q.explanation}
+                                before_q = {"question": q.question, "choices": dict(q.choices), "correct_answers": list(q.correct_answers), "explanation": q.explanation, "difficulty_level": q.difficulty_level}
                                 new_q = dc_replace(
                                     q,
                                     question=edit_question,
@@ -1661,9 +1833,10 @@ if app_mode == "📄 Depuis un document":
                                     correct_answers=edit_correct,
                                     explanation=edit_explanation,
                                     citation=edit_citation,
+                                    difficulty_level=edit_difficulty,
                                 )
                                 quiz.questions[i] = new_q
-                                after_q = {"question": edit_question, "choices": edit_choices, "correct_answers": edit_correct, "explanation": edit_explanation}
+                                after_q = {"question": edit_question, "choices": edit_choices, "correct_answers": edit_correct, "explanation": edit_explanation, "difficulty_level": edit_difficulty}
                                 st.session_state._quiz_changelog.append({"action": "✏️ Édition manuelle", "index": i + 1, "before": before_q, "after": after_q})
                                 st.session_state._editing_question_idx = None
                                 _invalidate_download_cache()
@@ -1682,6 +1855,32 @@ if app_mode == "📄 Depuis un document":
 
                         st.divider()
                         st.markdown("**🤖 Assistance IA**")
+
+                        if edit_difficulty != (q.difficulty_level or "moyen"):
+                            _diff_labels = {"facile": "🟢 Facile", "moyen": "🟡 Moyen", "difficile": "🔴 Difficile"}
+                            if st.button(f"🔄 Adapter la question au niveau {_diff_labels.get(edit_difficulty, edit_difficulty)}", key=f"adapt_diff_{i}"):
+                                with st.spinner("L'IA adapte la question au nouveau niveau…"):
+                                    src_text = ""
+                                    if st.session_state.chunks:
+                                        for chunk in st.session_state.chunks:
+                                            if q.source_pages and chunk.source_pages and set(q.source_pages) & set(chunk.source_pages):
+                                                src_text = chunk.text
+                                                break
+                                    _diff_desc = {"facile": "basique et direct, connaissance simple", "moyen": "nécessite une analyse ou application", "difficile": "multi-étapes, piège ou cas limite"}
+                                    _adapt_instr = f"Adapte cette question au niveau {edit_difficulty} ({_diff_desc.get(edit_difficulty, '')}). Reformule l'énoncé, les choix et l'explication en conséquence."
+                                    try:
+                                        from dataclasses import replace as dc_replace
+                                        before_q = {"question": q.question, "difficulty_level": q.difficulty_level}
+                                        improved = improve_question_with_llm(quiz.questions[i], _adapt_instr, source_text=src_text)
+                                        improved = dc_replace(improved, difficulty_level=edit_difficulty)
+                                        quiz.questions[i] = improved
+                                        st.session_state._quiz_changelog.append({"action": f"🔄 Changement niveau → {edit_difficulty}", "index": i + 1, "before": before_q, "after": {"question": improved.question, "difficulty_level": edit_difficulty}})
+                                        st.session_state._editing_question_idx = None
+                                        _invalidate_download_cache()
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Erreur IA : {e}")
+
                         ai_instr = st.text_input(
                             "Instruction pour l'IA",
                             placeholder="Ex: Rends l'explication plus concise, ajoute un distracteur plausible…",
@@ -2023,6 +2222,36 @@ if app_mode == "📄 Depuis un document":
         else:
             st.info("📋 Un scénario avec plusieurs sous-questions. Vérification manuelle recommandée.")
 
+        ex_notion_mixing = st.toggle(
+            "Mélanger plusieurs notions par exercice",
+            value=True,
+            key="ex_notion_mixing",
+            help="Activé : le LLM peut combiner plusieurs notions dans un même exercice. Désactivé : chaque exercice couvre une seule notion (related_notions = 1 élément).",
+        )
+
+        st.text_area(
+            "💬 Consignes libres (optionnel)",
+            value=st.session_state.get("ex_user_input", ""),
+            height=100,
+            key="ex_user_input",
+            placeholder="Ex: Des exercices uniquement sur le chapitre 3 (TVA intracommunautaire), "
+                        "avec des montants réalistes entre 1000€ et 50000€.",
+            help=(
+                "Décrivez librement vos attentes. Le système classe automatiquement votre consigne "
+                "en deux volets :\n"
+                "• **Formulation** (style, contraintes numériques, focus thématique) → injectée dans le prompt de génération.\n"
+                "• **Périmètre documentaire** (chapitres/sujets à couvrir) → utilisée pour filtrer les pages pertinentes.\n\n"
+                "Vous pouvez mélanger les deux aspects dans un seul texte."
+            ),
+        )
+        _last_ex_class = st.session_state.get("_ex_last_classification")
+        if _last_ex_class and (_last_ex_class.get("generation") or _last_ex_class.get("chunk_filter")):
+            with st.expander("🔍 Voir l'interprétation de la dernière consigne", expanded=False):
+                st.caption("**Formulation (injectée dans le prompt) :**")
+                st.write(_last_ex_class.get("generation") or "_(aucune)_")
+                st.caption("**Périmètre documentaire (filtrage des chunks) :**")
+                st.write(_last_ex_class.get("chunk_filter") or "_(aucun)_")
+
         # 📝 Édition des prompts d'exercice (persona + difficulté + règles fixes)
         with st.expander("📝 Personnaliser les Prompts d'Exercice"):
             # Section 1 : Persona par domaine
@@ -2131,6 +2360,16 @@ if app_mode == "📄 Depuis un document":
 
                 _use_stream_ex = (not batch_mode) and st.session_state.get("streaming_enabled", True)
                 _active_acronyms_ex = [a for a in (st.session_state.acronyms or []) if a.enabled]
+
+                _ex_gen_instr, _ex_chunk_instr = classify_user_input(
+                    st.session_state.get("ex_user_input", ""),
+                    model=selected_model,
+                )
+                st.session_state["_ex_last_classification"] = {
+                    "generation": _ex_gen_instr,
+                    "chunk_filter": _ex_chunk_instr,
+                }
+
                 exercises = generate_exercises(
                     chunks=chunks,
                     difficulty_counts=difficulty_counts_ex,
@@ -2146,6 +2385,9 @@ if app_mode == "📄 Depuis un document":
                     stream=_use_stream_ex,
                     on_item=_on_exercise_item if _use_stream_ex else None,
                     acronyms=_active_acronyms_ex if _active_acronyms_ex else None,
+                    notion_mixing=ex_notion_mixing,
+                    user_instructions=_ex_gen_instr,
+                    user_context=_ex_chunk_instr,
                 )
                 # Accumulation : ajouter sans écraser les exercices existants
                 if st.session_state.exercises is None:
@@ -2183,6 +2425,13 @@ if app_mode == "📄 Depuis un document":
                     _invalidate_download_cache()
                     st.rerun()
 
+            def _normalize_exercise_statement(text: str) -> str:
+                """Assure les sauts de ligne doubles autour des listes markdown."""
+                import re as _re
+                text = _re.sub(r'(?<!\n)\n([-*•])', r'\n\n\1', text)
+                text = _re.sub(r'((?:(?:^|\n)[-*•][^\n]*)+)\n([^\n\-\*•])', r'\1\n\n\2', text)
+                return text
+
             def _render_exercise_card(ex, idx, key_prefix=""):
                 """Affiche une carte d'exercice dans un st.expander."""
                 diff_label = ex.difficulty_level or "moyen"
@@ -2216,7 +2465,7 @@ if app_mode == "📄 Depuis un document":
                         st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
 
                     st.markdown("#### 📝 Énoncé")
-                    st.markdown(ex.statement)
+                    st.markdown(_normalize_exercise_statement(ex.statement or ""))
 
                     if ex_type == "trou":
                         blanks = getattr(ex, "blanks", [])
@@ -2226,12 +2475,46 @@ if app_mode == "📄 Depuis un document":
                                 b_pos = b.get('position', '?')
                                 st.markdown(f"**Blanc {b_pos} :** `{b.get('answer', '')}` — *{b.get('context', '')}*")
                     elif ex_type == "cas_pratique":
+                        if not st.session_state.get("_cas_pratique_disclaimer_shown"):
+                            st.warning(
+                                "⚠️ **Les cas pratiques** sont générés à partir du document mais peuvent contenir "
+                                "des interprétations inexactes. Vérifiez les délais, chiffres et procédures avant "
+                                "toute utilisation pédagogique."
+                            )
+                            st.session_state["_cas_pratique_disclaimer_shown"] = True
                         sub_qs = getattr(ex, "sub_questions", [])
                         if sub_qs:
                             st.markdown("#### ❓ Sous-questions & Réponses")
                             for j, sq in enumerate(sub_qs):
                                 st.markdown(f"**Q{j+1} :** {sq.get('question', '')}")
                                 st.markdown(f"> {sq.get('answer', '')}")
+                        # Bouton amélioration IA
+                        _cp_instr = st.text_input(
+                            "Instruction pour améliorer ce cas pratique",
+                            placeholder="Ex: Corrige les délais selon le document, précise les références légales…",
+                            key=f"cp_ai_instr_{key_prefix}{idx}",
+                            label_visibility="collapsed",
+                        )
+                        if st.button("🤖 Améliorer ce cas pratique", key=f"cp_ai_{key_prefix}{idx}", disabled=not _cp_instr):
+                            with st.spinner("L'IA améliore le cas pratique…"):
+                                src_text = ""
+                                if st.session_state.chunks:
+                                    for _chunk in st.session_state.chunks:
+                                        if ex.source_pages and _chunk.source_pages and set(ex.source_pages) & set(_chunk.source_pages):
+                                            src_text = _chunk.text
+                                            break
+                                try:
+                                    from generation.question_editor import improve_exercise_with_llm
+                                    improved_ex = improve_exercise_with_llm(ex, _cp_instr, source_text=src_text)
+                                    _ex_list = st.session_state.exercises
+                                    for _ei, _ex in enumerate(_ex_list):
+                                        if _ex is ex:
+                                            _ex_list[_ei] = improved_ex
+                                            break
+                                    _invalidate_download_cache()
+                                    st.rerun()
+                                except Exception as _e:
+                                    st.error(f"Erreur IA : {_e}")
                     else:
                         sub_parts = getattr(ex, "sub_parts", [])
                         if sub_parts:
@@ -2925,7 +3208,7 @@ elif app_mode == "💬 Mode libre (IA)":
                         )
                         st.markdown(f"📚 {tags_html}", unsafe_allow_html=True)
                     st.markdown("#### 📝 Énoncé")
-                    st.markdown(ex.statement)
+                    st.markdown(_normalize_exercise_statement(ex.statement or ""))
                     st.markdown(f"#### 🎯 Réponse attendue : `{ex.expected_answer}`")
                     if ex.steps:
                         st.markdown(f"#### 📊 Résolution ({ex.num_steps} étapes)")

@@ -325,6 +325,8 @@ def _build_exercise_prompt(
     exercise_type: str = "calcul",
     persona: str = "",
     acronyms_text: str = "",
+    notion_mixing: bool = True,
+    user_instructions: str = "",
 ) -> tuple:
     """
     Construit le prompt pour la génération d'exercices.
@@ -336,6 +338,8 @@ def _build_exercise_prompt(
     notions_block = ""
     if notions_text:
         notions_block = f"\n\n{notions_text}\nLes exercices doivent tester la maîtrise pratique de ces notions fondamentales."
+        if not notion_mixing:
+            notions_block += "\nChaque exercice doit couvrir UNE SEULE notion à la fois. Le champ 'related_notions' doit contenir exactement 1 élément."
 
     acronyms_block = ""
     if acronyms_text:
@@ -377,11 +381,12 @@ def _build_exercise_prompt(
     )
 
     doc_context = f" (document : {source_document})" if source_document else ""
+    instructions_block = f"\n\nINSTRUCTIONS SUPPLÉMENTAIRES DU FORMATEUR :\n{user_instructions.strip()}" if user_instructions.strip() else ""
     user_prompt = (
         f"Voici le texte source{doc_context} :\n\n---\n{text}\n---\n\n"
         f"Crée exactement {num_exercises} {type_label} de niveau {difficulty}.\n"
         f"IMPORTANT : l'énoncé NE DOIT PAS faire référence au texte source. "
-        f"L'exercice doit être auto-suffisant."
+        f"L'exercice doit être auto-suffisant.{instructions_block}"
     )
 
     return system_prompt, user_prompt
@@ -831,6 +836,8 @@ def generate_exercises_from_chunk(
     persona: str = "",
     enable_thinking: bool = True,
     acronyms_text: str = "",
+    notion_mixing: bool = True,
+    user_instructions: str = "",
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
@@ -852,6 +859,8 @@ def generate_exercises_from_chunk(
             exercise_type=exercise_type,
             persona=persona,
             acronyms_text=acronyms_text,
+            notion_mixing=notion_mixing,
+            user_instructions=user_instructions,
         )
 
         try:
@@ -887,8 +896,11 @@ def generate_exercises(
     persona: str = "",
     enable_thinking: bool = True,
     stream: bool = False,
-    on_item: Optional[callable] = None,
+    on_item=None,
     acronyms: Optional[list] = None,
+    notion_mixing: bool = True,
+    user_instructions: str = "",
+    user_context: str = "",
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks, avec support des niveaux de difficulté.
@@ -912,6 +924,11 @@ def generate_exercises(
     """
     if not chunks:
         return []
+
+    # Sélection intelligente des chunks selon le contexte utilisateur
+    if user_context.strip():
+        from generation.chunk_selector import select_relevant_chunks
+        chunks = select_relevant_chunks(chunks, notions=notions, user_context=user_context, model=model)
 
     # Backward compat
     if difficulty_counts is None:
@@ -954,7 +971,7 @@ def generate_exercises(
 
     # ─── MODE BATCH ────────────────────────────────────────────────────────
     if batch_mode and total_steps > 1:
-        from generation.batch_service import BatchRequest, run_batch_json, run_batch_multi_model
+        from generation.batch_service import BatchRequest, run_batch_json
 
         batch_requests = []
         task_map = {}  # custom_id → (chunk, diff_name, n_ex)
@@ -968,6 +985,8 @@ def generate_exercises(
                 exercise_type=exercise_type,
                 persona=persona,
                 acronyms_text=acronyms_text,
+                notion_mixing=notion_mixing,
+                user_instructions=user_instructions,
             )
             custom_id = f"exercise_{diff_name}_{idx}"
             images = chunk.page_images if (vision_mode and chunk.page_images) else None
@@ -986,17 +1005,7 @@ def generate_exercises(
         if progress_callback:
             progress_callback(0, total_steps)
 
-        # Multi-model dispatch si vision avec plusieurs modèles
-        has_vision_requests = any(r.images for r in batch_requests)
-        if has_vision_requests and len(VISION_MODEL_NAMES) > 1:
-            batch_result = run_batch_multi_model(
-                batch_requests,
-                models=VISION_MODEL_NAMES,
-                progress_callback=lambda done, total: progress_callback(done, total) if progress_callback else None,
-            )
-            results = batch_result.results
-        else:
-            results = run_batch_json(
+        results = run_batch_json(
                 batch_requests,
                 progress_callback=lambda done, total: progress_callback(done, total) if progress_callback else None,
             )
@@ -1026,6 +1035,8 @@ def generate_exercises(
                     persona=persona,
                     enable_thinking=enable_thinking,
                     acronyms_text=acronyms_text,
+                    notion_mixing=notion_mixing,
+                    user_instructions=user_instructions,
                 )
                 for ex in exercises:
                     all_exercises.append(ex)

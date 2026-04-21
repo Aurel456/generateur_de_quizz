@@ -552,3 +552,71 @@ def export_combined_csv(quiz: Optional[Quiz], exercises: Optional[list]) -> str:
             writer.writerow(row)
 
     return output.getvalue()
+
+
+def export_quiz_moodle_xml(quiz: Quiz, quiz_title: str = "Quiz") -> str:
+    """
+    Exporte le quizz au format XML Moodle (multichoice).
+
+    Args:
+        quiz: Objet Quiz contenant les questions.
+        quiz_title: Titre utilisé comme catégorie Moodle.
+
+    Returns:
+        Contenu XML Moodle sous forme de string (UTF-8).
+    """
+    import xml.etree.ElementTree as ET
+
+    def _cdata(text: str) -> str:
+        return f"<![CDATA[{text}]]>"
+
+    root = ET.Element("quiz")
+
+    # Catégorie
+    cat_q = ET.SubElement(root, "question", type="category")
+    cat_node = ET.SubElement(cat_q, "category")
+    cat_text = ET.SubElement(cat_node, "text")
+    cat_text.text = f"$course$/{quiz_title}"
+
+    for q in quiz.questions:
+        q_elem = ET.SubElement(root, "question", type="multichoice")
+
+        # Nom
+        name_elem = ET.SubElement(q_elem, "name")
+        name_text = ET.SubElement(name_elem, "text")
+        name_text.text = q.question[:80]
+
+        # Texte de la question
+        qtext_elem = ET.SubElement(q_elem, "questiontext", format="html")
+        qtext_text = ET.SubElement(qtext_elem, "text")
+        qtext_text.text = _cdata(f"<p>{q.question}</p>")
+
+        # Feedback général (explication)
+        if q.explanation:
+            gfb_elem = ET.SubElement(q_elem, "generalfeedback", format="html")
+            gfb_text = ET.SubElement(gfb_elem, "text")
+            gfb_text.text = _cdata(f"<p>{q.explanation}</p>")
+
+        ET.SubElement(q_elem, "defaultgrade").text = "1"
+        ET.SubElement(q_elem, "shuffleanswers").text = "1"
+
+        nb_correct = len(q.correct_answers)
+        is_single = nb_correct == 1
+        ET.SubElement(q_elem, "single").text = "true" if is_single else "false"
+        ET.SubElement(q_elem, "answernumbering").text = "abc"
+
+        # Fraction : 100/nb_correct pour chaque bonne réponse
+        correct_fraction = str(round(100 / nb_correct)) if nb_correct > 0 else "100"
+
+        for label, choice_text in q.choices.items():
+            is_correct = label in q.correct_answers
+            fraction = correct_fraction if is_correct else "0"
+            ans_elem = ET.SubElement(q_elem, "answer", fraction=fraction)
+            ans_text = ET.SubElement(ans_elem, "text")
+            ans_text.text = choice_text
+            fb_elem = ET.SubElement(ans_elem, "feedback")
+            fb_text = ET.SubElement(fb_elem, "text")
+            fb_text.text = "Correct !" if is_correct else "Incorrect."
+
+    xml_str = ET.tostring(root, encoding="unicode", xml_declaration=False)
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str

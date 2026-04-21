@@ -99,6 +99,7 @@ def _build_quiz_prompt(
     max_correct: Optional[int] = None,
     humor: bool = False,
     acronyms_text: str = "",
+    user_instructions: str = "",
 ) -> tuple:
     """Construit le prompt système et utilisateur pour la génération de quizz."""
 
@@ -130,11 +131,15 @@ RÈGLES STRICTES :
 1. Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})
 2. {"Varie le nombre de bonnes réponses entre 1 et " + str(effective_max) + " selon la question. Certaines questions ont 1 seule bonne réponse, d'autres en ont 2 ou plus. Ne mentionne JAMAIS le nombre de bonnes réponses dans l'énoncé de la question." if variable_correct else f"Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)"}
 3. {diff_instruction}
-4. Chaque question doit inclure une explication de la réponse avec une CITATION exacte du texte source.
+4. Chaque question doit inclure une explication détaillée qui précise :
+   - POURQUOI les bonnes réponses sont correctes (avec citation exacte du texte source)
+   - POURQUOI chaque mauvaise réponse est incorrecte (justification basée sur le document)
    L'explication doit être factuelle et ne jamais affirmer quelque chose qui n'est pas directement
    supporté par le texte source.
 5. Les questions doivent être variées et couvrir différentes parties du texte
-6. Les choix de réponse doivent être du même type et de longueur similaire
+6. Les choix de réponse doivent être du même type et de longueur similaire.
+   Les mauvaises réponses doivent être des affirmations fausses mais plausibles — pas d'inventions.
+   Les choix de réponse ne doivent PAS être en doublon au sein d'une même question.
 7. Pour chaque question, précise la PAGE EXACTE de la source
 8. Le niveau de difficulté est : {difficulty}
 9. INTERDIT : N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document",
@@ -174,14 +179,15 @@ FORMAT DE RÉPONSE (JSON strict) :
 }}"""
 
     doc_context = f" (document : {source_document})" if source_document else ""
+    instructions_block = f"\n\nINSTRUCTIONS SUPPLÉMENTAIRES DU FORMATEUR :\n{user_instructions.strip()}" if user_instructions.strip() else ""
     user_prompt = f"""Voici le texte source{doc_context} pour générer les questions :
 
 ---
 {text}
 ---
 
-Génère exactement {num_questions} questions QCM de niveau {difficulty}."""
-    
+Génère exactement {num_questions} questions QCM de niveau {difficulty}.{instructions_block}"""
+
     return system_prompt, user_prompt
 
 
@@ -199,10 +205,24 @@ def _parse_quiz_questions(
 
             source_pages = validated["source_pages"] if validated["source_pages"] else chunk.source_pages
 
+            # Dédoublonner les choix (garder le premier si deux choix identiques)
+            choices = validated["choices"]
+            seen_texts: set = set()
+            deduped_choices = {}
+            for label, text in choices.items():
+                normalized = text.strip().lower()
+                if normalized not in seen_texts:
+                    seen_texts.add(normalized)
+                    deduped_choices[label] = text
+                else:
+                    logger.warning("Choix doublon ignoré pour label %s : %s", label, text)
+            # Filtrer correct_answers pour ne garder que les labels restants
+            valid_correct = [c for c in validated["correct_answers"] if c in deduped_choices]
+
             question = QuizQuestion(
                 question=validated["question"],
-                choices=validated["choices"],
-                correct_answers=validated["correct_answers"],
+                choices=deduped_choices,
+                correct_answers=valid_correct or validated["correct_answers"],
                 explanation=validated.get("explanation", ""),
                 source_pages=source_pages,
                 difficulty_level=validated.get("difficulty_level") or difficulty,
@@ -237,6 +257,7 @@ def generate_quiz_from_chunk(
     stream: bool = False,
     on_item: Optional[callable] = None,
     acronyms_text: str = "",
+    user_instructions: str = "",
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quizz à partir d'un seul chunk de texte.
@@ -249,7 +270,7 @@ def generate_quiz_from_chunk(
         difficulty_prompts, notions_text=notions_text, source_document=chunk.source_document,
         existing_questions=existing_questions, variable_correct=variable_correct,
         persona=persona, notion_mixing=notion_mixing, max_correct=max_correct,
-        humor=humor, acronyms_text=acronyms_text,
+        humor=humor, acronyms_text=acronyms_text, user_instructions=user_instructions,
     )
 
     if stream:
@@ -344,6 +365,8 @@ def generate_quiz(
     stream: bool = False,
     on_item: Optional[callable] = None,
     acronyms: Optional[list] = None,
+    user_instructions: str = "",
+    user_context: str = "",
 ) -> Quiz:
     """
     Génère un quizz complet à partir de plusieurs chunks.
@@ -367,6 +390,11 @@ def generate_quiz(
     """
     if not chunks:
         return Quiz(title="Quizz vide", difficulty="mixte")
+
+    # Sélection intelligente des chunks selon le contexte utilisateur
+    if user_context.strip():
+        from generation.chunk_selector import select_relevant_chunks
+        chunks = select_relevant_chunks(chunks, notions=notions, user_context=user_context, model=model)
 
     # Déterminer les comptes par difficulté
     if difficulty_counts is None:
@@ -404,8 +432,8 @@ def generate_quiz(
 
     # ─── MODE BATCH (par niveau séquentiel pour l'anti-doublons) ───────────
     if batch_mode and total_steps > 1:
-        from generation.batch_service import BatchRequest, run_batch_json, run_batch_multi_model
-        from core.llm_service import VISION_MODEL_NAME, VISION_MODEL_NAMES, MODEL_NAME
+        from generation.batch_service import BatchRequest, run_batch_json
+        from core.llm_service import VISION_MODEL_NAME, MODEL_NAME
 
         for diff_name, diff_tasks in tasks_by_diff.items():
             # Questions déjà accumulées des niveaux précédents
@@ -424,6 +452,7 @@ def generate_quiz(
                     persona=persona, notion_mixing=notion_mixing,
                     max_correct=max_correct,
                     humor=humor, acronyms_text=acronyms_text,
+                    user_instructions=user_instructions,
                 )
                 custom_id = f"quiz_{diff_name}_{idx}"
                 images = chunk.page_images if (vision_mode and chunk.page_images) else None
@@ -442,19 +471,7 @@ def generate_quiz(
             if progress_callback:
                 progress_callback(step_idx, total_steps)
 
-            # Multi-model dispatch si vision avec plusieurs modèles
-            has_vision_requests = any(r.images for r in batch_requests)
-            if has_vision_requests and len(VISION_MODEL_NAMES) > 1:
-                batch_result = run_batch_multi_model(
-                    batch_requests,
-                    models=VISION_MODEL_NAMES,
-                    progress_callback=lambda done, _total, s=step_idx: (
-                        progress_callback(s + done, total_steps) if progress_callback else None
-                    ),
-                )
-                results = batch_result.results
-            else:
-                results = run_batch_json(
+            results = run_batch_json(
                     batch_requests,
                     progress_callback=lambda done, _total, s=step_idx: (
                         progress_callback(s + done, total_steps) if progress_callback else None
@@ -510,6 +527,7 @@ def generate_quiz(
                             stream=stream,
                             on_item=on_item,
                             acronyms_text=acronyms_text,
+                            user_instructions=user_instructions,
                         )
                         chunk_questions.extend(questions)
                         remaining = n_q - len(chunk_questions)

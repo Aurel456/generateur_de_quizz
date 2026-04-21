@@ -5,6 +5,7 @@ Permet au formateur de demander une modification en langage naturel
 (reformulation, correction, ajout de distracteurs, etc.) sur une question existante.
 """
 
+from dataclasses import replace as dc_replace
 from typing import Optional
 
 from core.llm_service import call_llm_json
@@ -93,3 +94,71 @@ Applique l'instruction et retourne la question mise à jour."""
         source_document=question.source_document,
         related_notions=question.related_notions,
     )
+
+
+def improve_exercise_with_llm(exercise, instruction: str, source_text: str = "", model: Optional[str] = None):
+    """
+    Améliore un exercice (cas pratique ou autre) selon une instruction en langage naturel.
+    Préserve le type, la difficulté, les pages source et les notions liées.
+
+    Args:
+        exercise: Objet Exercise à modifier.
+        instruction: Instruction du formateur.
+        source_text: Extrait du document source (optionnel).
+        model: Modèle LLM à utiliser.
+
+    Returns:
+        Exercise mis à jour.
+    """
+    from generation.exercise_generator import Exercise
+
+    source_block = f"\nDOCUMENT SOURCE :\n---\n{source_text[:3000]}\n---\n" if source_text else ""
+
+    ex_type = getattr(exercise, "exercise_type", "cas_pratique")
+
+    if ex_type == "cas_pratique":
+        sub_qs_text = ""
+        for j, sq in enumerate(getattr(exercise, "sub_questions", [])):
+            sub_qs_text += f"  Q{j+1}: {sq.get('question', '')}\n  R{j+1}: {sq.get('answer', '')}\n"
+        format_block = (
+            '{\n  "statement": "...",\n  "correction": "...",\n'
+            '  "sub_questions": [{"question": "...", "answer": "..."}]\n}'
+        )
+        current_block = f"ÉNONCÉ :\n{exercise.statement}\n\nSOUS-QUESTIONS :\n{sub_qs_text}"
+    elif ex_type == "trou":
+        blanks_text = "\n".join(f"  Blanc {b.get('position','?')}: {b.get('answer','')}" for b in getattr(exercise, "blanks", []))
+        format_block = '{\n  "statement": "...",\n  "correction": "...",\n  "blanks": [{"position": 1, "answer": "...", "context": "..."}]\n}'
+        current_block = f"ÉNONCÉ :\n{exercise.statement}\n\nBLANCS :\n{blanks_text}"
+    else:
+        format_block = '{\n  "statement": "...",\n  "expected_answer": "...",\n  "correction": "...",\n  "steps": ["étape 1", "étape 2"]\n}'
+        current_block = f"ÉNONCÉ :\n{exercise.statement}\n\nRÉPONSE ATTENDUE :\n{exercise.expected_answer}"
+
+    system_prompt = (
+        f"Tu es un expert en création d'exercices pédagogiques de type '{ex_type}'. "
+        "Modifie l'exercice fourni selon l'instruction du formateur, sans changer ce qui n'est pas demandé.\n\n"
+        f"FORMAT DE RÉPONSE (JSON strict) :\n{format_block}"
+    )
+
+    user_prompt = (
+        f"{current_block}\n{source_block}\n"
+        f"INSTRUCTION DU FORMATEUR : {instruction}\n\n"
+        "Applique l'instruction et retourne l'exercice mis à jour."
+    )
+
+    result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.4)
+
+    updates = {
+        "statement": result.get("statement", exercise.statement),
+        "correction": result.get("correction", exercise.correction),
+    }
+    if ex_type == "cas_pratique" and "sub_questions" in result:
+        updates["sub_questions"] = result["sub_questions"]
+    elif ex_type == "trou" and "blanks" in result:
+        updates["blanks"] = result["blanks"]
+    elif ex_type == "calcul":
+        if "expected_answer" in result:
+            updates["expected_answer"] = str(result["expected_answer"])
+        if "steps" in result:
+            updates["steps"] = result["steps"]
+
+    return dc_replace(exercise, **updates)

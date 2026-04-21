@@ -8,3 +8,4 @@ __pycache__/
 .claude
 shared_data/
 .pytest_cache
+reference_data/acronyms.json

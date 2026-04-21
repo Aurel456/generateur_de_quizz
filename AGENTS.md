@@ -36,10 +36,13 @@ Instructions pour les agents IA travaillant sur ce projet.
 | `core/llm_cache.py` | 150 | Cache LLM SHA256, LRU, TTL, persistence JSON |
 | `core/token_tracker.py` | 65 | Log tokens par appel, résumé agrégé |
 | `core/stats_manager.py` | 52 | Stats globales JSON (questions, docs, tokens, sessions) |
+| `generation/acronym_detector.py` | ~300 | Dataclass `Acronym`, détection regex via `reference_data/acronyms.json`, édition LLM, injection prompts |
 | `generation/chat_mode.py` | 601 | Machine à états (ChatState) pour le mode libre IA |
 | `generation/quiz_verifier.py` | 371 | Vérification IA des QCM, reformulation auto (max 3) |
 | `generation/exercise_verifier.py` | 598 | Vérification IA des exercices trou/cas_pratique |
 | `generation/question_editor.py` | 95 | Amélioration IA d'une question individuelle |
+| `generation/instruction_classifier.py` | ~90 | Classe une consigne libre en `generation_instructions` + `chunk_filter_instructions` via LLM (JSON) |
+| `generation/chunk_selector.py` | ~115 | Filtre les chunks pertinents via LLM (user_context + notions avec description/pages/source) |
 | `generation/batch_service.py` | 237 | Traitement par lots ThreadPoolExecutor, retry |
 | `generation/calc_agent.py` | 115 | Exécution Python sandboxée pour vérification calculs |
 | `processing/vision_processor.py` | 640 | Rendu PDF→images, optimisation DPI, LibreOffice |
@@ -102,6 +105,17 @@ class Notion:
     category: str = ""
     question_count: int = 0
 
+# generation/acronym_detector.py:18
+@dataclass
+class Acronym:
+    acronym: str                      # ex: "TVA"
+    definition: str                   # Définition active (éditable libre)
+    all_definitions: List[str]        # Suggestions depuis reference_data/acronyms.json
+    source_document: str = ""
+    source_pages: List[int]
+    enabled: bool = True
+    from_reference: bool = True       # False si ajouté manuellement ou détecté par LLM
+
 # processing/document_processor.py:29
 @dataclass
 class TextChunk:
@@ -115,12 +129,13 @@ class TextChunk:
 @dataclass
 class WorkSession:
     work_session_id, work_code, title, draft_quiz_json, draft_notions_json,
-    owner_name, last_modified, created_at, status, draft_exercises_json, original_quiz_json
+    owner_name, last_modified, created_at, status, draft_exercises_json,
+    original_quiz_json, draft_acronyms_json
 
 @dataclass
 class QuizSession:
     session_id, session_code, title, quiz_json, notions_json, created_at,
-    is_active, pool_json, subset_size, pass_threshold, exercises_json
+    is_active, pool_json, subset_size, pass_threshold, exercises_json, acronyms_json
 
 @dataclass
 class ParticipantResult:
@@ -164,7 +179,13 @@ Internes streaming : `_execute_completion_stream()`, `_execute_responses_stream(
 
 **`generation/exercise_generator.py`** : `generate_exercises()`, `generate_exercises_from_chunk()`, `_build_exercise_prompt()`, `_verify_exercise_with_agent()`, `_verify_exercise_direct()`, `_correct_exercise_with_llm()`, `_verify_and_correct_exercise()`
 
-**`generation/notion_detector.py`** : `detect_notions()`, `edit_notions_with_llm()`, `merge_similar_notions()`, `notions_to_prompt_text()`
+**`generation/notion_detector.py`** : `detect_notions()`, `detect_notions_and_acronyms()` (prompt combiné notions + acronymes inconnus en un seul appel LLM par chunk, retourne `(List[Notion], List[dict])`), `edit_notions_with_llm()`, `merge_similar_notions()`, `notions_to_prompt_text()`
+
+**`generation/acronym_detector.py`** : `load_acronym_reference(path)`, `detect_acronyms_from_text(chunks, reference)` (regex contre dict de référence), `edit_acronyms_with_llm()`, `acronyms_to_prompt_text()` (bloc "ACRONYMES DU DOMAINE" injecté dans prompts quiz/exercices)
+
+**`generation/instruction_classifier.py`** : `classify_user_input(text, model, enable_thinking=False) -> (generation_instructions, chunk_filter_instructions)` — un seul appel LLM JSON qui split la consigne libre du formateur en deux volets. Fallback : si classification échoue ou retourne vide, renvoie le texte brut dans les deux. Appelé depuis `app.py` avant `generate_quiz()` / `generate_exercises()`.
+
+**`generation/chunk_selector.py`** : `select_relevant_chunks(chunks, notions, user_context, model, max_chunks)` — filtre LLM des chunks pertinents selon le `user_context` (venant du classifieur) et les notions actives (titre + description + source_document + source_pages passés au LLM).
 
 **`generation/chat_mode.py`** : `init_session()`, `process_user_message()`, `generate_notions_from_chat()`, `extract_generation_config()`, `generate_quiz_direct()`, `generate_exercises_direct()`
 
@@ -222,7 +243,8 @@ generateur_de_quizz/
 │   ├── shared_session.py         ← page Sessions Partagées (séparée de app.py)
 │   └── admin.py                  ← page admin gestion utilisateurs (désactivé)
 ├── templates/quiz_template.html  ← template Jinja2 pour export HTML
-├── shared_data/                  ← données persistantes (SQLite, stats JSON, cache LLM)
+├── shared_data/                  ← données persistantes (SQLite, stats JSON, cache LLM) — **volume Docker**
+├── reference_data/               ← données de référence en lecture seule (ex: acronyms.json) — **hors volume**
 ├── core/
 │   ├── llm_service.py            ← client LLM (cache SHA256, retry, token tracking, enable_thinking)
 │   ├── llm_cache.py              ← cache LLM : SHA256 key, LRU eviction, TTL, persistence JSON
@@ -240,7 +262,8 @@ generateur_de_quizz/
 │   ├── exercise_generator.py     ← génération exercices — 3 types, persona séparé des règles fixes
 │   ├── exercise_verifier.py      ← vérification IA des exercices trou/cas_pratique (verify→reformulate→delete)
 │   ├── question_editor.py        ← amélioration LLM d'une question existante (improve_question_with_llm)
-│   ├── notion_detector.py        ← détection, édition, fusion des notions fondamentales
+│   ├── notion_detector.py        ← détection, édition, fusion des notions fondamentales (+ `detect_notions_and_acronyms` combiné)
+│   ├── acronym_detector.py       ← détection regex d'acronymes via `reference_data/acronyms.json`, édition LLM, injection glossaire prompts
 │   ├── chat_mode.py              ← machine à états (ChatState) pour le mode libre
 │   └── batch_service.py          ← traitement par lots (ThreadPoolExecutor, retry par requête, BatchResult)
 ├── export/
@@ -352,10 +375,12 @@ Les générations successives s'ajoutent aux exercices existants (`st.session_st
 - **Humour** : toggle dans config quiz, ajoute une mauvaise réponse décalée par question.
 - **Accumulation quiz** : les générations s'ajoutent au quiz existant (bouton Réinit. pour remettre à zéro).
 - **Notions manquantes** : bouton dédié "🎯 Notions manquantes" pour générer uniquement sur les notions non couvertes.
+- **Acronymes** : section dédiée dans l'onglet Notions. Détection **automatique à l'upload** (regex contre `reference_data/acronyms.json`), enrichissement **combiné** avec la détection des notions (le bouton "Détecter les notions" produit notions + acronymes inconnus en un seul appel LLM par chunk). Définition libre-éditable via `st.text_input` (suggestions alternatives en `st.caption`). Glossaire injecté dans les prompts quiz/exercices, exporté en HTML, visible côté participant (expander), et persisté dans `acronyms_json` / `draft_acronyms_json`.
 - **Auth** : système login/rôles désactivé temporairement (code commenté dans app.py, work_session.py).
 - **Persistance documents** : les fichiers uploadés sont cachés dans `session_state["_uploaded_files_cache"]` (bytes + noms) pour survivre à la navigation entre pages.
 - **Quiz session** : les questions non remplies sont affichées par numéro dans un warning, bouton de soumission désactivé tant que tout n'est pas répondu.
 - **Tag version** : popover `v3.3` en haut de page avec changelog complet.
+- **Consigne libre unifiée** : un seul `st.text_area` ("💬 Consignes libres") dans les onglets Quizz et Exercices. Clé session : `quiz_user_input` / `ex_user_input`. Avant chaque génération, `classify_user_input()` découpe le texte en `generation_instructions` (passé à `user_instructions=`) et `chunk_filter_instructions` (passé à `user_context=`). Le résultat est mémorisé dans `_quiz_last_classification` / `_ex_last_classification` et affiché dans un expander "🔍 Voir l'interprétation".
 - **Toggle Streaming** : "Streaming (affichage progressif)" dans les options avancées. Désactivé → mode classique (batch complet). Active par défaut.
 - **Mode One-shot** : toggle indépendant du mode vision. En texte seul, utilise le modèle vision pour son grand contexte. En vision, utilise DPI 85 + slider 100-150 pages/tranche.
 
@@ -390,6 +415,35 @@ Note : les anciens noms `MODEL_NAME`, `MODEL_CONTEXT_WINDOW`, `VISION_CONTEXT_WI
 
 ```bash
 streamlit run app.py
+```
+
+---
+
+## Déploiement Docker
+
+- **Image** : `Dockerfile` (base `python:3.12-slim`, `WORKDIR /app`, `COPY . .`).
+- **Orchestration** : `compose.yml` avec volume nommé `shared_data:/app/shared_data`.
+
+### ⚠️ Piège volumes Docker — à connaître avant d'ajouter des fichiers de ressources
+
+`shared_data/` est :
+
+1. **Dans `.gitignore`** → absent du contexte de build si on construit depuis un git clone CI/CD.
+2. **Monté comme volume nommé** → le volume Docker **masque** tout fichier embarqué dans l'image à cet emplacement.
+
+**Règle** : ne jamais placer un fichier de **référence en lecture seule** (ex: `acronyms.json`, dictionnaires, templates de données) dans `shared_data/`. Les **seules** données qui vivent dans `shared_data/` sont celles **écrites à l'exécution** (SQLite `quiz_sessions.db`, `global_stats.json`, `llm_cache.json`).
+
+Pour toute **donnée de référence embarquée avec l'image** → utiliser le dossier `reference_data/` (non-gitignored, hors volume). Exemple : `reference_data/acronyms.json`.
+
+### Chemins robustes Docker-safe
+
+Dans `app.py`, construire les chemins via `Path(__file__).resolve().parent` plutôt que `os.path.dirname(__file__)` — en Docker, `__file__` peut être relatif et `dirname("")` retourne `""`, ce qui casse la résolution.
+
+```python
+# app.py (en tête de fichier)
+from pathlib import Path
+_PROJECT_ROOT = Path(__file__).resolve().parent
+_ACRONYMS_PATH = _PROJECT_ROOT / "reference_data" / "acronyms.json"
 ```
 
 ---
