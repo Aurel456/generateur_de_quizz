@@ -131,10 +131,20 @@ RÈGLES :
 4. Ajuste les choix de réponse si nécessaire (les mauvaises réponses doivent être clairement fausses)
 5. Mets à jour l'explication
 6. La question doit rester auto-suffisante (pas de référence au document)
+7. FORMULATION OBLIGATOIRE : Le champ 'question' DOIT être une véritable question interrogative
+   grammaticalement correcte. Elle DOIT se terminer par un point d'interrogation « ? » et commencer
+   par un mot interrogatif (Que, Quel, Quelle, Comment, Pourquoi, Combien, Lequel, Dans quel cas...)
+   ou être une phrase affirmative suivie de « ? » qui demande clairement quelque chose.
+   INTERDIT : tronçon de phrase, consigne impérative, titre nominal, fragment sans verbe.
+   Exemples INTERDITS : « Les délais de prescription », « Calcul de la TVA », « Concernant l'article 123 ».
+   Exemples CORRECTS : « Quel est le délai de prescription applicable en matière de ... ? »,
+   « Dans quel cas la TVA s'applique-t-elle à taux réduit ? »
+8. CLARTÉ : Ne tronque pas la question, ne laisse pas de phrase incomplète. L'énoncé doit être
+   compréhensible et exploitable tel quel, sans devinette.
 
 FORMAT DE RÉPONSE (JSON strict) :
 {
-    "question": "Question reformulée...",
+    "question": "Question reformulée se terminant par un point d'interrogation ?",
     "choices": {"A": "Choix A reformulé", "B": "Choix B reformulé"},
     "correct_answers": ["A"],
     "explanation": "Explication mise à jour..."
@@ -178,7 +188,47 @@ Reformule la question et les choix pour éliminer l'ambiguïté."""
         logger.warning("Reformulation invalide : bonnes réponses absentes des choix, on garde l'original")
         return question
 
+    # Validation : l'énoncé reformulé doit être une vraie question
+    if not _looks_like_question(new_question.question):
+        logger.warning(
+            "Reformulation invalide : énoncé non interrogatif (%r), on garde l'original",
+            new_question.question[:80],
+        )
+        return question
+
+    # Validation : pas de troncature / énoncé trop court
+    if len(new_question.question.strip()) < 15:
+        logger.warning("Reformulation invalide : énoncé trop court, on garde l'original")
+        return question
+
     return new_question
+
+
+def _looks_like_question(text: str) -> bool:
+    """Vérifie qu'une chaîne ressemble à une vraie question interrogative."""
+    if not text:
+        return False
+    stripped = text.strip()
+    if not stripped.endswith("?"):
+        return False
+    # Doit contenir un verbe ou un mot interrogatif — heuristique simple
+    # (contient un espace + pas uniquement quelques mots nominaux)
+    words = stripped.rstrip("?").strip().split()
+    if len(words) < 3:
+        return False
+    lowered = stripped.lower()
+    interrogatives = (
+        "que ", "qu'", "quel", "quelle", "quels", "quelles",
+        "comment", "pourquoi", "combien", "lequel", "laquelle",
+        "lesquels", "lesquelles", "où", "quand", "dans quel",
+        "à quel", "de quel", "par quel", "est-", "est-ce", "peut-",
+        "doit-", "faut-il", "y a-t-il", "a-t-",
+    )
+    if any(tok in lowered for tok in interrogatives):
+        return True
+    # Fallback : présence d'un verbe conjugué courant
+    common_verbs = (" est ", " sont ", " a ", " ont ", " peut ", " doit ", " faut ")
+    return any(v in f" {lowered} " for v in common_verbs)
 
 
 def verify_quiz(

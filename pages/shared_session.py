@@ -6,6 +6,7 @@ Consultez les sessions de quizz partagées, les questions et les analytics.
 
 import json
 import streamlit as st
+import dsfr
 
 from sessions.session_store import list_sessions, get_session, deactivate_session
 from sessions.analytics import render_analytics_dashboard
@@ -16,6 +17,8 @@ st.set_page_config(
     page_icon="📡",
     layout="wide",
 )
+
+dsfr.apply()
 
 st.markdown("### 📡 Sessions Partagées")
 st.caption("Consultez les sessions de quizz partagées, les questions et les analytics.")

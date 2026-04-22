@@ -6,6 +6,7 @@ Accessible via URL : http://host:port/quiz_session?code=ABC123
 
 import json
 import streamlit as st
+import dsfr
 
 from sessions.session_store import get_session, submit_result, get_next_subset
 
@@ -14,6 +15,8 @@ st.set_page_config(
     page_icon="📝",
     layout="centered",
 )
+
+dsfr.apply()
 
 # CSS cohérent avec l'app principale
 st.markdown("""

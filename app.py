@@ -170,10 +170,20 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.popover("🏷️ v4.1"):
+with st.popover("🏷️ v4.2"):
     st.markdown("""
+**Nouveautés v4.2 :**
+- **Qualité des quizz améliorée :** instructions du formateur injectées en tête de prompt (prioritaires, non diluées)
+- **Anti-extrapolation :** le LLM ne peut plus affirmer qu'un article/dispositif « n'existe pas » s'il n'est pas dans le passage
+- **Mélange de notions limité :** max 2-3 notions par question (1 dominante), plus de surcharge du champ `related_notions`
+- **Anti-doublons trans-niveau renforcé :** le LLM reçoit l'interdiction explicite de paraphraser les questions des autres niveaux
+- **Reformulation IA sécurisée :** garde-fou — la reformulation est validée (forme interrogative obligatoire), rollback vers l'original si non conforme
+- **Notions hallucinations éliminées :** post-validation des `related_notions` par fuzzy matching contre la liste officielle (seuil 0.85), titres normalisés automatiquement → comptage des notions couvertes désormais fiable
+- **Anti-doublons exercices :** les exercices déjà générés (run courant + runs précédents) sont passés au LLM en anti-doublon, avec énoncé et sous-questions mais sans les explications
+
 **Nouveautés v4.1 :**
 - **DSFR**
+
 **Nouveautés v4.0 :**
 - **Zone d'instructions libres :** texte libre transmis au LLM lors de la génération (quiz & exercices)
 - **Contexte utilisateur additionnel :** sélection intelligente des chunks les plus pertinents avant génération
@@ -2387,6 +2397,7 @@ if app_mode == "📄 Depuis un document":
                     notion_mixing=ex_notion_mixing,
                     user_instructions=_ex_gen_instr,
                     user_context=_ex_chunk_instr,
+                    existing_exercises=st.session_state.exercises,
                 )
                 # Accumulation : ajouter sans écraser les exercices existants
                 if st.session_state.exercises is None:

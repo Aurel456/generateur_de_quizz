@@ -9,6 +9,7 @@ import json
 import time
 
 import streamlit as st
+import dsfr
 
 from sessions.session_store import (
     create_work_session, get_work_session, update_work_session_draft,
@@ -22,6 +23,8 @@ st.set_page_config(
     page_icon="🛠️",
     layout="wide",
 )
+
+dsfr.apply()
 
 # Auth gate — désactivé temporairement
 # _ws_user = st.session_state.get("user")

@@ -315,6 +315,38 @@ def _get_langchain_llm(model: Optional[str] = None):
     )
 
 
+def _summarize_exercises_for_antidup(exercises: List["Exercise"]) -> str:
+    """
+    Sérialise les exercices déjà générés en version condensée pour le prompt anti-doublons.
+    Exclut les explications/corrections pour limiter la taille du prompt.
+    """
+    if not exercises:
+        return ""
+    lines = []
+    for i, ex in enumerate(exercises, 1):
+        statement = (ex.statement or "").strip().replace("\n", " ")
+        if len(statement) > 300:
+            statement = statement[:300] + "…"
+        lines.append(f"{i}. [{ex.exercise_type}] {statement}")
+        # Ajouter les sous-questions si présentes (sans les réponses ni corrections)
+        if ex.sub_questions:
+            for j, sq in enumerate(ex.sub_questions, 1):
+                q_text = (sq.get("question") or "").strip().replace("\n", " ")
+                if len(q_text) > 150:
+                    q_text = q_text[:150] + "…"
+                lines.append(f"   Q{j}. {q_text}")
+        elif ex.sub_parts:
+            for j, sp in enumerate(ex.sub_parts, 1):
+                q_text = (sp.get("question") or "").strip().replace("\n", " ")
+                if len(q_text) > 150:
+                    q_text = q_text[:150] + "…"
+                lines.append(f"   Q{j}. {q_text}")
+        # Notions couvertes (pour aider le LLM à varier)
+        if ex.related_notions:
+            lines.append(f"   Notions : {', '.join(ex.related_notions)}")
+    return "\n".join(lines)
+
+
 def _build_exercise_prompt(
     text: str,
     num_exercises: int,
@@ -327,6 +359,7 @@ def _build_exercise_prompt(
     acronyms_text: str = "",
     notion_mixing: bool = True,
     user_instructions: str = "",
+    existing_exercises_text: str = "",
 ) -> tuple:
     """
     Construit le prompt pour la génération d'exercices.
@@ -370,12 +403,35 @@ def _build_exercise_prompt(
     # Injecter notions et acronymes dans les règles communes
     rules_block = common_rules.replace("{notions_block}", notions_block + acronyms_block)
 
+    # Rappel prioritaire des instructions du formateur en tête du system_prompt
+    user_instructions_header = ""
+    if user_instructions.strip():
+        user_instructions_header = (
+            "\n\n⚠️ INSTRUCTIONS PRIORITAIRES DU FORMATEUR (à respecter IMPÉRATIVEMENT pour CHAQUE exercice) :\n"
+            f"{user_instructions.strip()}\n"
+            "Ces consignes priment sur les règles générales en cas de conflit de formulation.\n"
+        )
+
+    # Bloc anti-doublons avec les exercices déjà générés
+    existing_block = ""
+    if existing_exercises_text.strip():
+        existing_block = (
+            f"\n\nEXERCICES DÉJÀ GÉNÉRÉS — À NE PAS DUPLIQUER NI PARAPHRASER :\n"
+            f"Les exercices suivants ont déjà été créés. Tes nouveaux exercices DOIVENT :\n"
+            f"  - porter sur des notions ou des situations DIFFÉRENTES\n"
+            f"  - ne pas reprendre la même formulation, le même scénario, les mêmes données chiffrées\n"
+            f"  - privilégier les notions encore NON couvertes par la liste ci-dessous\n"
+            f"Si les notions restantes sont limitées, change radicalement le contexte (situation, profil, "
+            f"données numériques) plutôt que de paraphraser un exercice existant.\n\n"
+            f"{existing_exercises_text.strip()}\n"
+        )
+
     # Assembler le system prompt : persona + task + rules + difficulty + JSON
     system_prompt = (
-        f"{active_persona}\n\n"
+        f"{active_persona}{user_instructions_header}\n\n"
         f"Tu dois créer exactement {num_exercises} {type_label} de niveau {difficulty} "
         f"basé(s) sur le texte fourni.\n"
-        f"{rules_block}\n\n"
+        f"{rules_block}{existing_block}\n\n"
         f"{difficulty_instructions}\n\n"
         f"{json_format}"
     )
@@ -838,6 +894,7 @@ def generate_exercises_from_chunk(
     acronyms_text: str = "",
     notion_mixing: bool = True,
     user_instructions: str = "",
+    existing_exercises_text: str = "",
 ) -> List[Exercise]:
     """
     Génère des exercices à partir d'un chunk de texte avec vérification.
@@ -861,6 +918,7 @@ def generate_exercises_from_chunk(
             acronyms_text=acronyms_text,
             notion_mixing=notion_mixing,
             user_instructions=user_instructions,
+            existing_exercises_text=existing_exercises_text,
         )
 
         try:
@@ -901,6 +959,7 @@ def generate_exercises(
     notion_mixing: bool = True,
     user_instructions: str = "",
     user_context: str = "",
+    existing_exercises: Optional[List["Exercise"]] = None,
 ) -> List[Exercise]:
     """
     Génère des exercices à partir de plusieurs chunks, avec support des niveaux de difficulté.
@@ -973,6 +1032,10 @@ def generate_exercises(
     if batch_mode and total_steps > 1:
         from generation.batch_service import BatchRequest, run_batch_json
 
+        # En batch, les requêtes sont parallèles : on ne peut injecter que les
+        # exercices préexistants (runs précédents), pas ceux de cette génération.
+        prior_text = _summarize_exercises_for_antidup(list(existing_exercises) if existing_exercises else [])
+
         batch_requests = []
         task_map = {}  # custom_id → (chunk, diff_name, n_ex)
 
@@ -987,6 +1050,7 @@ def generate_exercises(
                 acronyms_text=acronyms_text,
                 notion_mixing=notion_mixing,
                 user_instructions=user_instructions,
+                existing_exercises_text=prior_text,
             )
             custom_id = f"exercise_{diff_name}_{idx}"
             images = chunk.page_images if (vision_mode and chunk.page_images) else None
@@ -1022,9 +1086,17 @@ def generate_exercises(
 
     # ─── MODE SÉQUENTIEL ───────────────────────────────────────────────────
     else:
+        # Exercices préexistants (runs précédents accumulés) injectés en anti-doublons
+        prior_exercises = list(existing_exercises) if existing_exercises else []
+
         for i, (diff_name, chunk, n_ex) in enumerate(all_tasks):
             if progress_callback:
                 progress_callback(i, total_steps)
+
+            # Sérialiser les exercices déjà générés (énoncé + sous-questions, sans explications)
+            # pour alimenter l'anti-doublons à chaque nouvelle itération.
+            existing_exercises_text = _summarize_exercises_for_antidup(prior_exercises + all_exercises)
+
             try:
                 exercises = generate_exercises_from_chunk(
                     chunk, n_ex, model=model, notions_text=notions_text,
@@ -1037,6 +1109,7 @@ def generate_exercises(
                     acronyms_text=acronyms_text,
                     notion_mixing=notion_mixing,
                     user_instructions=user_instructions,
+                    existing_exercises_text=existing_exercises_text,
                 )
                 for ex in exercises:
                     all_exercises.append(ex)
@@ -1048,6 +1121,13 @@ def generate_exercises(
 
     if progress_callback:
         progress_callback(total_steps, total_steps)
+
+    # Normaliser les related_notions contre la liste officielle des notions
+    if notions:
+        from generation.notion_detector import validate_related_notions
+        active_notions = [n for n in notions if getattr(n, "enabled", True)]
+        for ex in all_exercises:
+            ex.related_notions = validate_related_notions(ex.related_notions, active_notions)
 
     return all_exercises
 

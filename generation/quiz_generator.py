@@ -119,7 +119,17 @@ def _build_quiz_prompt(
     effective_max = max_correct if max_correct is not None else (num_choices - 1)
 
     active_persona = persona.strip() if persona.strip() else QUIZ_DEFAULT_PERSONA
-    system_prompt = f"""{active_persona}
+
+    # Rappel prioritaire des instructions du formateur en tête du system_prompt
+    user_instructions_header = ""
+    if user_instructions.strip():
+        user_instructions_header = (
+            "\n\n⚠️ INSTRUCTIONS PRIORITAIRES DU FORMATEUR (à respecter IMPÉRATIVEMENT pour CHAQUE question) :\n"
+            f"{user_instructions.strip()}\n"
+            "Ces consignes priment sur les règles générales en cas de conflit de formulation."
+        )
+
+    system_prompt = f"""{active_persona}{user_instructions_header}
 Tu dois générer exactement {num_questions} questions QCM (Questions à Choix Multiples).
 
 CONTEXTE IMPORTANT :
@@ -136,6 +146,12 @@ RÈGLES STRICTES :
    - POURQUOI chaque mauvaise réponse est incorrecte (justification basée sur le document)
    L'explication doit être factuelle et ne jamais affirmer quelque chose qui n'est pas directement
    supporté par le texte source.
+   INTERDIT ABSOLU : ne JAMAIS affirmer qu'une entité (article, dispositif, procédure, texte de loi...)
+   « n'existe pas » ou est « inexistante » sous prétexte qu'elle n'est pas mentionnée dans le passage.
+   Le document fourni est un EXTRAIT partiel, pas un référentiel exhaustif. Si une notion n'est pas
+   dans le texte, ne te prononce pas sur son existence. Ne justifie jamais une mauvaise réponse par
+   « cet article/dispositif n'existe pas » — dis plutôt « cette affirmation est incorrecte » ou
+   « cette modalité ne correspond pas à celle décrite dans le cours ».
 5. Les questions doivent être variées et couvrir différentes parties du texte
 6. Les choix de réponse doivent être du même type et de longueur similaire.
    Les mauvaises réponses doivent être des affirmations fausses mais plausibles — pas d'inventions.
@@ -153,13 +169,21 @@ RÈGLES STRICTES :
     "Quelle est la meilleure...". Préfère des questions précises avec un contexte clair.
     Le nombre de bonnes réponses ne doit jamais figurer dans l'énoncé (ne pas écrire "Quelles sont
     les 2 raisons..." si num_correct=2 — le nombre de réponses attendues est déjà indiqué à l'étudiant).
-{"12. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions." if notions_text else ""}
+{"12. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions. N'invente JAMAIS une notion qui ne figure pas dans la liste fournie." if notions_text else ""}
 {"13. NOTIONS PAR QUESTION : Chaque question doit couvrir UNE SEULE notion à la fois. Le champ 'related_notions' doit contenir exactement 1 élément. Ne mélange pas plusieurs notions dans une même question." if (notions_text and not notion_mixing) else ""}
+{"13bis. NOTIONS PAR QUESTION : Chaque question doit être centrée sur UNE notion dominante. Le champ 'related_notions' contient 1 notion (cas le plus fréquent), exceptionnellement 2 si la question articule réellement deux notions liées, et JAMAIS plus de 3. Ne surcharge pas le champ avec toutes les notions tangentes : ne retiens que celles qui sont effectivement testées par la question." if (notions_text and notion_mixing) else ""}
 {"14. HUMOUR : Pour chaque question, rends exactement UN choix parmi les mauvaises réponses légèrement humoristique ou décalé, tout en restant professionnel et pertinent par rapport au domaine." if humor else ""}
 {notions_block}{acronyms_block}{f"""
 
-QUESTIONS DÉJÀ GÉNÉRÉES — À NE PAS DUPLIQUER :
-Les questions suivantes ont déjà été générées pour ce quizz. Tes nouvelles questions doivent porter sur des sujets différents et ne pas être similaires à celles-ci :
+QUESTIONS DÉJÀ GÉNÉRÉES — À NE PAS DUPLIQUER NI PARAPHRASER :
+Les questions suivantes ont déjà été générées pour ce quizz, potentiellement à d'autres niveaux de difficulté.
+RÈGLE ABSOLUE : tes nouvelles questions NE DOIVENT PAS :
+  - reformuler la même question (même fait testé, autre tournure)
+  - porter sur le même point précis (même article, même chiffre, même définition)
+  - tester la même connaissance sous un angle à peine différent
+Change de sujet, de notion, ou d'angle d'analyse. Même au niveau {difficulty}, évite de reprendre un point déjà couvert par une question plus facile ou plus difficile — varie le contenu, pas juste la formulation.
+
+Liste des questions déjà posées :
 {chr(10).join(f"{i+1}. {q}" for i, q in enumerate(existing_questions))}
 """ if existing_questions else ""}
 FORMAT DE RÉPONSE (JSON strict) :
@@ -545,6 +569,14 @@ def generate_quiz(
 
     if progress_callback:
         progress_callback(total_steps, total_steps)
+
+    # Normaliser les related_notions contre la liste officielle des notions
+    # (supprime les hallucinations, remappe vers les titres exacts via fuzzy match)
+    if notions:
+        from generation.notion_detector import validate_related_notions
+        active_notions = [n for n in notions if getattr(n, "enabled", True)]
+        for q in all_questions:
+            q.related_notions = validate_related_notions(q.related_notions, active_notions)
 
     quiz = Quiz(
         title="Quizz généré depuis PDF",

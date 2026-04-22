@@ -396,6 +396,20 @@ generateur_de_quizz/
 
 ## 📋 Changelog
 
+### v4.2
+
+- **Qualité des quizz améliorée** : instructions du formateur (`user_instructions`) désormais injectées en tête du `system_prompt` avec un bandeau prioritaire, en plus du rappel final — ne se perdent plus dans la dilution du texte source.
+- **Anti-extrapolation** : règle explicite interdisant au LLM d'affirmer qu'un article, dispositif ou procédure « n'existe pas » s'il n'est pas mentionné dans le passage (le document est partiel, pas exhaustif).
+- **Mélange de notions limité** : quand le mélange est activé, chaque question est centrée sur 1 notion dominante, exceptionnellement 2, jamais plus de 3. Le champ `related_notions` n'est plus surchargé avec toutes les notions tangentes.
+- **Anti-doublons trans-niveau renforcé** : le prompt indique explicitement de ne pas paraphraser une question déjà posée à un autre niveau de difficulté, ni reprendre le même point précis sous un angle à peine différent.
+- **Reformulation IA sécurisée** : après reformulation lors de la vérification, validation de la forme interrogative obligatoire (se termine par `?`, contient un mot interrogatif ou verbe conjugué). Rollback vers la question originale si la reformulation est non conforme ou trop courte.
+- **Notions validées par fuzzy matching** : post-validation des `related_notions` générées par le LLM contre la liste officielle (normalisation + `SequenceMatcher`, seuil 0.85). Les titres approximatifs sont corrigés, les hallucinations supprimées → le comptage « notions couvertes / non couvertes » est désormais fiable.
+- **Anti-doublons exercices** : les exercices déjà générés (run courant + runs précédents accumulés dans la session) sont sérialisés (énoncé + sous-questions, sans explications/corrections) et passés au LLM en bloc anti-doublon. Fonctionne entre niveaux de difficulté et entre générations successives.
+
+### v4.1
+
+- **DSFR**
+
 ### v3.3
 
 - **Mode global One-shot** : Toggle dans les options avancées — envoie tout en un minimum de requêtes. En mode texte, utilise le modèle vision (plus grand contexte, 262k tokens) avec le texte extrait. En mode vision, envoie les pages en images (DPI 85). Découpe automatiquement par document ou par tranches si trop volumineux.

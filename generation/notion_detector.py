@@ -5,11 +5,107 @@ Les notions fondamentales sont les concepts, définitions, théorèmes et princi
 clés identifiés dans les documents. Elles guident la génération de quizz et exercices.
 """
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import List, Optional, Dict
 
 from core.llm_service import call_llm_json, call_llm_vision_json, call_llm
 from processing.document_processor import TextChunk
+
+
+# ─── Utilitaires de normalisation et matching ────────────────────────────────
+
+_STOPWORDS = {
+    "le", "la", "les", "un", "une", "des", "du", "de", "d", "l",
+    "et", "ou", "à", "a", "au", "aux", "en", "dans", "sur", "par", "pour",
+    "avec", "sans", "sous",
+}
+
+
+def normalize_notion_title(title: str) -> str:
+    """Normalise un titre de notion : lowercase, sans accents, sans ponctuation, sans stopwords."""
+    if not title:
+        return ""
+    s = unicodedata.normalize("NFD", title)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = s.lower()
+    s = re.sub(r"[^\w\s]", " ", s)
+    tokens = [t for t in s.split() if t and t not in _STOPWORDS]
+    return " ".join(tokens)
+
+
+def match_notion_title(
+    candidate: str,
+    notions: List["Notion"],
+    threshold: float = 0.85,
+) -> Optional[str]:
+    """
+    Retrouve le titre officiel d'une notion à partir d'une proposition du LLM.
+
+    Tente un match exact (après normalisation), puis fuzzy matching avec SequenceMatcher.
+
+    Args:
+        candidate: Titre proposé (par le LLM, potentiellement approximatif).
+        notions: Liste des notions officielles.
+        threshold: Ratio de similarité minimum pour un fuzzy match (0.0-1.0).
+
+    Returns:
+        Le titre officiel de la notion correspondante, ou None si aucun match.
+    """
+    if not candidate or not notions:
+        return None
+    norm_cand = normalize_notion_title(candidate)
+    if not norm_cand:
+        return None
+
+    # Match exact normalisé
+    for n in notions:
+        if normalize_notion_title(n.title) == norm_cand:
+            return n.title
+
+    # Fuzzy match
+    best_score = 0.0
+    best_title = None
+    for n in notions:
+        norm_off = normalize_notion_title(n.title)
+        if not norm_off:
+            continue
+        score = SequenceMatcher(None, norm_cand, norm_off).ratio()
+        if score > best_score:
+            best_score = score
+            best_title = n.title
+
+    if best_score >= threshold:
+        return best_title
+    return None
+
+
+def validate_related_notions(
+    related: List[str],
+    notions: List["Notion"],
+    threshold: float = 0.85,
+) -> List[str]:
+    """
+    Filtre une liste de titres de notions proposés par le LLM pour ne garder que
+    ceux qui correspondent (exactement ou via fuzzy match) à une notion officielle.
+
+    Les titres matchés sont remplacés par le titre officiel pour garantir la cohérence.
+    Dédoublonne la liste résultante.
+    """
+    if not related or not notions:
+        return []
+    seen = set()
+    result = []
+    for candidate in related:
+        if not candidate or not candidate.strip():
+            continue
+        official = match_notion_title(candidate, notions, threshold=threshold)
+        if official and official not in seen:
+            seen.add(official)
+            result.append(official)
+    return result
 
 
 @dataclass

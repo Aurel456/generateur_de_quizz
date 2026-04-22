@@ -179,7 +179,7 @@ Internes streaming : `_execute_completion_stream()`, `_execute_responses_stream(
 
 **`generation/exercise_generator.py`** : `generate_exercises()`, `generate_exercises_from_chunk()`, `_build_exercise_prompt()`, `_verify_exercise_with_agent()`, `_verify_exercise_direct()`, `_correct_exercise_with_llm()`, `_verify_and_correct_exercise()`
 
-**`generation/notion_detector.py`** : `detect_notions()`, `detect_notions_and_acronyms()` (prompt combiné notions + acronymes inconnus en un seul appel LLM par chunk, retourne `(List[Notion], List[dict])`), `edit_notions_with_llm()`, `merge_similar_notions()`, `notions_to_prompt_text()`
+**`generation/notion_detector.py`** : `detect_notions()`, `detect_notions_and_acronyms()` (prompt combiné notions + acronymes inconnus en un seul appel LLM par chunk, retourne `(List[Notion], List[dict])`), `edit_notions_with_llm()`, `merge_similar_notions()`, `notions_to_prompt_text()`, `normalize_notion_title()`, `match_notion_title()`, `validate_related_notions()` (fuzzy match SequenceMatcher, seuil 0.85)
 
 **`generation/acronym_detector.py`** : `load_acronym_reference(path)`, `detect_acronyms_from_text(chunks, reference)` (regex contre dict de référence), `edit_acronyms_with_llm()`, `acronyms_to_prompt_text()` (bloc "ACRONYMES DU DOMAINE" injecté dans prompts quiz/exercices)
 
