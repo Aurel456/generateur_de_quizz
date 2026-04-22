@@ -1,5 +1,5 @@
 """
-chat_mode.py — Mode libre : génération de quizz/exercices via conversation LLM.
+chat_mode.py — Mode libre : génération de quiz/exercices via conversation LLM.
 
 Machine à états pour guider la conversation :
 WELCOME → TOPIC_DISCOVERY → NOTION_GENERATION → NOTION_VALIDATION → GENERATION_CONFIG → GENERATING → COMPLETE
@@ -44,12 +44,12 @@ class ChatSession:
 # ─── System prompts par état ─────────────────────────────────────────────────
 
 _SYSTEM_PROMPTS = {
-    ChatState.WELCOME: """Tu es un assistant pédagogique expert en création de quizz et exercices.
-L'utilisateur veut générer un quizz ou des exercices sur un sujet, SANS document source.
+    ChatState.WELCOME: """Tu es un assistant pédagogique expert en création de quiz et exercices.
+L'utilisateur veut générer un quiz ou des exercices sur un sujet, SANS document source.
 Ton rôle est de comprendre précisément le sujet et les besoins de l'utilisateur.
 
 Commence par accueillir l'utilisateur chaleureusement et demande-lui :
-- Sur quel sujet/thème il veut un quizz ou des exercices
+- Sur quel sujet/thème il veut un quiz ou des exercices
 - Quel est le contexte (formation, révision, certification...)
 
 Sois concis et engageant. Réponds en français.""",
@@ -112,10 +112,10 @@ def init_session() -> Tuple[str, ChatSession]:
     session = ChatSession(state=ChatState.WELCOME)
 
     welcome_msg = (
-        "👋 Bonjour ! Je suis votre assistant pour créer des quizz et exercices.\n\n"
+        "👋 Bonjour ! Je suis votre assistant pour créer des quiz et exercices.\n\n"
         "Vous n'avez pas besoin de document — dites-moi simplement **sur quel sujet** "
         "vous souhaitez générer des questions.\n\n"
-        "Par exemple : *« Je veux un quizz de 10 questions faciles sur Kubernetes »*, "
+        "Par exemple : *« Je veux un quiz de 10 questions faciles sur Kubernetes »*, "
         "*« Des exercices de thermodynamique niveau L2 »*, etc.\n\n"
         "N'hésitez pas à préciser le **nombre de questions**, le **niveau de difficulté** "
         "et le **type** (QCM, exercices, ou les deux)."
@@ -173,7 +173,7 @@ def process_user_message(
             notions_msg = (
                 f"📚 Voici les **{len(notions)} notions fondamentales** que j'ai identifiées :\n\n"
                 f"{notions_text}\n\n"
-                "✅ **Validez ces notions** pour passer à la configuration du quizz, "
+                "✅ **Validez ces notions** pour passer à la configuration du quiz, "
                 "ou modifiez-les avec les contrôles ci-dessous."
             )
             session.messages.append({"role": "assistant", "content": notions_msg})
@@ -198,7 +198,7 @@ def process_user_message(
         if "[TRANSITION:config]" in response:
             response = response.replace("[TRANSITION:config]", "").strip()
             session.state = ChatState.GENERATION_CONFIG
-            response += "\n\n⚙️ **Configurez maintenant le quizz/exercices** avec les options ci-dessous."
+            response += "\n\n⚙️ **Configurez maintenant le quiz/exercices** avec les options ci-dessous."
 
         session.messages.append({"role": "assistant", "content": response})
         return response, session
@@ -260,7 +260,7 @@ def extract_generation_config(
         Dict avec les clés : gen_type, facile, moyen, difficile, num_choices, num_correct
     """
     system_prompt = """Tu es un assistant qui analyse une conversation pour extraire les préférences
-de génération de quizz/exercices exprimées par l'utilisateur.
+de génération de quiz/exercices exprimées par l'utilisateur.
 
 Réponds UNIQUEMENT avec un objet JSON valide au format suivant :
 {
@@ -331,7 +331,7 @@ def generate_quiz_direct(
     enable_thinking: bool = True,
 ) -> Quiz:
     """
-    Génère un quizz QCM directement à partir du sujet et des notions,
+    Génère un quiz QCM directement à partir du sujet et des notions,
     sans passer par un document synthétique intermédiaire.
     """
     choice_labels = list(string.ascii_uppercase[:num_choices])
@@ -348,7 +348,7 @@ def generate_quiz_direct(
     current_step = 0
 
     def _build_direct_quiz_prompt(difficulty, count):
-        sys = f"""Tu es un expert en pédagogie et en création de quizz éducatifs.
+        sys = f"""Tu es un expert en pédagogie et en création de quiz éducatifs.
 Tu dois générer exactement {count} questions QCM de niveau {difficulty}.
 
 SUJET : {session.topic}
@@ -455,7 +455,7 @@ FORMAT DE RÉPONSE (JSON strict) :
         progress_callback(total_steps, total_steps)
 
     return Quiz(
-        title=f"Quizz — {session.topic}",
+        title=f"Quiz — {session.topic}",
         difficulty="mixte",
         questions=all_questions,
     )

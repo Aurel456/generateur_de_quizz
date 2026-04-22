@@ -1,5 +1,5 @@
 """
-analytics.py — Dashboard analytics pour les sessions de quizz partagées.
+analytics.py — Dashboard analytics pour les sessions de quiz partagées.
 
 Graphiques interactifs (plotly), métriques et recommandations IA pour analyser les résultats.
 """

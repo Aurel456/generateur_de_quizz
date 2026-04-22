@@ -1,4 +1,4 @@
-# AGENTS.md — Générateur de Quizz & Exercices IA
+# AGENTS.md — Générateur de Quiz & Exercices IA
 
 Instructions pour les agents IA travaillant sur ce projet.
 
@@ -12,7 +12,7 @@ Instructions pour les agents IA travaillant sur ce projet.
 
 | # | Fichier | Lignes | Rôle |
 |---|---------|--------|------|
-| 1 | `app.py` | ~2650 | Point d'entrée Streamlit. Auth (désactivé), sidebar, tabs (Exports/Notions/Quizz/Exercices/Analytics/Aperçu/Guide), génération quiz/exercices, mode libre, personas domaine. **Lire en entier.** |
+| 1 | `app.py` | ~2650 | Point d'entrée Streamlit. Auth (désactivé), sidebar, tabs (Exports/Notions/Quiz/Exercices/Analytics/Aperçu/Guide), génération quiz/exercices, mode libre, personas domaine. **Lire en entier.** |
 | 2 | `generation/quiz_generator.py` | 459 | Génération QCM : dataclasses Quiz/QuizQuestion, prompts, anti-doublons. **Lire en entier.** |
 | 3 | `generation/exercise_generator.py` | 1018 | Génération exercices : dataclass Exercise, 3 types (calcul/trou/cas_pratique), prompts, vérification. **Lire en entier.** |
 | 4 | `generation/notion_detector.py` | 319 | Dataclass Notion, détection/fusion/édition notions. **Lire en entier.** |
@@ -213,11 +213,11 @@ Internes streaming : `_execute_completion_stream()`, `_execute_responses_stream(
 | 178-230 | Initialisation session_state (18 variables) |
 | 232-456 | **Sidebar** : page links, mode radio, file upload (avec cache persistant entre pages), options avancées (batch/vision/thinking), modèle LLM, stats globales |
 | 457-714 | Traitement document : extraction, chunking, vision, DPI, aperçu |
-| 715 | **Tabs** : Notions, Quizz, Exercices, Aperçu texte, Guide |
+| 715 | **Tabs** : Notions, Quiz, Exercices, Aperçu texte, Guide |
 | 717-835 | Onglet Notions : détection, affichage, édition, fusion |
-| 836-1001 | Onglet Quizz : config (difficulté, choix, persona), génération |
-| 1002-1286 | Onglet Quizz : affichage questions, édition, vérification IA, changelog |
-| 1287-1470 | Onglet Quizz : export tabs (téléchargements, session partagée, atelier) |
+| 836-1001 | Onglet Quiz : config (difficulté, choix, persona), génération |
+| 1002-1286 | Onglet Quiz : affichage questions, édition, vérification IA, changelog |
+| 1287-1470 | Onglet Quiz : export tabs (téléchargements, session partagée, atelier) |
 | 1471-1760 | Onglet Exercices : config, génération, affichage, vérification |
 | 1761-1870 | Onglet Exercices : export tabs |
 | 1871-2155 | Onglets Aperçu texte et Guide |
@@ -228,7 +228,7 @@ Internes streaming : `_execute_completion_stream()`, `_execute_responses_stream(
 
 ## Vue d'ensemble
 
-Application **Streamlit** de génération de quizz QCM et d'exercices à partir de documents (PDF, DOCX, ODT, PPTX, TXT) ou par conversation libre avec un LLM. Backend LLM via API compatible OpenAI (locale ou cloud). Inclut un système de sessions partagées (étudiantes et collaboratives), un pipeline de vérification automatique et des outils d'édition interactive.
+Application **Streamlit** de génération de quiz QCM et d'exercices à partir de documents (PDF, DOCX, ODT, PPTX, TXT) ou par conversation libre avec un LLM. Backend LLM via API compatible OpenAI (locale ou cloud). Inclut un système de sessions partagées (étudiantes et collaboratives), un pipeline de vérification automatique et des outils d'édition interactive.
 
 ---
 
@@ -238,7 +238,7 @@ Application **Streamlit** de génération de quizz QCM et d'exercices à partir 
 generateur_de_quizz/
 ├── app.py                        ← point d'entrée Streamlit (racine obligatoire)
 ├── pages/
-│   ├── quiz_session.py           ← page participant (quizz partagé / pool, questions manquantes)
+│   ├── quiz_session.py           ← page participant (quiz partagé / pool, questions manquantes)
 │   ├── work_session.py           ← page Atelier Formateurs (4 onglets : Questions/Exercices/Notions/Outils, chat LLM)
 │   ├── shared_session.py         ← page Sessions Partagées (séparée de app.py)
 │   └── admin.py                  ← page admin gestion utilisateurs (désactivé)
@@ -369,7 +369,7 @@ Les générations successives s'ajoutent aux exercices existants (`st.session_st
 - Pas d'affichage des infos du modèle dans la sidebar.
 - Graphiques via **Plotly** (pas de tables simples pour les analytics).
 - Badges de notions affichés en **pills violettes**.
-- **7 onglets en mode document** : Exports / Notions / Quizz / Exercices / Analytics / Aperçu texte / Guide.
+- **7 onglets en mode document** : Exports / Notions / Quiz / Exercices / Analytics / Aperçu texte / Guide.
 - Sidebar : sélecteur de mode (Document / Libre) + liens pages (Ateliers, Sessions Partagées) + stats globales.
 - **Personas domaine** : sélecteur DGFiP (8 domaines) + Générique + Personnalisé (`core/personas.py`).
 - **Humour** : toggle dans config quiz, ajoute une mauvaise réponse décalée par question.
@@ -380,7 +380,7 @@ Les générations successives s'ajoutent aux exercices existants (`st.session_st
 - **Persistance documents** : les fichiers uploadés sont cachés dans `session_state["_uploaded_files_cache"]` (bytes + noms) pour survivre à la navigation entre pages.
 - **Quiz session** : les questions non remplies sont affichées par numéro dans un warning, bouton de soumission désactivé tant que tout n'est pas répondu.
 - **Tag version** : popover `v3.3` en haut de page avec changelog complet.
-- **Consigne libre unifiée** : un seul `st.text_area` ("💬 Consignes libres") dans les onglets Quizz et Exercices. Clé session : `quiz_user_input` / `ex_user_input`. Avant chaque génération, `classify_user_input()` découpe le texte en `generation_instructions` (passé à `user_instructions=`) et `chunk_filter_instructions` (passé à `user_context=`). Le résultat est mémorisé dans `_quiz_last_classification` / `_ex_last_classification` et affiché dans un expander "🔍 Voir l'interprétation".
+- **Consigne libre unifiée** : un seul `st.text_area` ("💬 Consignes libres") dans les onglets Quiz et Exercices. Clé session : `quiz_user_input` / `ex_user_input`. Avant chaque génération, `classify_user_input()` découpe le texte en `generation_instructions` (passé à `user_instructions=`) et `chunk_filter_instructions` (passé à `user_context=`). Le résultat est mémorisé dans `_quiz_last_classification` / `_ex_last_classification` et affiché dans un expander "🔍 Voir l'interprétation".
 - **Toggle Streaming** : "Streaming (affichage progressif)" dans les options avancées. Désactivé → mode classique (batch complet). Active par défaut.
 - **Mode One-shot** : toggle indépendant du mode vision. En texte seul, utilise le modèle vision pour son grand contexte. En vision, utilise DPI 85 + slider 100-150 pages/tranche.
 

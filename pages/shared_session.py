@@ -1,7 +1,7 @@
 """
 shared_session.py — Page Streamlit pour la gestion des sessions partagées.
 
-Consultez les sessions de quizz partagées, les questions et les analytics.
+Consultez les sessions de quiz partagées, les questions et les analytics.
 """
 
 import json
@@ -21,11 +21,11 @@ st.set_page_config(
 dsfr.apply()
 
 st.markdown("### 📡 Sessions Partagées")
-st.caption("Consultez les sessions de quizz partagées, les questions et les analytics.")
+st.caption("Consultez les sessions de quiz partagées, les questions et les analytics.")
 
 all_sessions = list_sessions()
 if not all_sessions:
-    st.info("Aucune session partagée n'a été créée. Générez un quizz puis partagez-le.")
+    st.info("Aucune session partagée n'a été créée. Générez un quiz puis partagez-le.")
 else:
     # Filtre par nom ou code
     filter_text = st.text_input("🔍 Filtrer par nom ou code", key="shared_session_filter", placeholder="Rechercher...")
@@ -71,7 +71,7 @@ else:
                 st.divider()
 
                 # Onglets Questions / Analytics
-                tab_questions, tab_analytics = st.tabs(["📋 Questions", "📊 Quizz Session Analytics"])
+                tab_questions, tab_analytics = st.tabs(["📋 Questions", "📊 Quiz Session Analytics"])
 
                 with tab_questions:
                     quiz_data = json.loads(sess.quiz_json)

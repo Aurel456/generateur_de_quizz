@@ -1,5 +1,5 @@
 """
-session_store.py — Backend SQLite pour les sessions de quizz partagées.
+session_store.py — Backend SQLite pour les sessions de quiz partagées.
 
 Gère la création de sessions, la soumission de résultats et le calcul d'analytics.
 """
@@ -152,7 +152,7 @@ def create_session(
     acronyms_data: Optional[list] = None,
 ) -> QuizSession:
     """
-    Crée une nouvelle session de quizz partagée.
+    Crée une nouvelle session de quiz partagée.
 
     Args:
         quiz_data: Dict sérialisable du Quiz (questions, etc.)

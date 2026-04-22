@@ -1,5 +1,5 @@
 """
-quiz_generator.py — Génération de quizz QCM à partir de chunks de texte.
+quiz_generator.py — Génération de quiz QCM à partir de chunks de texte.
 """
 
 import string
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class QuizQuestion:
-    """Une question de quizz QCM."""
+    """Une question de quiz QCM."""
     question: str
     choices: Dict[str, str]  # {"A": "...", "B": "...", ...}
     correct_answers: List[str]  # ["A", "C"]
@@ -34,7 +34,7 @@ class QuizQuestion:
 
 @dataclass
 class Quiz:
-    """Un quizz complet."""
+    """Un quiz complet."""
     title: str
     difficulty: str
     questions: List[QuizQuestion] = field(default_factory=list)
@@ -43,7 +43,7 @@ class Quiz:
 
 # Persona par défaut — modifiable par l'utilisateur dans l'interface
 QUIZ_DEFAULT_PERSONA = (
-    "Tu es un expert en pédagogie et en création de quizz éducatifs. "
+    "Tu es un expert en pédagogie et en création de quiz éducatifs. "
     "Tu maîtrises le domaine couvert par les documents fournis et tu sais formuler "
     "des questions précises, claires et pédagogiquement pertinentes."
 )
@@ -101,7 +101,7 @@ def _build_quiz_prompt(
     acronyms_text: str = "",
     user_instructions: str = "",
 ) -> tuple:
-    """Construit le prompt système et utilisateur pour la génération de quizz."""
+    """Construit le prompt système et utilisateur pour la génération de quiz."""
 
     labels_str = ", ".join(choice_labels[:num_choices])
     prompts = difficulty_prompts or DIFFICULTY_PROMPTS
@@ -134,7 +134,7 @@ Tu dois générer exactement {num_questions} questions QCM (Questions à Choix M
 
 CONTEXTE IMPORTANT :
 Les étudiants suivent une formation (souvent en présentiel ou avec des supports) mais ils ne possèdent
-PAS le document source au moment du quizz. Les questions doivent donc être AUTONOMES et répondables
+PAS le document source au moment du quiz. Les questions doivent donc être AUTONOMES et répondables
 uniquement grâce aux connaissances acquises pendant la formation, SANS avoir le document sous les yeux.
 
 RÈGLES STRICTES :
@@ -176,7 +176,7 @@ RÈGLES STRICTES :
 {notions_block}{acronyms_block}{f"""
 
 QUESTIONS DÉJÀ GÉNÉRÉES — À NE PAS DUPLIQUER NI PARAPHRASER :
-Les questions suivantes ont déjà été générées pour ce quizz, potentiellement à d'autres niveaux de difficulté.
+Les questions suivantes ont déjà été générées pour ce quiz, potentiellement à d'autres niveaux de difficulté.
 RÈGLE ABSOLUE : tes nouvelles questions NE DOIVENT PAS :
   - reformuler la même question (même fait testé, autre tournure)
   - porter sur le même point précis (même article, même chiffre, même définition)
@@ -284,7 +284,7 @@ def generate_quiz_from_chunk(
     user_instructions: str = "",
 ) -> List[QuizQuestion]:
     """
-    Génère des questions de quizz à partir d'un seul chunk de texte.
+    Génère des questions de quiz à partir d'un seul chunk de texte.
     Si stream=True, utilise le streaming et appelle on_item(question) pour chaque question parsée.
     """
     choice_labels = list(string.ascii_uppercase[:num_choices])
@@ -393,7 +393,7 @@ def generate_quiz(
     user_context: str = "",
 ) -> Quiz:
     """
-    Génère un quizz complet à partir de plusieurs chunks.
+    Génère un quiz complet à partir de plusieurs chunks.
 
     Args:
         chunks: Liste de TextChunk.
@@ -413,7 +413,7 @@ def generate_quiz(
         Quiz complet.
     """
     if not chunks:
-        return Quiz(title="Quizz vide", difficulty="mixte")
+        return Quiz(title="Quiz vide", difficulty="mixte")
 
     # Sélection intelligente des chunks selon le contexte utilisateur
     if user_context.strip():
@@ -579,7 +579,7 @@ def generate_quiz(
             q.related_notions = validate_related_notions(q.related_notions, active_notions)
 
     quiz = Quiz(
-        title="Quizz généré depuis PDF",
+        title="Quiz généré depuis PDF",
         difficulty=", ".join(diff_keys) if len(diff_keys) > 1 else (diff_keys[0] if diff_keys else "inconnue"),
         questions=all_questions,
         metadata={

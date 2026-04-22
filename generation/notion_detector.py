@@ -2,7 +2,7 @@
 notion_detector.py — Détection et édition des notions fondamentales via LLM.
 
 Les notions fondamentales sont les concepts, définitions, théorèmes et principes
-clés identifiés dans les documents. Elles guident la génération de quizz et exercices.
+clés identifiés dans les documents. Elles guident la génération de quiz et exercices.
 """
 
 import re

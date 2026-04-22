@@ -1,5 +1,5 @@
 """
-app.py — Interface Streamlit principale pour le générateur de quizz et exercices.
+app.py — Interface Streamlit principale pour le générateur de quiz et exercices.
 """
 
 import streamlit as st
@@ -56,7 +56,7 @@ from generation.instruction_classifier import classify_user_input
 # ─── Configuration de la page ───────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="📝 Générateur de Quizz & Exercices",
+    page_title="📝 Générateur de Quiz & Exercices",
     page_icon="📝",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -165,15 +165,15 @@ st.markdown("""
 
 st.markdown("""
 <div class="main-header">
-    <h1>📝 Générateur de Quizz & Exercices</h1>
-    <p style="color: #a0a0b8;">Uploadez un document (PDF, DOCX, ODT...) et générez automatiquement des quizz QCM et exercices avec IA</p>
+    <h1>📝 Générateur de Quiz & Exercices</h1>
+    <p style="color: #a0a0b8;">Déposez un document (PDF, DOCX, ODT...) et générez automatiquement des quiz QCM et exercices avec IA</p>
 </div>
 """, unsafe_allow_html=True)
 
 with st.popover("🏷️ v4.2"):
     st.markdown("""
 **Nouveautés v4.2 :**
-- **Qualité des quizz améliorée :** instructions du formateur injectées en tête de prompt (prioritaires, non diluées)
+- **Qualité des quiz améliorée :** instructions du formateur injectées en tête de prompt (prioritaires, non diluées)
 - **Anti-extrapolation :** le LLM ne peut plus affirmer qu'un article/dispositif « n'existe pas » s'il n'est pas dans le passage
 - **Mélange de notions limité :** max 2-3 notions par question (1 dominante), plus de surcharge du champ `related_notions`
 - **Anti-doublons trans-niveau renforcé :** le LLM reçoit l'interdiction explicite de paraphraser les questions des autres niveaux
@@ -265,7 +265,7 @@ with st.expander("ℹ️ Comment fonctionne cet outil ?", expanded=False):
 **En 5 étapes :**
 1. **Uploadez** vos documents (PDF, DOCX, ODT, PPTX, TXT)
 2. **Notions** — l'IA identifie les concepts clés du cours. Activez/désactivez ceux à cibler.
-3. **Générez** des QCM (onglet Quizz) ou des exercices (Calcul / Trou / Cas pratique)
+3. **Générez** des QCM (onglet Quiz) ou des exercices (Calcul / Trou / Cas pratique)
 4. **Vérifiez** (optionnel) — l'IA relit le document et reformule les questions ambiguës
 5. **Exportez** en HTML interactif ou CSV, ou partagez via une session en ligne
 
@@ -278,7 +278,7 @@ with st.expander("ℹ️ Comment fonctionne cet outil ?", expanded=False):
 
 **Mode pool :** Générez un grand nombre de questions, puis partagez un sous-ensemble aléatoire par participant avec seuil de réussite et relance automatique.
 
-**Ateliers formateurs :** Co-éditez un brouillon de quizz entre collègues avant publication.
+**Ateliers formateurs :** Co-éditez un brouillon de quiz entre collègues avant publication.
 
 ---
 
@@ -365,7 +365,7 @@ with st.sidebar:
         ["📄 Depuis un document", "💬 Mode libre (IA)"],
         horizontal=False,
         label_visibility="collapsed",
-        help="Mode document : uploadez des fichiers. Mode libre : conversez avec l'IA.",
+        help="Mode document : Déposez des fichiers. Mode libre : conversez avec l'IA.",
         key="_radio_app_mode",
     )
     app_mode = _radio_mode
@@ -379,7 +379,7 @@ with st.sidebar:
             "Choisir un ou plusieurs fichiers",
             type=["pdf", "docx", "odt", "odp", "pptx", "txt"],
             accept_multiple_files=True,
-            help="Uploadez les documents à partir desquels générer les questions."
+            help="Déposez les documents à partir desquels générer les questions."
         )
 
         # Persistance des fichiers entre pages (cache bytes dans session_state)
@@ -463,7 +463,7 @@ with st.sidebar:
             ),
         )
         streaming_enabled = st.toggle(
-            "Streaming (affichage progressif)",
+            "Affichage progressif",
             value=True,
             help="Affiche les questions/exercices au fur et à mesure de la génération. "
                  "Désactivez pour comparer avec le mode classique (batch complet).",
@@ -471,7 +471,7 @@ with st.sidebar:
         st.session_state["streaming_enabled"] = streaming_enabled
 
         enable_thinking = st.toggle(
-            "Raisonnement IA (thinking)",
+            "Raisonnement IA",
             value=not vision_enabled,
             help="Active le mode raisonnement du LLM. Désactivé par défaut en mode vision pour de meilleures performances.",
         )
@@ -505,7 +505,7 @@ if app_mode == "📄 Depuis un document":
                 "<div style='text-align:center; padding: 2rem 0 1rem 0;'>"
                 "<span style='font-size:3.5rem;'>📄</span>"
                 "<h2 style='margin: 0.5rem 0 0.5rem 0;'>Chargez vos documents</h2>"
-                "<p style='color:#a0a0b8; font-size:1.05rem;'>Uploadez un ou plusieurs fichiers pour générer automatiquement des quizz QCM et exercices avec l'IA.</p>"
+                "<p style='color:#a0a0b8; font-size:1.05rem;'>Déposez un ou plusieurs fichiers pour générer automatiquement des quiz QCM et exercices avec l'IA.</p>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -892,9 +892,9 @@ if app_mode == "📄 Depuis un document":
                 st.session_state.notions.pop(idx)
                 st.rerun()
 
-    # ─── Onglets Quizz / Exercices ──────────────────────────────────────────────
+    # ─── Onglets Quiz / Exercices ──────────────────────────────────────────────
 
-    tab_exports, tab_notions, tab_quiz, tab_exercises, tab_preview, tab_guide = st.tabs(["📦 Exports", "📚 Notions Fondamentales", "🎯 Quizz QCM", "🧮 Exercices", "👁️ Aperçu texte", "❓ Guide"])
+    tab_exports, tab_notions, tab_quiz, tab_exercises, tab_preview, tab_guide = st.tabs(["📦 Exports", "📚 Notions Fondamentales", "🎯 Quiz QCM", "🧮 Exercices", "👁️ Aperçu texte", "❓ Guide"])
 
     # ═══ ONGLET EXPORTS ═══════════════════════════════════════════════════════════
 
@@ -918,7 +918,7 @@ if app_mode == "📄 Depuis un document":
                         st.download_button(
                             label=f"📥 HTML Quiz ({len(_exp_quiz.questions)}Q)",
                             data=html_content,
-                            file_name="quizz_interactif.html",
+                            file_name="quiz_interactif.html",
                             mime="text/html",
                             width='stretch',
                             key="exp_tab_quiz_html",
@@ -929,7 +929,7 @@ if app_mode == "📄 Depuis un document":
                         st.download_button(
                             label=f"📊 CSV Quiz ({len(_exp_quiz.questions)}Q)",
                             data=csv_content,
-                            file_name="quizz.csv",
+                            file_name="quiz.csv",
                             mime="text/csv",
                             width='stretch',
                             key="exp_tab_quiz_csv",
@@ -940,7 +940,7 @@ if app_mode == "📄 Depuis un document":
                         st.download_button(
                             label=f"🎓 Moodle XML ({len(_exp_quiz.questions)}Q)",
                             data=moodle_xml,
-                            file_name="quizz_moodle.xml",
+                            file_name="quiz_moodle.xml",
                             mime="application/xml",
                             width='stretch',
                             key="exp_tab_quiz_moodle",
@@ -1089,7 +1089,7 @@ if app_mode == "📄 Depuis un document":
                             session_obj = create_quiz_session(quiz_data, notions_data, share_title, exercises_data=exercises_data, acronyms_data=acronyms_data)
                             st.success(f"Session créée ! Code : **{session_obj.session_code}**")
                         st.code(f"Code de session : {session_obj.session_code}", language=None)
-                        st.caption("Les participants accèdent au quizz via la page quiz_session avec `?code=" + session_obj.session_code + "`.")
+                        st.caption("Les participants accèdent au quiz via la page quiz_session avec `?code=" + session_obj.session_code + "`.")
                         increment_stats(sessions=1)
                     except Exception as e:
                         st.error(f"Erreur : {e}")
@@ -1249,7 +1249,7 @@ if app_mode == "📄 Depuis un document":
 
     with tab_notions:
         st.markdown("### 📚 Notions Fondamentales")
-        st.caption("Identifiez les concepts clés des documents. Ces notions guideront la génération des quizz et exercices.")
+        st.caption("Identifiez les concepts clés des documents. Ces notions guideront la génération des quiz et exercices.")
 
         # Bouton de détection
         if st.button("🔍 Détecter les notions fondamentales", type="primary", width='stretch', help="cliquer pour lancer la détection des notions"):
@@ -1474,10 +1474,10 @@ if app_mode == "📄 Depuis un document":
                     except Exception as e:
                         st.error(f"❌ Erreur : {str(e)}")
 
-    # ═══ ONGLET QUIZZ ═══════════════════════════════════════════════════════════
+    # ═══ ONGLET Quiz ═══════════════════════════════════════════════════════════
 
     with tab_quiz:
-        st.markdown("### ⚙️ Configuration du Quizz")
+        st.markdown("### ⚙️ Configuration du Quiz")
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -1637,7 +1637,7 @@ if app_mode == "📄 Depuis un document":
                     _invalidate_download_cache()
                     st.rerun()
         with col_gen:
-            _gen_quiz_clicked = st.button("🚀 Générer le Quizz", type="primary", use_container_width=True, help="cliquer pour lancer la génération des Quizz")
+            _gen_quiz_clicked = st.button("🚀 Générer le Quiz", type="primary", use_container_width=True, help="cliquer pour lancer la génération des Quiz")
         with col_uncov:
             _gen_uncovered_clicked = st.button(
                 f"🎯 Notions manquantes ({len(_uncovered_notions_for_btn)})",
@@ -1731,7 +1731,7 @@ if app_mode == "📄 Depuis un document":
                 _invalidate_download_cache()
                 increment_stats(questions=len(quiz.questions))
                 st.session_state.pending_verification = True
-                progress_bar.progress(1.0, text="✅ Quizz généré !")
+                progress_bar.progress(1.0, text="✅ Quiz généré !")
                 time.sleep(0.5)
                 progress_bar.empty()
                 status_text.empty()
@@ -1781,7 +1781,7 @@ if app_mode == "📄 Depuis un document":
                 _auto_verify_bar.empty()
                 st.warning(f"⚠️ Vérification automatique échouée : {_e}")
 
-        # Affichage du quizz
+        # Affichage du quiz
         if st.session_state.quiz is not None:
             quiz = st.session_state.quiz
 
@@ -2636,7 +2636,7 @@ if app_mode == "📄 Depuis un document":
 
     # ═══ ONGLET GUIDE FORMATEUR ══════════════════════════════════════════════════
 
-    GUIDE_SYSTEM_PROMPT = """Tu es un assistant pédagogique intégré au Générateur de Quizz & Exercices IA (v4.0).
+    GUIDE_SYSTEM_PROMPT = """Tu es un assistant pédagogique intégré au Générateur de Quiz & Exercices IA (v4.0).
 Tu aides les formateurs à utiliser l'outil efficacement, à interpréter les résultats, et à adopter les meilleures pratiques pédagogiques.
 
 CONTEXTE DE L'OUTIL :
@@ -2646,8 +2646,8 @@ CONTEXTE DE L'OUTIL :
 - **Consigne libre (v4)** : un seul champ "💬 Consignes libres" remplace les anciens champs séparés. Le LLM classe automatiquement le texte en consignes de formulation (injectées dans le prompt) et en périmètre documentaire (filtrage des chunks). Un expander "🔍 Voir l'interprétation" affiche la classification.
 - **Amélioration IA des exercices (v4)** : bouton "🤖 Améliorer par IA" disponible sur chaque exercice (calcul, trou, cas pratique), identique à celui des questions QCM.
 - **Export Moodle XML (v4)** : les quiz peuvent être exportés au format XML Moodle importable directement.
-- Les sessions partagées permettent aux étudiants de passer le quizz en ligne avec un code d'accès. Le formateur voit les résultats en temps réel dans l'onglet Analytics.
-- La vérification IA (onglet Quizz > Vérification) détecte les questions ambiguës et peut les reformuler automatiquement.
+- Les sessions partagées permettent aux étudiants de passer le quiz en ligne avec un code d'accès. Le formateur voit les résultats en temps réel dans l'onglet Analytics.
+- La vérification IA (onglet Quiz > Vérification) détecte les questions ambiguës et peut les reformuler automatiquement.
 - Les niveaux de difficulté (Facile / Moyen / Difficile) génèrent des questions distinctes sans doublons entre niveaux.
 - Le nombre de bonnes réponses peut être fixe ou variable selon la configuration.
 - Les notions fondamentales guident la génération : une notion désactivée n'est pas couverte par les questions.
@@ -2742,7 +2742,7 @@ Les résultats sont exportables en HTML interactif ou CSV. Les sessions partagé
 - Fusionner les notions similaires
 - Voir combien de questions couvrent chaque notion
 
-**🎯 Onglet Quizz**
+**🎯 Onglet Quiz**
 - Configurer le nombre de questions par niveau
 - Choisir difficulté fixe ou variable en bonnes réponses
 - Personnaliser le persona de l'expert et les instructions par niveau
@@ -2756,7 +2756,7 @@ Les résultats sont exportables en HTML interactif ou CSV. Les sessions partagé
 **🧮 Onglet Exercices**
 - Choisir le type : calcul numérique, questions à trou, cas pratique
 - Personnaliser les instructions par niveau
-- Saisir une **consigne libre** (idem onglet Quizz)
+- Saisir une **consigne libre** (idem onglet Quiz)
 - Vérification automatique du code Python (exercices calcul)
 - Améliorer un exercice par IA via le bouton **🤖 Améliorer par IA**
 
@@ -2778,7 +2778,7 @@ Les résultats sont exportables en HTML interactif ou CSV. Les sessions partagé
         faq_items = [
             (
                 "À quoi sert le champ 'Consignes libres' et comment l'utiliser ?",
-                """Le champ **💬 Consignes libres** (onglets Quizz et Exercices) remplace les anciens champs séparés "Instructions supplémentaires" et "Contexte utilisateur". Vous pouvez y écrire un texte libre mêlant les deux aspects, par exemple :
+                """Le champ **💬 Consignes libres** (onglets Quiz et Exercices) remplace les anciens champs séparés "Instructions supplémentaires" et "Contexte utilisateur". Vous pouvez y écrire un texte libre mêlant les deux aspects, par exemple :
 
 > *« Couvre uniquement le chapitre 3 sur la TVA intracommunautaire, évite les questions sur les dates, et utilise un ton professionnel. »*
 
@@ -2793,7 +2793,7 @@ Après chaque génération, l'expander **🔍 Voir l'interprétation** affiche c
                 """Le LLM génère des questions à partir des passages du document mais peut produire des formulations vagues ou des explications incorrectes, surtout sur des documents techniques complexes.
 
 **Recommandations :**
-- Activez la **Vérification IA** après génération (onglet Quizz) — elle détecte et reformule automatiquement les questions ambiguës.
+- Activez la **Vérification IA** après génération (onglet Quiz) — elle détecte et reformule automatiquement les questions ambiguës.
 - Utilisez l'**édition manuelle** pour corriger les cas restants.
 - Améliorez les instructions de difficulté dans l'expander "Personnaliser les prompts" pour orienter le style des questions."""
             ),
@@ -2809,7 +2809,7 @@ Si vous constatez encore des doublons, réduisez le nombre de questions par nive
 
 Utilisez le **compteur de questions par notion** dans l'onglet Notions (badge coloré à côté de chaque notion) : les notions avec 0 question affichent une alerte ⚠️.
 
-Pour une formation de 2 heures, 15 à 25 questions QCM constituent un quizz équilibré."""
+Pour une formation de 2 heures, 15 à 25 questions QCM constituent un quiz équilibré."""
             ),
             (
                 "Les documents uploadés sont-ils envoyés à un serveur distant ?",
@@ -2821,7 +2821,7 @@ Les documents eux-mêmes ne sont jamais stockés de façon permanente — seul l
             ),
             (
                 "Comment fonctionne la vérification IA des QCM ?",
-                """La vérification IA (bouton dans l'onglet Quizz) analyse chaque question selon plusieurs critères :
+                """La vérification IA (bouton dans l'onglet Quiz) analyse chaque question selon plusieurs critères :
 - La bonne réponse est-elle correcte et sourçable dans le texte ?
 - L'explication est-elle cohérente avec la réponse ?
 - La formulation est-elle claire et non ambiguë ?
@@ -2839,7 +2839,7 @@ Désactivez les notions hors-scope avant de générer pour éviter les questions
             ),
             (
                 "Comment fonctionne le mode 'Variable (1 à N bonnes réponses)' ?",
-                """En mode Variable, le LLM choisit librement le nombre de bonnes réponses (1 à N-1) selon la nature de la question, ce qui rend le quizz moins prévisible.
+                """En mode Variable, le LLM choisit librement le nombre de bonnes réponses (1 à N-1) selon la nature de la question, ce qui rend le quiz moins prévisible.
 
 L'interface participant s'adapte automatiquement : bouton radio pour 1 seule réponse, cases à cocher pour plusieurs.
 
@@ -2861,8 +2861,8 @@ La vérification Python automatique ne s'applique qu'aux exercices de type Calcu
 - **Classement participants** : permet d'identifier les étudiants en difficulté pour un accompagnement ciblé."""
             ),
             (
-                "Peut-on réutiliser un quizz pour plusieurs sessions ?",
-                """Oui. Après génération, utilisez le bouton **"📤 Exporter (HTML / CSV)"** pour sauvegarder le quizz, puis recréez une session partagée à chaque utilisation via le bouton **"📡 Créer une session partagée"**.
+                "Peut-on réutiliser un quiz pour plusieurs sessions ?",
+                """Oui. Après génération, utilisez le bouton **"📤 Exporter (HTML / CSV)"** pour sauvegarder le quiz, puis recréez une session partagée à chaque utilisation via le bouton **"📡 Créer une session partagée"**.
 
 Chaque session a son propre code et ses propres résultats, indépendants des sessions précédentes."""
             ),
@@ -2909,8 +2909,8 @@ Chaque session a son propre code et ses propres résultats, indépendants des se
 
 elif app_mode == "💬 Mode libre (IA)":
     # ═══ MODE LIBRE (CHAT LLM) ════════════════════════════════════════════════
-    st.markdown("### 💬 Mode libre — Générez un quizz par conversation")
-    st.caption("Décrivez le sujet souhaité et l'IA vous guidera pour créer un quizz ou des exercices.")
+    st.markdown("### 💬 Mode libre — Générez un quiz par conversation")
+    st.caption("Décrivez le sujet souhaité et l'IA vous guidera pour créer un quiz ou des exercices.")
 
     # Initialiser la session de chat si nécessaire
     if st.session_state.chat_session is None:
@@ -2946,14 +2946,14 @@ elif app_mode == "💬 Mode libre (IA)":
                     unsafe_allow_html=True
                 )
 
-        if st.button("✅ Valider les notions et configurer le quizz", type="primary", width='stretch', help="Confirmer les notions détectées et passer à la configuration du quizz"):
+        if st.button("✅ Valider les notions et configurer le quiz", type="primary", width='stretch', help="Confirmer les notions détectées et passer à la configuration du quiz"):
             st.session_state.chat_session.state = ChatState.GENERATION_CONFIG
             st.session_state.chat_session.notions = [n for n in chat_session.notions if n.enabled]
             # Stocker les notions dans le session state global aussi
             st.session_state.notions = st.session_state.chat_session.notions
             confirm_msg = (
                 f"✅ **{len(st.session_state.chat_session.notions)} notion(s) validée(s).** "
-                "Configurez maintenant le quizz ou les exercices ci-dessous."
+                "Configurez maintenant le quiz ou les exercices ci-dessous."
             )
             st.session_state.chat_session.messages.append({"role": "assistant", "content": confirm_msg})
             st.rerun()
@@ -2966,7 +2966,7 @@ elif app_mode == "💬 Mode libre (IA)":
         # Pré-remplir depuis les préférences extraites de la conversation
         cfg = chat_session.suggested_config or {}
         default_gen = cfg.get("gen_type", "quiz")
-        gen_type_options = ["🎯 Quizz QCM", "🧮 Exercices", "🎯+🧮 Les deux"]
+        gen_type_options = ["🎯 Quiz QCM", "🧮 Exercices", "🎯+🧮 Les deux"]
         gen_type_index = 0
         if default_gen == "exercices":
             gen_type_index = 1
@@ -2987,7 +2987,7 @@ elif app_mode == "💬 Mode libre (IA)":
         with col_b:
             chat_num_choices = 4
             chat_num_correct = 1
-            if "Quizz" in gen_type:
+            if "Quiz" in gen_type:
                 chat_num_choices = st.slider("Nombre de choix", min_value=4, max_value=7, value=cfg.get("num_choices", 4), key="chat_choices")
                 chat_num_correct = st.slider("Bonnes réponses", min_value=1, max_value=chat_num_choices - 1, value=min(cfg.get("num_correct", 1), chat_num_choices - 1), key="chat_correct")
 
@@ -2998,14 +2998,14 @@ elif app_mode == "💬 Mode libre (IA)":
         }
         chat_total = sum(chat_difficulty_counts.values())
 
-        if st.button("🚀 Générer", type="primary", width='stretch', disabled=(chat_total == 0), help="Lancer la génération du quizz en mode libre"):
+        if st.button("🚀 Générer", type="primary", width='stretch', disabled=(chat_total == 0), help="Lancer la génération du quiz en mode libre"):
             progress_bar = st.progress(0, text="🧠 Génération directe des questions...")
 
             try:
                 _gen_start = time.time()
 
-                # Générer le quizz directement (sans document synthétique)
-                if "Quizz" in gen_type:
+                # Générer le quiz directement (sans document synthétique)
+                if "Quiz" in gen_type:
                     def chat_quiz_progress(current, total):
                         if total > 0:
                             pct = 0.5 * (current / total)
@@ -3036,7 +3036,7 @@ elif app_mode == "💬 Mode libre (IA)":
                 if "Exercices" in gen_type or "deux" in gen_type:
                     def chat_ex_progress(current, total):
                         if total > 0:
-                            base = 0.5 if "Quizz" in gen_type else 0.0
+                            base = 0.5 if "Quiz" in gen_type else 0.0
                             pct = base + 0.5 * (current / total)
                             elapsed = time.time() - _gen_start
                             if current / total > 0.01:
@@ -3182,16 +3182,16 @@ elif app_mode == "💬 Mode libre (IA)":
             try:
                 with col_d1:
                     html_content = _get_cached("quiz_html", export_quiz_html, quiz)
-                    st.download_button("📥 Télécharger HTML", data=html_content, file_name="quizz_libre.html", mime="text/html", type="primary", width='stretch')
+                    st.download_button("📥 Télécharger HTML", data=html_content, file_name="quiz_libre.html", mime="text/html", type="primary", width='stretch')
                 with col_d2:
                     csv_content = _get_cached("quiz_csv", export_quiz_csv, quiz)
-                    st.download_button("📊 Télécharger CSV", data=csv_content, file_name="quizz_libre.csv", mime="text/csv", width='stretch')
+                    st.download_button("📊 Télécharger CSV", data=csv_content, file_name="quiz_libre.csv", mime="text/csv", width='stretch')
             except Exception as e:
                 st.error(f"Erreur export : {e}")
 
             # Section partage (mode libre)
             st.divider()
-            st.markdown("### 🔗 Partager ce quizz")
+            st.markdown("### 🔗 Partager ce quiz")
             share_title_libre = st.text_input(
                 "Titre de la session partagée",
                 value=quiz.title,

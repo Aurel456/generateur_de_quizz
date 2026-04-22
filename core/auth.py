@@ -1,5 +1,5 @@
 """
-auth.py — Système d'authentification léger pour le générateur de quizz.
+auth.py — Système d'authentification léger pour le générateur de quiz.
 
 Rôles : admin, formateur, utilisateur.
 Stockage SQLite, hash via hashlib pbkdf2_hmac.

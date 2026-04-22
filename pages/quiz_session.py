@@ -1,5 +1,5 @@
 """
-pages/quiz_session.py — Page participant pour passer un quizz partagé.
+pages/quiz_session.py — Page participant pour passer un quiz partagé.
 
 Accessible via URL : http://host:port/quiz_session?code=ABC123
 """
@@ -11,7 +11,7 @@ import dsfr
 from sessions.session_store import get_session, submit_result, get_next_subset
 
 st.set_page_config(
-    page_title="Quizz en ligne",
+    page_title="Quiz en ligne",
     page_icon="📝",
     layout="centered",
 )
@@ -57,7 +57,7 @@ session_code = st.query_params.get("code", "")
 if not session_code:
     st.markdown("""
     <div class="quiz-header">
-        <h1>📝 Quizz en ligne</h1>
+        <h1>📝 Quiz en ligne</h1>
     </div>
     """, unsafe_allow_html=True)
     session_code = st.text_input("Entrez le code de la session", placeholder="Ex: K8S42X")
@@ -65,7 +65,7 @@ if not session_code:
         st.query_params["code"] = session_code
         st.rerun()
     else:
-        st.info("Entrez le code de session fourni par votre formateur pour accéder au quizz.")
+        st.info("Entrez le code de session fourni par votre formateur pour accéder au quiz.")
         st.stop()
 
 # ─── Charger la session ──────────────────────────────────────────────────────
@@ -109,12 +109,12 @@ if not st.session_state.submitted:
             <h1>📝 {session.title}</h1>
         </div>
         """, unsafe_allow_html=True)
-        st.info("Entrez votre nom pour accéder au quizz.")
+        st.info("Entrez votre nom pour accéder au quiz.")
         st.stop()
 
     # Charger le sous-ensemble pour les sessions pool
     if is_pool_session and st.session_state.pool_subset is None:
-        with st.spinner("Préparation de votre quizz personnalisé…"):
+        with st.spinner("Préparation de votre quiz personnalisé…"):
             st.session_state.pool_subset = get_next_subset(session_code, participant_name)
 
     questions = st.session_state.pool_subset if is_pool_session else quiz_data.get("questions", [])
@@ -308,7 +308,7 @@ else:
 
         col_redo, col_refresh = st.columns(2)
         with col_redo:
-            redo_label = "🔄 Refaire le quizz" if not is_pool_session else "🔄 Recommencer depuis le début"
+            redo_label = "🔄 Refaire le quiz" if not is_pool_session else "🔄 Recommencer depuis le début"
             if st.button(redo_label, width='stretch'):
                 st.session_state.submitted = False
                 st.session_state.result = None

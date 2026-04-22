@@ -1,5 +1,5 @@
 """
-quiz_exporter.py — Export du quizz et exercices en HTML interactif standalone et CSV.
+quiz_exporter.py — Export du quiz et exercices en HTML interactif standalone et CSV.
 """
 
 import os
@@ -39,7 +39,7 @@ def _build_acronyms_glossary_html(acronyms: Optional[list] = None) -> str:
 
 def export_quiz_html(quiz: Quiz, acronyms: Optional[list] = None) -> str:
     """
-    Génère un fichier HTML interactif standalone pour le quizz.
+    Génère un fichier HTML interactif standalone pour le quiz.
 
     Args:
         quiz: Objet Quiz contenant les questions.
@@ -99,7 +99,7 @@ def _sanitize_csv_field(value: str) -> str:
 
 def export_quiz_csv(quiz: Quiz) -> str:
     """
-    Exporte le quizz au format CSV (séparateur ;, guillemets systématiques, BOM UTF-8).
+    Exporte le quiz au format CSV (séparateur ;, guillemets systématiques, BOM UTF-8).
 
     Structure : Question, Choix A, Choix B, Choix C, Choix D, ..., Bonnes Réponses, Explication, Pages Source
     """
@@ -556,7 +556,7 @@ def export_combined_csv(quiz: Optional[Quiz], exercises: Optional[list]) -> str:
 
 def export_quiz_moodle_xml(quiz: Quiz, quiz_title: str = "Quiz") -> str:
     """
-    Exporte le quizz au format XML Moodle (multichoice).
+    Exporte le quiz au format XML Moodle (multichoice).
 
     Args:
         quiz: Objet Quiz contenant les questions.

@@ -8,7 +8,7 @@ from typing import Dict
 
 # Persona générique (défaut historique)
 DEFAULT_PERSONA_GENERIC = (
-    "Tu es un expert en pédagogie et en création de quizz éducatifs. "
+    "Tu es un expert en pédagogie et en création de quiz éducatifs. "
     "Tu maîtrises le domaine couvert par les documents fournis et tu sais formuler "
     "des questions précises, claires et pédagogiquement pertinentes."
 )

@@ -1,13 +1,13 @@
-# 📝 Générateur de Quizz & Exercices IA (Streamlit + LangGraph)
+# 📝 Générateur de Quiz & Exercices IA (Streamlit + LangGraph)
 
-Application Streamlit permettant de générer automatiquement des **Quizz QCM** et des **Exercices mathématiques/logiques** à partir de **multiples documents** PDF, DOCX, ODT, PPTX et TXT, ou **directement par conversation avec l'IA** (mode libre), en utilisant des modèles LLM via l'API OpenAI (ou compatible).
+Application Streamlit permettant de générer automatiquement des **Quiz QCM** et des **Exercices mathématiques/logiques** à partir de **multiples documents** PDF, DOCX, ODT, PPTX et TXT, ou **directement par conversation avec l'IA** (mode libre), en utilisant des modèles LLM via l'API OpenAI (ou compatible).
 
 ## ✨ Fonctionnalités
 
-### 🎯 Quizz QCM
+### 🎯 Quiz QCM
 
 - **Consigne libre unifiée** : Un seul champ **"💬 Consignes libres"** — le LLM classe automatiquement votre texte en deux volets : la **formulation** (style, focus, pièges, ton — injectée dans le prompt de génération) et le **périmètre documentaire** (chapitres/sujets à couvrir — utilisé pour filtrer les chunks pertinents). Un expander "🔍 Voir l'interprétation" affiche la classification après chaque génération.
-- **Support multi-documents** : Uploadez **plusieurs fichiers simultanément** et générez des questions couvrant l'ensemble des documents.
+- **Support multi-documents** : Déposez **plusieurs fichiers simultanément** et générez des questions couvrant l'ensemble des documents.
 - **Extraction multi-format** : Support des fichiers **PDF, DOCX, ODT, ODP, PPTX et TXT**.
 - **Chunking par blocs de tokens** : Analyse par blocs de 10 000 tokens par défaut avec chevauchement et marqueurs de pages.
 - **Génération multi-niveaux** :
@@ -36,7 +36,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
   - **Questions à trou** : Phrases à compléter avec des blancs (`___`), retour JSON structuré `blanks`. Contexte suffisant pour répondre sans le document.
   - **Cas pratique** : Scénario avec sous-questions numérotées, retour JSON `sub_questions`. Code de vérification Python optionnel pour les calculs.
 - **Trois niveaux de difficulté distincts** : 🟢 Facile / 🟡 Moyen / 🔴 Difficile.
-- **Prompts réorganisés** : Même structure que les quizz — **persona** modifiable par le formateur, **règles fixes** par type affichées en lecture seule, **instructions par niveau** personnalisables.
+- **Prompts réorganisés** : Même structure que les quiz — **persona** modifiable par le formateur, **règles fixes** par type affichées en lecture seule, **instructions par niveau** personnalisables.
 - **Exercices autonomes** : L'énoncé fournit toutes les données nécessaires, résolvable sans le document source.
 - **Tags de notions** : Chaque exercice indique les notions fondamentales qu'il couvre.
 - **Vérification IA pour tous les types** : Boucle vérifier → reformuler (max 3 tentatives) → supprimer, similaire aux QCM. Les exercices à trou et cas pratiques sont aussi vérifiés par le LLM.
@@ -47,7 +47,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 ### 💬 Mode Libre (Génération par conversation IA)
 
-- **Sans document requis** : Générez des quizz et exercices sur **n'importe quel sujet** sans uploader de fichier.
+- **Sans document requis** : Générez des quiz et exercices sur **n'importe quel sujet** sans uploader de fichier.
 - **Conversation guidée** : L'IA pose des questions pour comprendre le sujet, le niveau et le périmètre souhaités.
 - **Génération automatique de notions** : À partir de la conversation, l'IA identifie les notions fondamentales du sujet.
 - **Validation interactive** : Revoyez, activez/désactivez ou modifiez les notions proposées avant la génération.
@@ -67,8 +67,8 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 
 ### 🔗 Sessions Partagées & Analytics
 
-- **Partage de quizz** : Après génération, créez une **session partagée** avec un code unique (ex: `K8S42X`).
-- **Page participant** : Les participants accèdent au quizz via `/quiz_session?code=...`, saisissent leur nom et répondent aux questions.
+- **Partage de quiz** : Après génération, créez une **session partagée** avec un code unique (ex: `K8S42X`).
+- **Page participant** : Les participants accèdent au quiz via `/quiz_session?code=...`, saisissent leur nom et répondent aux questions.
 - **Questions manquantes** : Les numéros des questions non remplies sont affichés en temps réel ; le bouton de soumission est désactivé tant que tout n'est pas répondu.
 - **Scoring côté serveur** : Les bonnes réponses ne sont jamais envoyées au client.
 - **Correction détaillée** : Chaque participant voit son score, les bonnes réponses et les explications après soumission.
@@ -79,12 +79,12 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
   - **Taux de réussite par notion** : Graphique radar.
   - **Classement des participants** : Tableau avec podium (🥇🥈🥉).
   - **Recommandations IA** : Bouton pour analyser les résultats via LLM — identifie les notions faibles, questions problématiques, patterns étudiants et recommandations globales.
-- **Sessions avec exercices** : Les exercices sont stockés et partagés dans les sessions aux côtés des quizz QCM.
+- **Sessions avec exercices** : Les exercices sont stockés et partagés dans les sessions aux côtés des quiz QCM.
 - **Gestion des sessions** : Fermez une session pour empêcher de nouvelles soumissions.
 
 ### 🛠️ Ateliers Formateurs (Sessions de travail collaboratives)
 
-- **Brouillon partageable** : Créez un atelier avec un code unique — plusieurs formateurs peuvent co-éditer le même brouillon de quizz et d'exercices.
+- **Brouillon partageable** : Créez un atelier avec un code unique — plusieurs formateurs peuvent co-éditer le même brouillon de quiz et d'exercices.
 - **Accès** : Via la barre latérale "🛠️ Ateliers Formateurs" ou en ajoutant `?code=XXXXXX` à l'URL.
 - **Interface en 4 onglets** : Questions / Exercices / Notions / Outils pour une navigation claire.
 - **Édition complète des questions** : Chaque question est éditable (énoncé, choix, bonnes réponses, explication, difficulté), réordonnable (⬆️/⬇️) et supprimable. Badges de difficulté, notion tags et infos source affichés comme dans l'app principale.
@@ -123,7 +123,7 @@ Application Streamlit permettant de générer automatiquement des **Quizz QCM** 
 ### ⚡ Traitement par lots (Batch API)
 
 - **API Batch OpenAI** : Soumet toutes les requêtes LLM indépendantes en un seul lot via `/v1/batches`.
-- **Opérations batchées** : Génération de quizz, exercices, vérification IA des QCM, génération en mode libre.
+- **Opérations batchées** : Génération de quiz, exercices, vérification IA des QCM, génération en mode libre.
 - **Retry par requête** : Les requêtes individuelles qui échouent sont retentées automatiquement (max 2 retries, backoff exponentiel).
 - **Suivi en temps réel** : Polling avec barre de progression pendant l'attente des résultats.
 - **Compatible vision** : Les requêtes batch peuvent inclure des images pour le modèle vision.
@@ -244,10 +244,10 @@ L'application s'ouvrira dans votre navigateur par défaut (généralement `http:
 1. **Upload** : Chargez un ou **plusieurs fichiers** (PDF, DOCX, ODT...) dans la barre latérale.
 2. **Configuration** : Activez les options (batch, vision, thinking) si besoin.
 3. **Onglet Notions** : Détectez les notions fondamentales, regroupez les similaires, activez/désactivez, éditez par chat.
-4. **Onglet Quizz** :
+4. **Onglet Quiz** :
    - Configurez le nombre de questions par niveau et le mode bonnes réponses (Fixe / Variable).
    - (Optionnel) Personnalisez le persona expert et les instructions par niveau dans **"Personnaliser les Prompts"**.
-   - Cliquez sur **"Générer le Quizz"**.
+   - Cliquez sur **"Générer le Quiz"**.
    - Éditez les questions via ✏️, améliorez-les par IA via 🤖, consultez l'historique des modifications.
    - Exportez en HTML ou CSV.
    - (Optionnel) Vérifiez les réponses par l'IA.
@@ -323,7 +323,7 @@ Le module `generation/question_editor.py` envoie la question + l'instruction du 
 generateur_de_quizz/
 ├── app.py                        ← point d'entrée Streamlit (~2700 lignes)
 ├── pages/
-│   ├── quiz_session.py           ← page participant (quizz partagé / pool / questions manquantes)
+│   ├── quiz_session.py           ← page participant (quiz partagé / pool / questions manquantes)
 │   ├── work_session.py           ← page Atelier Formateurs (4 onglets : Questions/Exercices/Notions/Outils, chat LLM)
 │   ├── shared_session.py         ← page Sessions Partagées (séparée de app.py)
 │   └── admin.py                  ← page admin gestion utilisateurs (désactivé temp.)
@@ -398,7 +398,7 @@ generateur_de_quizz/
 
 ### v4.2
 
-- **Qualité des quizz améliorée** : instructions du formateur (`user_instructions`) désormais injectées en tête du `system_prompt` avec un bandeau prioritaire, en plus du rappel final — ne se perdent plus dans la dilution du texte source.
+- **Qualité des quiz améliorée** : instructions du formateur (`user_instructions`) désormais injectées en tête du `system_prompt` avec un bandeau prioritaire, en plus du rappel final — ne se perdent plus dans la dilution du texte source.
 - **Anti-extrapolation** : règle explicite interdisant au LLM d'affirmer qu'un article, dispositif ou procédure « n'existe pas » s'il n'est pas mentionné dans le passage (le document est partiel, pas exhaustif).
 - **Mélange de notions limité** : quand le mélange est activé, chaque question est centrée sur 1 notion dominante, exceptionnellement 2, jamais plus de 3. Le champ `related_notions` n'est plus surchargé avec toutes les notions tangentes.
 - **Anti-doublons trans-niveau renforcé** : le prompt indique explicitement de ne pas paraphraser une question déjà posée à un autre niveau de difficulté, ni reprendre le même point précis sous un angle à peine différent.

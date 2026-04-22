@@ -2,7 +2,7 @@
 pages/work_session.py — Atelier de travail collaboratif pour formateurs.
 
 Accessible via la barre latérale ou en ajoutant ?code=XXXXXX à l'URL.
-Permet à plusieurs formateurs de co-éditer un brouillon de quizz et d'exercices.
+Permet à plusieurs formateurs de co-éditer un brouillon de quiz et d'exercices.
 """
 
 import json
@@ -54,7 +54,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="ws-header"><h1>🛠️ Atelier Formateurs</h1></div>', unsafe_allow_html=True)
-st.caption("Éditez un brouillon de quizz et d'exercices en équipe et publiez-le comme session étudiante.")
+st.caption("Éditez un brouillon de quiz et d'exercices en équipe et publiez-le comme session étudiante.")
 
 # ─── Session state ────────────────────────────────────────────────────────────
 
@@ -98,7 +98,7 @@ if ws_code_input and ws_code_input != st.session_state.ws_code:
 if not st.session_state.ws_code:
     st.divider()
     st.markdown("### Créer un nouvel atelier")
-    new_title = st.text_input("Titre du quizz", placeholder="Ex: QCM Réseaux — Chapitre 3")
+    new_title = st.text_input("Titre du quiz", placeholder="Ex: QCM Réseaux — Chapitre 3")
     if st.button("➕ Créer l'atelier", type="primary", disabled=not new_title or not editor_name):
         ws = create_work_session({}, [], new_title, owner_name=editor_name)
         st.session_state.ws_code = ws.work_code

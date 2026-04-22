@@ -13,7 +13,7 @@ from pydantic import BaseModel, field_validator, model_validator
 # ── Quiz ─────────────────────────────────────────────────────────────────────
 
 class QuizQuestionModel(BaseModel):
-    """Validation d'une question de quizz QCM."""
+    """Validation d'une question de quiz QCM."""
     question: str
     choices: Dict[str, str]
     correct_answers: List[str]
@@ -53,7 +53,7 @@ class QuizQuestionModel(BaseModel):
 
 
 class QuizModel(BaseModel):
-    """Validation d'un quizz complet."""
+    """Validation d'un quiz complet."""
     title: str = ""
     difficulty: str = ""
     questions: List[QuizQuestionModel] = []
