@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import List, Optional, Dict
 
-from core.llm_service import call_llm_json, call_llm_vision_json, call_llm
+from core.llm_service import call_llm_json, call_llm_vision_json, call_llm_vision_payload_json, call_llm
 from processing.document_processor import TextChunk
 
 
@@ -203,6 +203,65 @@ def _parse_notions_response(result: dict) -> List[Notion]:
     return notions
 
 
+def _merge_notions_protected(
+    existing: List["Notion"],
+    returned: List["Notion"],
+) -> List["Notion"]:
+    """
+    Merge protégé : ne supprime JAMAIS une notion déjà détectée.
+
+    - Conserve toutes les notions existantes (par titre normalisé).
+    - Met à jour la description / catégorie / pages si le LLM a renvoyé une
+      version enrichie de la même notion (titre similaire à >= 0.85).
+    - Ajoute les nouvelles notions du LLM qui ne matchent aucune existante.
+
+    Empêche le LLM d'« oublier » des notions identifiées dans les chunks
+    précédents (cas observé : il en supprimait pour synthétiser la liste).
+    """
+    if not returned:
+        return list(existing)
+
+    result: List[Notion] = []
+    matched_returned_indices: set = set()
+
+    for ex in existing:
+        ex_norm = normalize_notion_title(ex.title)
+        merged = ex
+        for j, ret in enumerate(returned):
+            if j in matched_returned_indices:
+                continue
+            ret_norm = normalize_notion_title(ret.title)
+            if ex_norm and ret_norm and (
+                ex_norm == ret_norm
+                or SequenceMatcher(None, ex_norm, ret_norm).ratio() >= 0.85
+            ):
+                # Enrichissement : on garde le titre original mais on accepte
+                # une description plus longue et des sources supplémentaires.
+                desc = ret.description if len(ret.description or "") > len(ex.description or "") else ex.description
+                category = ret.category or ex.category
+                pages = sorted(set(list(ex.source_pages or []) + list(ret.source_pages or [])))
+                source_doc = ex.source_document or ret.source_document
+                merged = Notion(
+                    title=ex.title,
+                    description=desc,
+                    source_document=source_doc,
+                    source_pages=pages,
+                    enabled=ex.enabled,
+                    category=category,
+                    question_count=ex.question_count,
+                )
+                matched_returned_indices.add(j)
+                break
+        result.append(merged)
+
+    for j, ret in enumerate(returned):
+        if j in matched_returned_indices:
+            continue
+        result.append(ret)
+
+    return result
+
+
 def detect_notions(
     chunks: List[TextChunk],
     model: Optional[str] = None,
@@ -240,18 +299,22 @@ def detect_notions(
         system_prompt, user_prompt = _build_detection_prompt_incremental(chunk, notions)
 
         try:
-            if vision_mode and chunk.page_images:
+            if vision_mode and getattr(chunk, "qwen_payload", None):
+                result = call_llm_vision_payload_json(system_prompt, user_prompt, chunk.qwen_payload, model=model, temperature=0.3, enable_thinking=enable_thinking)
+            elif vision_mode and chunk.page_images:
                 result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.3, enable_thinking=enable_thinking)
             else:
                 result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.3, enable_thinking=enable_thinking)
             new_notions = _parse_notions_response(result)
-            # Notifier les nouvelles notions ajoutées
+            # Merge protégé : on ne supprime jamais les notions déjà trouvées,
+            # même si le LLM les omet dans sa réponse pour ce chunk.
+            merged = _merge_notions_protected(notions, new_notions)
             if on_item:
                 old_titles = {n.title for n in notions}
-                for n in new_notions:
+                for n in merged:
                     if n.title not in old_titles:
                         on_item(n)
-            notions = new_notions
+            notions = merged
         except Exception as e:
             print(f"Erreur détection notions chunk {i}: {e}")
             continue
@@ -384,7 +447,12 @@ def detect_notions_and_acronyms(
         system_prompt, user_prompt = _build_combined_detection_prompt(chunk, notions, all_known)
 
         try:
-            if vision_mode and chunk.page_images:
+            if vision_mode and getattr(chunk, "qwen_payload", None):
+                result = call_llm_vision_payload_json(
+                    system_prompt, user_prompt, chunk.qwen_payload,
+                    model=model, temperature=0.3, enable_thinking=enable_thinking,
+                )
+            elif vision_mode and chunk.page_images:
                 result = call_llm_vision_json(
                     system_prompt, user_prompt, chunk.page_images,
                     model=model, temperature=0.3, enable_thinking=enable_thinking,
@@ -395,14 +463,16 @@ def detect_notions_and_acronyms(
                     model=model, temperature=0.3, enable_thinking=enable_thinking,
                 )
 
-            # Parse notions
+            # Parse notions — merge protégé pour ne jamais supprimer une
+            # notion déjà détectée dans un chunk précédent.
             new_notions = _parse_notions_response(result)
+            merged = _merge_notions_protected(notions, new_notions)
             if on_item:
                 old_titles = {n.title for n in notions}
-                for n in new_notions:
+                for n in merged:
                     if n.title not in old_titles:
                         on_item(n)
-            notions = new_notions
+            notions = merged
 
             # Parse acronyms
             for a_data in result.get("acronyms", []):

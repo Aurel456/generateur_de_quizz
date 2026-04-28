@@ -411,6 +411,7 @@ with st.sidebar:
     vision_enabled = False
     vision_text_mode = False
     oneshot_mode = False
+    parser_api_enabled = False
     if app_mode == "📄 Depuis un document":
         st.markdown("### 🔍 Mode Vision (recommandé)")
         vision_enabled = st.toggle(
@@ -436,6 +437,22 @@ with st.sidebar:
                 ),
             )
             vision_text_mode = vision_sub == "Images + Texte"
+
+            parser_api_enabled = st.toggle(
+                "Utiliser le parser API (MinerU)",
+                value=False,
+                key="parser_api_toggle",
+                help=(
+                    "Envoie les documents à un service externe qui produit un payload "
+                    "multimodal (texte + images interleaved) prêt pour Qwen Vision. "
+                    "Alternative au rendu PyMuPDF local : meilleur contexte pour slides "
+                    "et documents bureautiques (PPTX, ODP, DOCX). "
+                    "URL via la variable d'environnement `PARSER_API_URL`."
+                ),
+            )
+            if parser_api_enabled:
+                from processing.parser_api import PARSER_API_URL as _PARSER_URL
+                st.caption(f"🔌 Endpoint : `{_PARSER_URL}`")
         else:
             st.caption("💡 Activez ce mode si votre document contient des tableaux, diagrammes ou formules.")
             st.caption("⚠️ Attention : le temps de traitement des documents est plus long")
@@ -688,7 +705,7 @@ if app_mode == "📄 Depuis un document":
         files_key = "_".join(sorted(f.name for f in uploaded_files))
         vision_dpi_param = vision_dpi_override or "auto"
         vision_pages_chunk = st.session_state.get("vision_pages_per_chunk", 10)
-        processing_params = f"{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_text_mode}_{vision_dpi_param}_{vision_pages_chunk}_{oneshot_mode}"
+        processing_params = f"{read_mode}_{max_chunk_tokens}_{vision_enabled}_{vision_text_mode}_{vision_dpi_param}_{vision_pages_chunk}_{oneshot_mode}_{parser_api_enabled}"
 
         files_changed = st.session_state.get("_last_files_key") != files_key
         params_changed = st.session_state.get("_last_processing_params") != processing_params
@@ -701,7 +718,21 @@ if app_mode == "📄 Depuis un document":
                     increment_stats(documents=st.session_state.pdf_stats.get('num_documents', 1))
 
                 # Recalculer les chunks (changement de fichier OU de mode)
-                if oneshot_mode and vision_enabled:
+                if vision_enabled and parser_api_enabled:
+                    from processing.parser_api import extract_with_parser_api
+                    try:
+                        st.session_state.chunks = extract_with_parser_api(
+                            uploaded_files,
+                            min_img_size=0,
+                            max_images_per_chunk=vision_pages_chunk,
+                        )
+                    except Exception as e:
+                        st.error(f"❌ Parser API indisponible : {e}. Fallback rendu local.")
+                        st.session_state.chunks = extract_and_chunk_multiple_vision(
+                            uploaded_files,
+                            max_images_per_chunk=vision_pages_chunk,
+                        )
+                elif oneshot_mode and vision_enabled:
                     from core.llm_service import VISION_MODEL_CONTEXT, ONESHOT_RESERVE_TOKENS, ONESHOT_DPI, ONESHOT_SLICE_TOKENS
                     st.session_state.chunks = extract_oneshot_chunks(
                         uploaded_files,
@@ -804,10 +835,13 @@ if app_mode == "📄 Depuis un document":
     # ─── Helper pour afficher une ligne d'acronyme ──────────────────────────────
 
     def _render_acronym_row(idx, acronym):
+        # Clé widget stable basée sur l'identité de l'acronyme (pas sur l'index),
+        # sinon `pop(idx)` provoque un mismatch value/session_state au rerun.
+        wkey = f"{acronym.acronym}_{acronym.source_document}_{idx}"
         col_check, col_text, col_def, col_del = st.columns([0.5, 3, 5, 1])
         with col_check:
             new_enabled = st.checkbox(
-                "act", value=acronym.enabled, key=f"acr_check_{idx}", label_visibility="collapsed"
+                "act", value=acronym.enabled, key=f"acr_check_{wkey}", label_visibility="collapsed"
             )
             if new_enabled != acronym.enabled:
                 st.session_state.acronyms[idx].enabled = new_enabled
@@ -826,14 +860,13 @@ if app_mode == "📄 Depuis un document":
             )
         with col_def:
             if len(acronym.all_definitions) > 1:
-                # Selectbox pour choisir parmi les définitions connues
                 _all_defs = acronym.all_definitions if acronym.definition in acronym.all_definitions else [acronym.definition] + acronym.all_definitions
                 _def_idx = _all_defs.index(acronym.definition) if acronym.definition in _all_defs else 0
                 selected_def = st.selectbox(
                     "Définition",
                     options=_all_defs,
                     index=_def_idx,
-                    key=f"acr_sel_{idx}",
+                    key=f"acr_sel_{wkey}",
                     label_visibility="collapsed",
                     help="Plusieurs définitions connues — sélectionnez celle qui s'applique au contexte.",
                 )
@@ -843,12 +876,17 @@ if app_mode == "📄 Depuis un document":
             else:
                 new_def = st.text_input(
                     "Définition", value=acronym.definition,
-                    key=f"acr_def_{idx}", label_visibility="collapsed"
+                    key=f"acr_def_{wkey}", label_visibility="collapsed"
                 )
                 if new_def != acronym.definition:
                     st.session_state.acronyms[idx].definition = new_def
         with col_del:
-            if st.button("🗑️", key=f"acr_del_{idx}", help="Supprimer cet acronyme"):
+            if st.button("🗑️", key=f"acr_del_{wkey}", help="Supprimer cet acronyme"):
+                # Purger les keys widget rattachées à l'acronyme supprimé pour
+                # éviter un mismatch lors du prochain rendu (clé Streamlit
+                # orpheline = exception value mismatch).
+                for prefix in ("acr_check_", "acr_sel_", "acr_def_", "acr_del_"):
+                    st.session_state.pop(f"{prefix}{wkey}", None)
                 st.session_state.acronyms.pop(idx)
                 st.rerun()
 
