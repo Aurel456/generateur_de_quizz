@@ -15,9 +15,11 @@ Application Streamlit permettant de générer automatiquement des **Quiz QCM** e
   - **Anti-doublons entre niveaux** : Les questions déjà générées sont passées en contexte lors des niveaux suivants, évitant les répétitions.
   - **Éditeur de Prompts** : Personnalisez le **persona expert** (ex: "Tu es un expert en droit fiscal") et les **instructions par niveau de difficulté**. Les règles techniques garantissant la qualité sont affichées en lecture seule.
 - **Paramétrage précis** :
-  - Nombre de choix de réponses (A, B, C, D... jusqu'à G).
+  - Nombre de choix de réponses (A, B, C, D... de 2 à 6 choix).
   - **Mode "Fixe"** : nombre de bonnes réponses constant (slider).
   - **Mode "Variable (1 à N)"** : le LLM choisit le nombre de bonnes réponses selon la question — élimine les formulations prévisibles.
+  - **Mode Vrai/Faux** ✅❌ : toggle qui force 2 choix « Vrai / Faux » et 1 bonne réponse. Le LLM produit des AFFIRMATIONS à juger plutôt que des questions classiques.
+- **Quiz sur la base de connaissance LLM** 🧠 : section dédiée en bas de l'onglet Quiz pour générer des questions générales sur une notion détectée (ou un sujet libre) via la **base de connaissance du modèle LLM**, sans s'appuyer sur le document. Utile quand le document détecte une notion (ex: « Laïcité ») mais ne couvre pas tous ses aspects pratiques. Chaque question est étiquetée d'un badge ⚠️ d'avertissement.
 - **Questions autonomes** : Les questions sont conçues pour être répondables **sans le document source**, uniquement avec les connaissances acquises en formation.
 - **Tags de notions** : Chaque question affiche les **notions fondamentales** qu'elle couvre sous forme de badges cliquables.
 - **Édition interactive des questions** : Bouton "✏️ Éditer" par question pour modifier l'énoncé, les choix, les bonnes réponses et l'explication. Bouton "🤖 Améliorer par IA" pour soumettre une instruction libre au LLM (ex: "Reformule plus clairement" ou "Ajoute un choix de type piège").
@@ -395,6 +397,26 @@ generateur_de_quizz/
 ---
 
 ## 📋 Changelog
+
+### v5
+
+- **Lot 1 — Bugs critiques** :
+  - **Suppression d'un acronyme** : keys widget Streamlit basées sur l'identité de l'acronyme (acronyme + source_document) au lieu de l'index. Purge des keys orphelines avant rerun pour éviter le mismatch value vs session_state qui crashait l'app.
+  - **Notions disparues après détection** : `_merge_notions_protected()` ajouté dans `notion_detector.py`. Le LLM peut désormais enrichir une notion existante (description plus longue, pages fusionnées) mais ne peut **plus en supprimer** une déjà détectée — les notions du chargement initial sont préservées.
+- **Lot 2 — Reformulation QCM et ancrage thématique** :
+  - **Refonte du processus de reformulation** (`quiz_verifier.py`) : la reformulation reçoit désormais la question complète (énoncé, choix, bonnes réponses, explication, citation, notions, difficulté) + le chunk source + l'ensemble des règles de qualité. Reformulation globale plutôt que cosmétique. Met à jour la citation aussi.
+  - **Cœur de la règle « selon le texte » bannie** : l'étudiant n'a PAS accès au document au moment du quiz, il répond avec ses connaissances. Liste exhaustive des tournures interdites dans énoncé ET choix (« selon le texte », « dans le passage », « le document mentionne »...).
+  - **Cohérence thématique des notions** : les prompts de détection écartent les digressions et termes hors-sujet (exemple cité : « caryotype » dans un cours « Journée civique et citoyenne »). Le LLM est aussi explicitement informé qu'un post-traitement protège les notions existantes.
+- **Lot 3 — Pédagogie** :
+  - **Humour QCM revu** : ne se cantonne plus aux mauvaises réponses (le « clin d'œil » servait d'indice). Désormais subtil, peut toucher la BONNE réponse aussi, et doit produire des **leurres plausibles** — ni trop proches (ambigu), ni trop loin (évidents).
+  - **Questions à trou refondues** : focus sur la **mobilisation de la notion**, pas sur la mémoire d'un mot ou la complétion syntaxique. Format JSON enrichi avec `accepted_answers` (variantes lexicales acceptables) et `pedagogical_note` par blanc. Niveaux facile/moyen/difficile reformulés en logique de mise en situation.
+  - **Commentaire pédagogique pour TOUS les exercices** : champ `pedagogical_comment` (objectifs, notions évaluées, erreurs classiques) ajouté à `Exercise`, `ExerciseModel` et au format JSON de calcul / trou / cas_pratique. `feedback` par sous-question pour les cas pratiques.
+- **Lot 4 — Quiz sur base de connaissance LLM** :
+  - **Section dédiée en bas de l'onglet Quiz** : permet de générer des questions générales sur une notion détectée (ou un sujet libre) **sans appui sur le document**. Inspiré du dialogue du mode libre pour clarifier les intentions.
+  - **Marqueur de source** : `source_document = "Base de connaissance du modèle LLM"` + badge ⚠️ d'avertissement dans l'affichage.
+  - **Slider nombre de choix** : 2–6 (au lieu de 4–7).
+  - **Mode Vrai/Faux** ✅❌ : toggle qui force 2 choix « Vrai / Faux » et 1 bonne réponse. Génère des affirmations à juger plutôt que des questions classiques. Propagé dans toutes les fonctions de génération (`generate_quiz`, `generate_quiz_from_chunk`, `generate_quiz_direct`, `generate_quiz_from_llm_knowledge`).
+- **Parser API externe (Mode Vision)** : intégration optionnelle d'un service de parsing externe (MinerU/MarkItDown) qui produit un payload multimodal pré-formaté pour Qwen Vision (texte + images interleaved). Toggle dans la sidebar quand le Mode Vision est activé. URL via `PARSER_API_URL` (env). Backward-compatible : fallback vers le rendu PyMuPDF local si l'API est indisponible.
 
 ### v4.2
 

@@ -19,6 +19,14 @@ from generation.quiz_generator import Quiz, QuizQuestion
 from generation.exercise_generator import Exercise
 
 
+# ─── Constantes v5 — Quiz sans document ─────────────────────────────────────
+
+# Marqueur de source pour les questions générées sans document (Lot 4 v5).
+# Utilisé côté UI pour afficher un badge d'avertissement « ces questions
+# proviennent de la base de connaissance du modèle, pas du document du cours ».
+LLM_KNOWLEDGE_SOURCE = "Base de connaissance du modèle LLM"
+
+
 class ChatState(str, Enum):
     WELCOME = "welcome"
     TOPIC_DISCOVERY = "topic"
@@ -329,11 +337,19 @@ def generate_quiz_direct(
     progress_callback=None,
     batch_mode: bool = False,
     enable_thinking: bool = True,
+    vrai_faux: bool = False,
 ) -> Quiz:
     """
     Génère un quiz QCM directement à partir du sujet et des notions,
     sans passer par un document synthétique intermédiaire.
+
+    `vrai_faux=True` force 2 choix « Vrai / Faux » et 1 bonne réponse, et
+    demande au LLM de produire des AFFIRMATIONS à juger plutôt que des
+    questions classiques.
     """
+    if vrai_faux:
+        num_choices = 2
+        num_correct = 1
     choice_labels = list(string.ascii_uppercase[:num_choices])
     labels_str = ", ".join(choice_labels)
 
@@ -348,6 +364,16 @@ def generate_quiz_direct(
     current_step = 0
 
     def _build_direct_quiz_prompt(difficulty, count):
+        vf_block = ""
+        if vrai_faux:
+            vf_block = (
+                "\nMODE VRAI/FAUX (priorité) :\n"
+                "- L'« énoncé » est une AFFIRMATION à juger (pas une question interrogative).\n"
+                "- Les choix sont strictement A. Vrai et B. Faux.\n"
+                "- 1 seule bonne réponse (A ou B).\n"
+                "- L'explication justifie pourquoi l'affirmation est vraie ou fausse.\n"
+            )
+
         sys = f"""Tu es un expert en pédagogie et en création de quiz éducatifs.
 Tu dois générer exactement {count} questions QCM de niveau {difficulty}.
 
@@ -357,9 +383,9 @@ NOTIONS FONDAMENTALES À COUVRIR :
 {notions_list}
 
 Les questions doivent prioritairement couvrir ces notions fondamentales.
-
+{vf_block}
 RÈGLES STRICTES :
-1. Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})
+1. {"Chaque question est une AFFIRMATION suivie de A. Vrai et B. Faux." if vrai_faux else f"Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})"}
 2. Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)
 3. Chaque question doit inclure une explication de la réponse
 4. Les questions doivent être variées et couvrir différentes notions
@@ -372,8 +398,8 @@ FORMAT DE RÉPONSE (JSON strict) :
 {{
     "questions": [
         {{
-            "question": "La question posée ?",
-            "choices": {{{", ".join(f'"{l}": "Choix {l}"' for l in choice_labels)}}},
+            "question": {'"Affirmation à juger Vrai ou Faux."' if vrai_faux else '"La question posée ?"'},
+            "choices": {'{"A": "Vrai", "B": "Faux"}' if vrai_faux else '{' + ", ".join(f'"{l}": "Choix {l}"' for l in choice_labels) + '}'},
             "correct_answers": {list(choice_labels[:num_correct])},
             "explanation": "Explication détaillée de la bonne réponse...",
             "difficulty_level": "{difficulty}",
@@ -459,6 +485,88 @@ FORMAT DE RÉPONSE (JSON strict) :
         difficulty="mixte",
         questions=all_questions,
     )
+
+
+def generate_quiz_from_llm_knowledge(
+    topic: str,
+    notions: Optional[List[Notion]] = None,
+    additional_context: str = "",
+    difficulty_counts: Optional[Dict[str, int]] = None,
+    num_choices: int = 4,
+    num_correct: int = 1,
+    model: Optional[str] = None,
+    progress_callback=None,
+    batch_mode: bool = False,
+    enable_thinking: bool = True,
+    vrai_faux: bool = False,
+) -> Quiz:
+    """
+    Génère un quiz QCM à partir de la BASE DE CONNAISSANCE DU MODÈLE LLM,
+    sans document source (v5 lot 4).
+
+    Cas d'usage : poser des questions générales sur une notion (ex: « la
+    laïcité dans le service public ») au-delà de ce que le document
+    contient explicitement. Utile quand le document détecte une notion
+    (ex: « Laïcité ») mais ne couvre pas tous ses aspects.
+
+    Wrapper léger autour de `generate_quiz_direct` :
+    - Construit une `ChatSession` synthétique à partir du sujet + notions
+      ciblées + contexte additionnel.
+    - Marque chaque question avec `source_document = LLM_KNOWLEDGE_SOURCE`
+      pour permettre à l'UI d'afficher un badge d'avertissement.
+
+    Args:
+        topic: Sujet principal des questions.
+        notions: Notions à couvrir prioritairement (typiquement issues de
+            la détection sur le document).
+        additional_context: Contexte/périmètre additionnel saisi par
+            l'utilisateur via le mini-dialogue de l'UI.
+        difficulty_counts: Dict {difficulté: nombre de questions}.
+        num_choices, num_correct: Paramètres standards QCM.
+        model: Modèle LLM.
+    """
+    if not topic or not topic.strip():
+        raise ValueError("Le sujet est requis pour générer un quiz sans document.")
+    counts = difficulty_counts or {"moyen": 5}
+    if not any(c > 0 for c in counts.values()):
+        raise ValueError("Au moins une difficulté doit avoir un nombre > 0.")
+    if vrai_faux:
+        num_choices = 2
+        num_correct = 1
+
+    enriched_topic = topic.strip()
+    if additional_context.strip():
+        enriched_topic = f"{enriched_topic}\n\nPérimètre / contexte additionnel : {additional_context.strip()}"
+
+    synth_session = ChatSession(
+        state=ChatState.GENERATING,
+        topic=enriched_topic,
+        notions=list(notions or []),
+    )
+
+    quiz = generate_quiz_direct(
+        synth_session,
+        difficulty_counts=counts,
+        num_choices=num_choices,
+        num_correct=num_correct,
+        model=model,
+        progress_callback=progress_callback,
+        batch_mode=batch_mode,
+        enable_thinking=enable_thinking,
+        vrai_faux=vrai_faux,
+    )
+
+    # Marquer chaque question pour le badge UI et l'export.
+    for q in quiz.questions:
+        q.source_document = LLM_KNOWLEDGE_SOURCE
+
+    quiz.metadata = {
+        **(quiz.metadata or {}),
+        "from_llm_knowledge": True,
+        "llm_topic": topic.strip(),
+        "llm_additional_context": additional_context.strip(),
+    }
+    return quiz
 
 
 def generate_exercises_direct(

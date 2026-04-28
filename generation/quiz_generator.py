@@ -100,8 +100,17 @@ def _build_quiz_prompt(
     humor: bool = False,
     acronyms_text: str = "",
     user_instructions: str = "",
+    vrai_faux: bool = False,
 ) -> tuple:
     """Construit le prompt système et utilisateur pour la génération de quiz."""
+
+    # Mode Vrai/Faux : on force 2 choix « Vrai / Faux » et 1 bonne réponse.
+    if vrai_faux:
+        num_choices = 2
+        num_correct = 1
+        max_correct = 1
+        variable_correct = False
+        choice_labels = ["A", "B"]
 
     labels_str = ", ".join(choice_labels[:num_choices])
     prompts = difficulty_prompts or DIFFICULTY_PROMPTS
@@ -137,8 +146,16 @@ Les étudiants suivent une formation (souvent en présentiel ou avec des support
 PAS le document source au moment du quiz. Les questions doivent donc être AUTONOMES et répondables
 uniquement grâce aux connaissances acquises pendant la formation, SANS avoir le document sous les yeux.
 
-RÈGLES STRICTES :
-1. Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})
+{"""MODE VRAI/FAUX (priorité — appliqué pour TOUTES les questions de ce batch) :
+- L'« énoncé » est une AFFIRMATION à juger (et non une question interrogative). Ex : « En France, le délai de prescription de droit commun en matière civile est de cinq ans. »
+- Les choix sont strictement : A. Vrai  /  B. Faux
+- 1 seule bonne réponse (A ou B) par question
+- L'énoncé doit être autonome (pas de référence au document) et factuellement testable.
+- L'explication doit clairement exposer pourquoi l'affirmation est vraie ou fausse.
+- Conserve les règles 4 à 12 ci-dessous, en les adaptant au format Vrai/Faux.
+
+""" if vrai_faux else ""}RÈGLES STRICTES :
+1. {"Chaque question est une AFFIRMATION suivie de 2 choix : A. Vrai et B. Faux. La 'question' est l'affirmation elle-même (sans point d'interrogation, sans formulation de question)." if vrai_faux else f"Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})"}
 2. {"Varie le nombre de bonnes réponses entre 1 et " + str(effective_max) + " selon la question. Certaines questions ont 1 seule bonne réponse, d'autres en ont 2 ou plus. Ne mentionne JAMAIS le nombre de bonnes réponses dans l'énoncé de la question." if variable_correct else f"Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)"}
 3. {diff_instruction}
 4. Chaque question doit inclure une explication détaillée qui précise :
@@ -205,8 +222,8 @@ FORMAT DE RÉPONSE (JSON strict) :
 {{
     "questions": [
         {{
-            "question": "La question posée ?",
-            "choices": {{{", ".join(f'"{l}": "Choix {l}"' for l in choice_labels[:num_choices])}}},
+            "question": {'"Affirmation à juger Vrai ou Faux."' if vrai_faux else '"La question posée ?"'},
+            "choices": {'{"A": "Vrai", "B": "Faux"}' if vrai_faux else "{{" + ", ".join(f'"{l}": "Choix {l}"' for l in choice_labels[:num_choices]) + "}}"},
             "correct_answers": {list(choice_labels[:num_correct])},
             "explanation": "Explication détaillée de la bonne réponse...",
             "citation": "Citation exacte du passage du texte qui justifie la réponse...",
@@ -297,11 +314,15 @@ def generate_quiz_from_chunk(
     on_item: Optional[callable] = None,
     acronyms_text: str = "",
     user_instructions: str = "",
+    vrai_faux: bool = False,
 ) -> List[QuizQuestion]:
     """
     Génère des questions de quiz à partir d'un seul chunk de texte.
     Si stream=True, utilise le streaming et appelle on_item(question) pour chaque question parsée.
     """
+    if vrai_faux:
+        num_choices = 2
+        num_correct = 1
     choice_labels = list(string.ascii_uppercase[:num_choices])
 
     system_prompt, user_prompt = _build_quiz_prompt(
@@ -310,6 +331,7 @@ def generate_quiz_from_chunk(
         existing_questions=existing_questions, variable_correct=variable_correct,
         persona=persona, notion_mixing=notion_mixing, max_correct=max_correct,
         humor=humor, acronyms_text=acronyms_text, user_instructions=user_instructions,
+        vrai_faux=vrai_faux,
     )
 
     if stream:
@@ -408,6 +430,7 @@ def generate_quiz(
     acronyms: Optional[list] = None,
     user_instructions: str = "",
     user_context: str = "",
+    vrai_faux: bool = False,
 ) -> Quiz:
     """
     Génère un quiz complet à partir de plusieurs chunks.
@@ -431,6 +454,14 @@ def generate_quiz(
     """
     if not chunks:
         return Quiz(title="Quiz vide", difficulty="mixte")
+
+    # Mode Vrai/Faux : on force 2 choix « Vrai / Faux » et 1 bonne réponse
+    # avant tout calcul aval (choice_labels, batch, _build_quiz_prompt).
+    if vrai_faux:
+        num_choices = 2
+        num_correct = 1
+        max_correct = 1
+        variable_correct = False
 
     # Sélection intelligente des chunks selon le contexte utilisateur
     if user_context.strip():
@@ -494,6 +525,7 @@ def generate_quiz(
                     max_correct=max_correct,
                     humor=humor, acronyms_text=acronyms_text,
                     user_instructions=user_instructions,
+                    vrai_faux=vrai_faux,
                 )
                 custom_id = f"quiz_{diff_name}_{idx}"
                 payload = chunk.qwen_payload if (vision_mode and getattr(chunk, "qwen_payload", None)) else None
@@ -571,6 +603,7 @@ def generate_quiz(
                             on_item=on_item,
                             acronyms_text=acronyms_text,
                             user_instructions=user_instructions,
+                            vrai_faux=vrai_faux,
                         )
                         chunk_questions.extend(questions)
                         remaining = n_q - len(chunk_questions)

@@ -44,6 +44,7 @@ from core.personas import PERSONA_DOMAINS, get_persona_for_domain
 from generation.chat_mode import (
     ChatSession, ChatState, init_session, process_user_message,
     extract_generation_config, generate_quiz_direct, generate_exercises_direct,
+    generate_quiz_from_llm_knowledge, LLM_KNOWLEDGE_SOURCE,
 )
 from sessions.session_store import (
     create_session as create_quiz_session, create_pool_session,
@@ -1540,39 +1541,55 @@ if app_mode == "📄 Depuis un document":
                 st.warning("⚠️ Sélectionnez au moins une question.")
 
         with col_b:
-            num_choices = st.slider(
-                "Nombre de choix (A, B, C, ...)",
-                min_value=4,
-                max_value=7,
-                value=4,
-                help="Nombre de réponses proposées par question (A à G)."
+            # Mode Vrai/Faux : raccourci qui force 2 choix « Vrai / Faux »
+            # et 1 bonne réponse. Désactive les autres options de format.
+            vrai_faux_mode = st.toggle(
+                "✅❌ Mode Vrai/Faux",
+                value=False,
+                key="vrai_faux_mode",
+                help="Génère des affirmations à juger Vrai ou Faux (force 2 choix, 1 bonne réponse).",
             )
 
-            correct_mode = st.radio(
-                "Nombre de bonnes réponses",
-                ["Fixe", "Variable (1 à N)"],
-                horizontal=True,
-                help="Fixe : même nombre pour toutes les questions. Variable : le LLM choisit entre 1 et N-1 bonnes réponses par question.",
-            )
-            variable_correct = correct_mode == "Variable (1 à N)"
-            if not variable_correct:
-                num_correct = st.slider(
-                    "Nombre exact de bonnes réponses",
-                    min_value=1,
-                    max_value=num_choices - 1,
-                    value=1,
-                    help="Combien de réponses correctes parmi les choix."
-                )
-                max_correct = num_correct
+            if vrai_faux_mode:
+                num_choices = 2
+                num_correct = 1
+                max_correct = 1
+                variable_correct = False
+                st.info("📝 Mode Vrai/Faux actif : 2 choix (Vrai / Faux), 1 bonne réponse par question.")
             else:
-                max_correct = st.slider(
-                    "Maximum de bonnes réponses (N)",
+                num_choices = st.slider(
+                    "Nombre de choix (A, B, C, ...)",
                     min_value=2,
-                    max_value=num_choices - 1,
-                    value=num_choices - 1,
-                    help="Le LLM choisira entre 1 et N bonnes réponses par question."
+                    max_value=6,
+                    value=4,
+                    help="Nombre de réponses proposées par question (A à F)."
                 )
-                num_correct = 1  # valeur par défaut ignorée en mode variable
+
+                correct_mode = st.radio(
+                    "Nombre de bonnes réponses",
+                    ["Fixe", "Variable (1 à N)"],
+                    horizontal=True,
+                    help="Fixe : même nombre pour toutes les questions. Variable : le LLM choisit entre 1 et N-1 bonnes réponses par question.",
+                )
+                variable_correct = correct_mode == "Variable (1 à N)"
+                if not variable_correct:
+                    num_correct = st.slider(
+                        "Nombre exact de bonnes réponses",
+                        min_value=1,
+                        max_value=max(1, num_choices - 1),
+                        value=1,
+                        help="Combien de réponses correctes parmi les choix."
+                    )
+                    max_correct = num_correct
+                else:
+                    max_correct = st.slider(
+                        "Maximum de bonnes réponses (N)",
+                        min_value=1,
+                        max_value=max(1, num_choices - 1),
+                        value=max(1, num_choices - 1),
+                        help="Le LLM choisira entre 1 et N bonnes réponses par question."
+                    )
+                    num_correct = 1  # valeur par défaut ignorée en mode variable
 
             notion_mixing = st.toggle(
                 "Mélanger plusieurs notions par question",
@@ -1583,7 +1600,7 @@ if app_mode == "📄 Depuis un document":
             humor = st.toggle(
                 "😄 Humour",
                 value=False,
-                help="Activé : le LLM ajoute un choix de réponse légèrement humoristique ou décalé parmi les mauvaises réponses.",
+                help="Activé : le LLM ajoute une touche d'humour subtile (peut toucher la bonne réponse aussi). Les distracteurs restent des leurres plausibles.",
             )
 
         st.text_area(
@@ -1756,6 +1773,7 @@ if app_mode == "📄 Depuis un document":
                     acronyms=_active_acronyms if _active_acronyms else None,
                     user_instructions=_quiz_gen_instr,
                     user_context=_quiz_chunk_instr,
+                    vrai_faux=vrai_faux_mode,
                 )
                 if st.session_state.quiz is None:
                     st.session_state.quiz = quiz
@@ -1959,6 +1977,19 @@ if app_mode == "📄 Depuis un document":
                         # ── Mode lecture ─────────────────────────────────────
                         render_difficulty_badge(diff_label)
 
+                        # Badge v5 : question issue de la base de connaissance LLM
+                        # (générée sans document source — l'utilisateur doit
+                        # garder un œil critique sur le contenu).
+                        if q.source_document == LLM_KNOWLEDGE_SOURCE:
+                            st.markdown(
+                                '<span style="background:rgba(255,165,0,0.18);color:#cc7a00;'
+                                'padding:0.2rem 0.6rem;border-radius:12px;font-size:0.8rem;'
+                                'border:1px solid rgba(255,165,0,0.4);display:inline-block;'
+                                'margin-bottom:0.4rem;">⚠️ Source : base de connaissance du modèle LLM '
+                                '(non vérifié contre le document)</span>',
+                                unsafe_allow_html=True,
+                            )
+
                         if q.related_notions:
                             tags_html = " ".join(
                                 f'<span style="background:rgba(108,99,255,0.15);color:#6c63ff;'
@@ -2011,6 +2042,121 @@ if app_mode == "📄 Depuis un document":
                         + ", ".join(f"*{n.title}*" for n in _uncovered)
                         + "\n\nRelancez la génération pour ajouter des questions sur ces notions."
                     )
+
+            # ─── Quiz sur la base de connaissance du LLM (v5 lot 4) ────────
+            # Permet d'ajouter au quiz courant des questions générales sur
+            # une notion, en s'appuyant uniquement sur ce que le modèle LLM
+            # « sait » (pas du document). Utile quand le document n'épuise
+            # pas une notion (ex: « Laïcité » détectée, mais on veut couvrir
+            # son application dans le service public au-delà du document).
+            with st.expander("🧠 Compléter avec la base de connaissance du modèle (sans document)", expanded=False):
+                st.caption(
+                    "⚠️ Les questions générées ici proviennent de la **base de connaissance du modèle LLM**, "
+                    "pas de votre document. Elles seront étiquetées comme telles dans la liste et les exports. "
+                    "**Relisez-les avant utilisation pédagogique.**"
+                )
+
+                # Mini-dialogue de cadrage (formulaire — on évite la machine
+                # à états du mode libre pour rester intégré au flow document).
+                _llm_kb_topic_options = ["(Saisir un sujet libre)"]
+                _active_notions = [n for n in (st.session_state.notions or []) if n.enabled]
+                _llm_kb_topic_options += [f"📚 {n.title}" for n in _active_notions]
+
+                _llm_kb_choice = st.selectbox(
+                    "Sujet du quiz LLM",
+                    options=_llm_kb_topic_options,
+                    key="llm_kb_topic_choice",
+                    help="Choisissez une notion détectée pour des questions générales sur cette notion, "
+                         "ou saisissez un sujet libre.",
+                )
+
+                if _llm_kb_choice == "(Saisir un sujet libre)":
+                    _llm_kb_topic = st.text_input(
+                        "Sujet libre",
+                        key="llm_kb_topic_free",
+                        placeholder="Ex : L'application de la laïcité dans le service public",
+                    )
+                    _llm_kb_selected_notion = None
+                else:
+                    _llm_kb_selected_notion = next(
+                        (n for n in _active_notions if f"📚 {n.title}" == _llm_kb_choice), None
+                    )
+                    _llm_kb_topic = _llm_kb_selected_notion.title if _llm_kb_selected_notion else ""
+                    if _llm_kb_selected_notion:
+                        st.caption(f"📖 *{_llm_kb_selected_notion.description}*")
+
+                _llm_kb_context = st.text_area(
+                    "Périmètre / précisions (optionnel)",
+                    key="llm_kb_context",
+                    height=70,
+                    placeholder=(
+                        "Décrivez ce que vous attendez : public visé, type de situation, "
+                        "angle d'analyse... Ex : « Cas concrets en collectivité territoriale, "
+                        "axé pratique professionnelle ».\n\n"
+                        "Inspirez-vous du mode libre pour clarifier vos intentions."
+                    ),
+                )
+
+                _kb_c1, _kb_c2, _kb_c3 = st.columns(3)
+                with _kb_c1:
+                    _kb_n_facile = st.number_input("Facile", min_value=0, max_value=20, value=0, key="llm_kb_n_facile")
+                with _kb_c2:
+                    _kb_n_moyen = st.number_input("Moyen", min_value=0, max_value=20, value=3, key="llm_kb_n_moyen")
+                with _kb_c3:
+                    _kb_n_difficile = st.number_input("Difficile", min_value=0, max_value=20, value=0, key="llm_kb_n_difficile")
+
+                _kb_total = _kb_n_facile + _kb_n_moyen + _kb_n_difficile
+                _kb_btn_disabled = (not _llm_kb_topic.strip()) or (_kb_total == 0)
+
+                if st.button(
+                    f"🧠 Générer {_kb_total} question(s) sur la base de connaissance LLM",
+                    key="llm_kb_generate_btn",
+                    disabled=_kb_btn_disabled,
+                    width='stretch',
+                    type="primary",
+                ):
+                    with st.spinner("🧠 Génération via la base de connaissance du modèle…"):
+                        try:
+                            _kb_difficulty_counts = {
+                                "facile": int(_kb_n_facile),
+                                "moyen": int(_kb_n_moyen),
+                                "difficile": int(_kb_n_difficile),
+                            }
+                            _kb_targeted_notions = [_llm_kb_selected_notion] if _llm_kb_selected_notion else []
+                            _kb_quiz = generate_quiz_from_llm_knowledge(
+                                topic=_llm_kb_topic,
+                                notions=_kb_targeted_notions,
+                                additional_context=_llm_kb_context,
+                                difficulty_counts=_kb_difficulty_counts,
+                                num_choices=2 if vrai_faux_mode else int(num_choices),
+                                num_correct=1 if vrai_faux_mode else (int(num_correct) if not variable_correct else 1),
+                                model=selected_model,
+                                batch_mode=batch_mode,
+                                enable_thinking=st.session_state.get("enable_thinking", True),
+                                vrai_faux=vrai_faux_mode,
+                            )
+                            # Ajouter les questions au quiz courant (accumulation)
+                            quiz.questions.extend(_kb_quiz.questions)
+                            for _new_q in _kb_quiz.questions:
+                                st.session_state._quiz_changelog.append({
+                                    "action": "🧠 Ajout via base LLM",
+                                    "index": len(quiz.questions),
+                                    "before": None,
+                                    "after": {
+                                        "question": _new_q.question,
+                                        "correct_answers": list(_new_q.correct_answers),
+                                        "source": LLM_KNOWLEDGE_SOURCE,
+                                    },
+                                })
+                            _invalidate_download_cache()
+                            increment_stats(questions=len(_kb_quiz.questions))
+                            st.success(
+                                f"✅ {len(_kb_quiz.questions)} question(s) ajoutée(s) au quiz "
+                                f"(source : base de connaissance LLM)."
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Erreur génération LLM : {e}")
 
             # ─── Ajout manuel de question ──────────────────────────────────
             with st.expander("➕ Ajouter une question manuellement", expanded=False):

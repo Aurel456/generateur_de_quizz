@@ -90,9 +90,10 @@ class Exercise:
     difficulty_level: str = "moyen"
     related_notions: List[str]
     exercise_type: str = "calcul" # "calcul" | "trou" | "cas_pratique"
-    blanks: List[dict]            # Pour type "trou"
-    sub_questions: List[dict]     # Pour type "cas_pratique"
+    blanks: List[dict]            # Pour type "trou" (v5: items contiennent `accepted_answers: List[str]` et `pedagogical_note: str`)
+    sub_questions: List[dict]     # Pour type "cas_pratique" (v5: items contiennent `feedback: str`)
     sub_parts: List[dict]         # Multi-questions calcul
+    pedagogical_comment: str = "" # v5 — commentaire pédagogique global (objectifs, notions évaluées, pièges)
 
 # generation/notion_detector.py:16
 @dataclass
@@ -179,7 +180,7 @@ Internes streaming : `_execute_completion_stream()`, `_execute_responses_stream(
 
 **`generation/exercise_generator.py`** : `generate_exercises()`, `generate_exercises_from_chunk()`, `_build_exercise_prompt()`, `_verify_exercise_with_agent()`, `_verify_exercise_direct()`, `_correct_exercise_with_llm()`, `_verify_and_correct_exercise()`
 
-**`generation/notion_detector.py`** : `detect_notions()`, `detect_notions_and_acronyms()` (prompt combiné notions + acronymes inconnus en un seul appel LLM par chunk, retourne `(List[Notion], List[dict])`), `edit_notions_with_llm()`, `merge_similar_notions()`, `notions_to_prompt_text()`, `normalize_notion_title()`, `match_notion_title()`, `validate_related_notions()` (fuzzy match SequenceMatcher, seuil 0.85)
+**`generation/notion_detector.py`** : `detect_notions()`, `detect_notions_and_acronyms()` (prompt combiné notions + acronymes inconnus en un seul appel LLM par chunk, retourne `(List[Notion], List[dict])`), `edit_notions_with_llm()`, `merge_similar_notions()`, `notions_to_prompt_text()`, `normalize_notion_title()`, `match_notion_title()`, `validate_related_notions()` (fuzzy match SequenceMatcher, seuil 0.85), `_merge_notions_protected()` (v5 — empêche le LLM de supprimer des notions détectées dans des chunks précédents, fuzzy match 0.85 pour enrichir titre/description/pages au lieu de remplacer)
 
 **`generation/acronym_detector.py`** : `load_acronym_reference(path)`, `detect_acronyms_from_text(chunks, reference)` (regex contre dict de référence), `edit_acronyms_with_llm()`, `acronyms_to_prompt_text()` (bloc "ACRONYMES DU DOMAINE" injecté dans prompts quiz/exercices)
 
@@ -187,7 +188,7 @@ Internes streaming : `_execute_completion_stream()`, `_execute_responses_stream(
 
 **`generation/chunk_selector.py`** : `select_relevant_chunks(chunks, notions, user_context, model, max_chunks)` — filtre LLM des chunks pertinents selon le `user_context` (venant du classifieur) et les notions actives (titre + description + source_document + source_pages passés au LLM).
 
-**`generation/chat_mode.py`** : `init_session()`, `process_user_message()`, `generate_notions_from_chat()`, `extract_generation_config()`, `generate_quiz_direct()`, `generate_exercises_direct()`
+**`generation/chat_mode.py`** : `init_session()`, `process_user_message()`, `generate_notions_from_chat()`, `extract_generation_config()`, `generate_quiz_direct()` (paramètre `vrai_faux` v5), `generate_exercises_direct()`, `generate_quiz_from_llm_knowledge()` (v5 — wrapper sans document : marque `source_document = LLM_KNOWLEDGE_SOURCE`, `metadata.from_llm_knowledge = True`). Constante `LLM_KNOWLEDGE_SOURCE = "Base de connaissance du modèle LLM"`.
 
 **`generation/quiz_verifier.py`** : `verify_quiz()`, `_verify_question_with_llm()`, `_reformulate_question()`
 
@@ -372,7 +373,10 @@ Les générations successives s'ajoutent aux exercices existants (`st.session_st
 - **7 onglets en mode document** : Exports / Notions / Quiz / Exercices / Analytics / Aperçu texte / Guide.
 - Sidebar : sélecteur de mode (Document / Libre) + liens pages (Ateliers, Sessions Partagées) + stats globales.
 - **Personas domaine** : sélecteur DGFiP (8 domaines) + Générique + Personnalisé (`core/personas.py`).
-- **Humour** : toggle dans config quiz, ajoute une mauvaise réponse décalée par question.
+- **Humour** (v5) : toggle dans config quiz. L'humour peut désormais toucher la BONNE réponse aussi (ne plus marquer une mauvaise réponse comme « la blague »). Les distracteurs restent des leurres plausibles (ni trop proches, ni trop loin de la bonne réponse).
+- **Mode Vrai/Faux** ✅❌ (v5) : toggle dans config quiz qui force `num_choices=2`, `num_correct=1`, `choices = {"A": "Vrai", "B": "Faux"}`. Désactive les autres options de format. Propagé via le paramètre `vrai_faux: bool` à `generate_quiz`, `generate_quiz_from_chunk`, `_build_quiz_prompt`, `generate_quiz_direct`, `generate_quiz_from_llm_knowledge`. Le LLM produit alors des AFFIRMATIONS à juger (pas des questions interrogatives).
+- **Slider nombre de choix** (v5) : 2 à 6 choix au lieu de 4 à 7.
+- **Quiz sur la base de connaissance LLM** 🧠 (v5) : section en bas de l'onglet Quiz. Toggle `vrai_faux_mode` propagé. Sélection notion détectée OU sujet libre + champ contexte additionnel (mini-dialogue inspiré du mode libre). Questions générées étiquetées `source_document = LLM_KNOWLEDGE_SOURCE` ("Base de connaissance du modèle LLM") + badge ⚠️ orange dans l'affichage des questions du quiz pour signaler la source. Le formateur peut accumuler ces questions au quiz courant.
 - **Accumulation quiz** : les générations s'ajoutent au quiz existant (bouton Réinit. pour remettre à zéro).
 - **Notions manquantes** : bouton dédié "🎯 Notions manquantes" pour générer uniquement sur les notions non couvertes.
 - **Acronymes** : section dédiée dans l'onglet Notions. Détection **automatique à l'upload** (regex contre `reference_data/acronyms.json`), enrichissement **combiné** avec la détection des notions (le bouton "Détecter les notions" produit notions + acronymes inconnus en un seul appel LLM par chunk). Définition libre-éditable via `st.text_input` (suggestions alternatives en `st.caption`). Glossaire injecté dans les prompts quiz/exercices, exporté en HTML, visible côté participant (expander), et persisté dans `acronyms_json` / `draft_acronyms_json`.
@@ -452,6 +456,8 @@ _ACRONYMS_PATH = _PROJECT_ROOT / "reference_data" / "acronyms.json"
 
 - **Modifier les prompts quiz** : `quiz_generator.py` — `QUIZ_DEFAULT_PERSONA` (persona), `QUIZ_FIXED_RULES` (règles fixes), `_build_quiz_prompt()` prend `persona`, `existing_questions`, `variable_correct`.
 - **Modifier les prompts exercices** : `exercise_generator.py` — `EXERCISE_DEFAULT_PERSONA`, `EXERCISE_FIXED_RULES_BY_TYPE`, `DEFAULT_EXERCISE_PROMPTS` / `DEFAULT_EXERCISE_PROMPTS_TROU` / `DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE` (instructions par niveau uniquement). `_build_exercise_prompt()` prend `persona` et `exercise_type`.
+- **Reformulation QCM (v5)** : `quiz_verifier.py::_reformulate_question` reçoit la question complète (énoncé, choix, bonnes réponses, explication, citation, notions, difficulté) + le chunk source + `QUIZ_FIXED_RULES_DISPLAY`. Reformule globalement (énoncé + choix + explication + citation). Met à jour la citation aussi.
+- **Notions protégées (v5)** : `notion_detector.py::_merge_notions_protected(existing, returned)` — toujours appelé après `_parse_notions_response` dans `detect_notions()` et `detect_notions_and_acronyms()`. Empêche le LLM d'oublier une notion détectée précédemment.
 - **Amélioration IA d'une question** : `generation/question_editor.py` → `improve_question_with_llm(question, instruction, source_text, model)`.
 - **Ajouter un format de fichier** : modifier `document_processor.py` et les extensions acceptées dans `app.py`.
 - **Modifier les exports** : `quiz_exporter.py` + `templates/quiz_template.html`. Pour les nouveaux types d'exercices, adapter l'affichage dans `quiz_exporter.py`.
