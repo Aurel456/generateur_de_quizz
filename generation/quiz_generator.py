@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 import logging
 
-from core.llm_service import call_llm_json, call_llm_vision_json, call_llm_json_stream, count_tokens, MODEL_CONTEXT_WINDOW
+from core.llm_service import call_llm_json, call_llm_vision_json, call_llm_vision_payload_json, call_llm_json_stream, count_tokens, MODEL_CONTEXT_WINDOW
 from core.models import validate_quiz_question, QuizResponseModel
 from processing.document_processor import TextChunk
 from typing import TYPE_CHECKING
@@ -158,9 +158,15 @@ RÈGLES STRICTES :
    Les choix de réponse ne doivent PAS être en doublon au sein d'une même question.
 7. Pour chaque question, précise la PAGE EXACTE de la source
 8. Le niveau de difficulté est : {difficulty}
-9. INTERDIT : N'utilise JAMAIS de formulations comme "selon le texte", "d'après le document",
-   "dans le passage", "le texte mentionne", "l'auteur affirme", etc.
-   Chaque question doit être auto-suffisante et fournir tout le contexte nécessaire dans son énoncé.
+9. INTERDIT — RÈGLE FONDAMENTALE : N'utilise JAMAIS de formulations qui supposeraient que
+   l'étudiant a le document sous les yeux. CECI EST CRITIQUE car l'étudiant N'A PAS ACCÈS
+   au document source au moment du quiz : il répond avec ses connaissances acquises pendant
+   la formation. Sont donc strictement INTERDITS dans l'énoncé ET les choix :
+   « selon le texte », « d'après le document », « dans le passage », « le texte mentionne »,
+   « l'auteur affirme », « comme indiqué dans... », « tel qu'écrit dans... »,
+   « le document précise », « ce passage indique », « il est mentionné », « il est dit ».
+   Chaque question doit être auto-suffisante et intégrer DANS l'énoncé tout le contexte
+   nécessaire (nom propre, date, situation concrète, dispositif visé...).
 10. LANGUE : Rédige toutes les questions et réponses en français. Conserve les termes techniques,
     sigles, noms propres et dénominations officielles dans leur format d'origine (ex : TVA, CGI, DGFIP,
     arrêté du X, article L. 123-4...). Ne les traduis pas et ne les reformule pas.
@@ -338,7 +344,9 @@ def generate_quiz_from_chunk(
         return streamed_questions
     else:
         # Mode classique
-        if vision_mode and chunk.page_images:
+        if vision_mode and getattr(chunk, "qwen_payload", None):
+            result = call_llm_vision_payload_json(system_prompt, user_prompt, chunk.qwen_payload, model=model, temperature=0.6, enable_thinking=enable_thinking)
+        elif vision_mode and chunk.page_images:
             result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.6, enable_thinking=enable_thinking)
         else:
             result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.6, enable_thinking=enable_thinking)
@@ -479,8 +487,9 @@ def generate_quiz(
                     user_instructions=user_instructions,
                 )
                 custom_id = f"quiz_{diff_name}_{idx}"
-                images = chunk.page_images if (vision_mode and chunk.page_images) else None
-                target_model = (VISION_MODEL_NAME or model or MODEL_NAME) if (vision_mode and images) else (model or MODEL_NAME)
+                payload = chunk.qwen_payload if (vision_mode and getattr(chunk, "qwen_payload", None)) else None
+                images = chunk.page_images if (vision_mode and not payload and chunk.page_images) else None
+                target_model = (VISION_MODEL_NAME or model or MODEL_NAME) if (vision_mode and (images or payload)) else (model or MODEL_NAME)
 
                 batch_requests.append(BatchRequest(
                     custom_id=custom_id,
@@ -489,6 +498,7 @@ def generate_quiz(
                     model=target_model,
                     temperature=0.6,
                     images=images,
+                    qwen_payload=payload,
                 ))
                 task_map[custom_id] = (chunk, diff_name)
 

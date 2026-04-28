@@ -151,9 +151,20 @@ Les notions fondamentales sont :
 - Les formules et méthodes fondamentales
 - Les idées directrices et concepts structurants du document
 
+RÈGLE DE COHÉRENCE THÉMATIQUE (priorité absolue) :
+Les notions retenues doivent être DIRECTEMENT en lien avec le THÈME PRINCIPAL du document
+(identifiable par son titre, son introduction, sa progression). Tu DOIS ÉCARTER :
+- les digressions, exemples illustratifs ponctuels, citations de comparaison ;
+- les termes techniques qui apparaissent en passant sans être enseignés comme objet du cours ;
+- les concepts d'autres disciplines mentionnés en analogie.
+Avant de retenir une notion, demande-toi : « Cette notion serait-elle évaluée dans un examen
+final portant sur le sujet de ce document ? ». Si la réponse est non → ne la retiens pas.
+Exemple concret : dans un cours « Journée civique et citoyenne », « caryotype » ou « trisomie 21 »
+ne sont PAS des notions fondamentales, même s'ils figurent dans une slide d'exemple.
+
 RÈGLES :
-1. CONSERVE toutes les notions existantes (tu peux enrichir leur description si le nouveau texte apporte des précisions)
-2. AJOUTE les nouvelles notions identifiées dans ce passage
+1. CONSERVE toutes les notions existantes (tu peux enrichir leur description si le nouveau texte apporte des précisions). Tu n'as PAS le droit d'en supprimer une — un post-traitement protégera de toute façon les anciennes.
+2. AJOUTE les nouvelles notions identifiées dans ce passage UNIQUEMENT si elles passent le test de cohérence thématique ci-dessus.
 3. FUSIONNE les notions redondantes ou similaires
 4. Chaque notion doit avoir un titre concis et une description claire
 5. Cite le document source et les pages où la notion apparaît
@@ -355,9 +366,17 @@ def _build_combined_detection_prompt(
 1. La liste mise à jour des NOTIONS FONDAMENTALES (concepts, définitions, théorèmes, principes clés).
 2. Les ACRONYMES/SIGLES présents dans ce passage qui ne sont PAS déjà connus.
 
+RÈGLE DE COHÉRENCE THÉMATIQUE (priorité absolue pour les notions) :
+Les notions retenues doivent être DIRECTEMENT en lien avec le THÈME PRINCIPAL du document.
+Écarte toute digression, exemple illustratif ponctuel ou terme apparaissant en passant sans
+être enseigné comme objet du cours. Test : « Cette notion serait-elle évaluée dans un examen
+portant sur le sujet de ce document ? » — si non, ne la retiens pas.
+(Exemple : dans un cours « Journée civique et citoyenne », « caryotype » n'est PAS une notion
+fondamentale, même s'il apparaît dans une slide d'exemple.)
+
 RÈGLES POUR LES NOTIONS :
-1. CONSERVE toutes les notions existantes (enrichis leur description si utile)
-2. AJOUTE les nouvelles notions identifiées dans ce passage
+1. CONSERVE toutes les notions existantes (enrichis leur description si utile). Ne supprime aucune notion existante — un post-traitement protégera de toute façon les anciennes.
+2. AJOUTE les nouvelles notions identifiées dans ce passage UNIQUEMENT si elles passent le test de cohérence thématique
 3. FUSIONNE les notions redondantes ou similaires
 4. Chaque notion doit avoir un titre concis et une description claire
 5. Cite le document source et les pages

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 from core.llm_service import call_llm_json, count_tokens, MODEL_NAME
-from generation.quiz_generator import Quiz, QuizQuestion
+from generation.quiz_generator import Quiz, QuizQuestion, QUIZ_FIXED_RULES_DISPLAY
 from processing.document_processor import TextChunk
 
 logger = logging.getLogger(__name__)
@@ -113,61 +113,101 @@ def _reformulate_question(
     enable_thinking: bool = True,
 ) -> QuizQuestion:
     """
-    Le LLM reformule la question pour que les bonnes réponses soient
-    clairement identifiables à partir du document source.
+    Reformule globalement la question : énoncé, choix, explication, citation
+    et notions liées, en passant au LLM le chunk source, l'ensemble des règles
+    de génération, et la question complète actuelle.
+
+    Cœur de la refonte v5 : la question doit rester répondable PAR UN ÉTUDIANT
+    QUI N'A PAS ACCÈS AU DOCUMENT — donc on bannit toute référence au texte
+    source dans l'énoncé et les choix. La reformulation utilise le chunk
+    UNIQUEMENT pour s'assurer que la bonne réponse correspond effectivement à
+    une connaissance enseignée, jamais comme prétexte d'une question
+    auto-référentielle.
     """
     choices_text = "\n".join(
         f"  {label}. {text}" for label, text in question.choices.items()
     )
+    notions_str = ", ".join(question.related_notions) if question.related_notions else "(non renseigné)"
 
-    system_prompt = """Tu es un expert en création de QCM. Une question a été mal comprise par un étudiant IA.
-Tu dois reformuler la question ET les choix de réponse pour que la bonne réponse soit
-clairement identifiable à partir du document source, tout en restant pédagogique.
+    system_prompt = f"""Tu es un expert en création de QCM pédagogiques.
 
-RÈGLES :
-1. La question reformulée doit couvrir le même sujet/notion
-2. Les bonnes réponses doivent rester les mêmes labels (ex: si A était correct, A reste correct)
-3. Reformule l'énoncé pour qu'il soit plus clair et sans ambiguïté
-4. Ajuste les choix de réponse si nécessaire (les mauvaises réponses doivent être clairement fausses)
-5. Mets à jour l'explication
-6. La question doit rester auto-suffisante (pas de référence au document)
-7. FORMULATION OBLIGATOIRE : Le champ 'question' DOIT être une véritable question interrogative
-   grammaticalement correcte. Elle DOIT se terminer par un point d'interrogation « ? » et commencer
-   par un mot interrogatif (Que, Quel, Quelle, Comment, Pourquoi, Combien, Lequel, Dans quel cas...)
-   ou être une phrase affirmative suivie de « ? » qui demande clairement quelque chose.
-   INTERDIT : tronçon de phrase, consigne impérative, titre nominal, fragment sans verbe.
-   Exemples INTERDITS : « Les délais de prescription », « Calcul de la TVA », « Concernant l'article 123 ».
-   Exemples CORRECTS : « Quel est le délai de prescription applicable en matière de ... ? »,
-   « Dans quel cas la TVA s'applique-t-elle à taux réduit ? »
-8. CLARTÉ : Ne tronque pas la question, ne laisse pas de phrase incomplète. L'énoncé doit être
-   compréhensible et exploitable tel quel, sans devinette.
+CONTEXTE — POURQUOI ON REFORMULE :
+Une IA-étudiante (qui simule un humain ayant suivi la formation) a tenté de répondre à la
+question en s'appuyant sur le document source ET sur ses connaissances générales du domaine.
+Elle a échoué. Cela signifie que la question :
+  • soit contient une AMBIGUÏTÉ qui rend plusieurs choix défendables,
+  • soit FAIT RÉFÉRENCE AU TEXTE (« selon le document », « dans le passage »...) alors que
+    l'étudiant final n'a PAS le document sous les yeux au moment du quiz,
+  • soit attend un détail qui n'est pas réellement enseigné par le contenu cité,
+  • soit a des distracteurs (mauvaises réponses) trop ambigus.
 
-FORMAT DE RÉPONSE (JSON strict) :
-{
+Ta mission : reformuler GLOBALEMENT cette question pour la rendre AUTONOME et NON-AMBIGUË.
+
+RÈGLE FONDAMENTALE (cœur de la reformulation) :
+La question doit pouvoir être répondue par un étudiant qui a SUIVI LA FORMATION mais qui
+N'A PAS ACCÈS AU DOCUMENT au moment où il répond. L'énoncé contient donc tout le contexte
+nécessaire et n'utilise jamais de tournures qui supposent que l'étudiant lit le passage.
+
+INTERDICTIONS ABSOLUES dans l'énoncé et les choix :
+  • « selon le texte », « d'après le document », « dans le passage », « le texte mentionne »,
+    « l'auteur affirme », « comme indiqué dans », « tel qu'écrit », « le document précise »
+  • toute formulation qui supposerait que l'étudiant a le passage sous les yeux
+
+RÈGLES DE REFORMULATION :
+1. Conserve le SUJET et la NOTION testée (`related_notions`) — c'est la même connaissance.
+2. Les LABELS des bonnes réponses sont préservés : si A était correct, A reste correct
+   (mais le contenu textuel du choix A peut changer pour être plus clair).
+3. Reformule l'énoncé pour qu'il soit auto-suffisant : tout le contexte nécessaire est
+   intégré DANS l'énoncé (un nom propre, une date, une situation concrète).
+4. Les distracteurs (mauvaises réponses) doivent être plausibles mais clairement fausses
+   pour qui maîtrise la notion — pas de pièges syntaxiques, pas d'ambiguïtés.
+5. Mets à jour l'EXPLICATION pour qu'elle reflète la nouvelle formulation et reste
+   pédagogiquement utile (pourquoi la bonne réponse est correcte, pourquoi les autres
+   sont fausses).
+6. Mets à jour la CITATION du passage source si la reformulation s'éloigne de la citation
+   d'origine. Garde une citation EXACTE du chunk fourni si possible.
+7. Conserve la difficulté ({question.difficulty_level or 'non renseignée'}).
+8. FORMULATION OBLIGATOIRE : Le champ 'question' DOIT être une véritable question
+   interrogative (point d'interrogation final, mot interrogatif ou verbe conjugué).
+   INTERDIT : titre nominal (« Les délais de prescription »), fragment, consigne impérative.
+9. CLARTÉ : pas de phrase tronquée, énoncé exploitable seul.
+
+RAPPEL DES RÈGLES DE QUALITÉ DU QCM (issues du générateur) :
+{QUIZ_FIXED_RULES_DISPLAY}
+
+FORMAT DE RÉPONSE (JSON strict — uniquement ces champs) :
+{{
     "question": "Question reformulée se terminant par un point d'interrogation ?",
-    "choices": {"A": "Choix A reformulé", "B": "Choix B reformulé"},
+    "choices": {{"A": "Choix A reformulé", "B": "Choix B reformulé"}},
     "correct_answers": ["A"],
-    "explanation": "Explication mise à jour..."
-}"""
+    "explanation": "Explication détaillée mise à jour : pourquoi la bonne réponse est correcte ET pourquoi chaque mauvaise réponse est fausse.",
+    "citation": "Citation exacte du passage source qui justifie la bonne réponse (ou citation existante si toujours pertinente)."
+}}"""
 
-    user_prompt = f"""DOCUMENT SOURCE :
+    user_prompt = f"""CHUNK SOURCE (référentiel — l'étudiant ne l'a PAS au moment du quiz) :
 ---
 {source_text}
 ---
 
-QUESTION ORIGINALE :
-{question.question}
-
-CHOIX ORIGINAUX :
+QUESTION ACTUELLE À REFORMULER (tous les champs) :
+- Énoncé : {question.question}
+- Choix :
 {choices_text}
+- Bonnes réponses attendues : {question.correct_answers}
+- Explication actuelle : {question.explanation or '(vide)'}
+- Citation actuelle : {question.citation or '(vide)'}
+- Difficulté : {question.difficulty_level or '(non précisée)'}
+- Notions liées : {notions_str}
 
-BONNES RÉPONSES ATTENDUES : {question.correct_answers}
+DIAGNOSTIC DE L'ÉCHEC :
+L'IA-étudiante a répondu {llm_answers} au lieu de {question.correct_answers}.
+Son raisonnement : {llm_reasoning or '(non fourni)'}
 
-RÉPONSE DE L'ÉTUDIANT IA : {llm_answers}
-RAISONNEMENT DE L'ÉTUDIANT : {llm_reasoning}
-
-L'étudiant a répondu {llm_answers} au lieu de {question.correct_answers}.
-Reformule la question et les choix pour éliminer l'ambiguïté."""
+TÂCHE :
+Reformule globalement la question (énoncé + choix + explication + citation) pour que
+l'étudiant final, SANS le document mais avec la formation, puisse identifier sans
+ambiguïté la bonne réponse. Conserve les labels des bonnes réponses, la difficulté
+et la notion testée."""
 
     result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.4, enable_thinking=enable_thinking)
 
@@ -179,7 +219,7 @@ Reformule la question et les choix pour éliminer l'ambiguïté."""
         source_pages=question.source_pages,
         difficulty_level=question.difficulty_level,
         source_document=question.source_document,
-        citation=question.citation,
+        citation=result.get("citation", question.citation),
         related_notions=question.related_notions,
     )
 
