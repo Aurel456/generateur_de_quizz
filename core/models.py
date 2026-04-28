@@ -67,12 +67,15 @@ class BlankModel(BaseModel):
     position: int
     answer: str
     context: str = ""
+    accepted_answers: List[str] = []  # Variantes lexicales acceptables (v5)
+    pedagogical_note: str = ""        # Justification pédagogique du blanc (v5)
 
 
 class SubQuestionModel(BaseModel):
     """Validation d'une sous-question de cas pratique."""
     question: str
     answer: str
+    feedback: str = ""  # Commentaire pédagogique court par sous-question (v5)
 
 
 class SubPartModel(BaseModel):
@@ -100,6 +103,8 @@ class ExerciseModel(BaseModel):
     sub_questions: List[SubQuestionModel] = []
     # Multi-questions (calcul avec Q1, Q2...)
     sub_parts: List[SubPartModel] = []
+    # Commentaire pédagogique global de l'exercice (v5)
+    pedagogical_comment: str = ""
 
     @model_validator(mode="after")
     def normalize_source_pages(self):

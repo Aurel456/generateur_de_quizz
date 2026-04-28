@@ -21,6 +21,7 @@ import logging
 from core.llm_service import (
     call_llm_json,
     call_llm_vision_json,
+    call_llm_vision_payload_json,
     count_tokens,
     OPENAI_API_BASE,
     OPENAI_API_KEY,
@@ -50,6 +51,7 @@ EXERCISE_JSON_FORMAT = """FORMAT DE RÉPONSE (JSON strict) :
                 "Étape 3 : Calculer le résultat..."
             ],
             "correction": "Correction détaillée avec explications pédagogiques...",
+            "pedagogical_comment": "Commentaire pédagogique global : ce que l'exercice évalue (notion, méthode), erreurs classiques à éviter, lien avec la progression du cours.",
             "verification_code": "# Code Python COMPLET\\n# Étape 1 : Données\\ndonnee_1 = 100\\ndonnee_2 = 0.425\\n# Étape 2 : Calcul\\nresult = donnee_1 * donnee_2\\nprint(f'Résultat: {{result}}')",
             "citation": "Citation exacte du passage du texte qui inspire l'exercice...",
             "source_page": 1,
@@ -78,12 +80,13 @@ EXERCISE_JSON_FORMAT_TROU = """FORMAT DE RÉPONSE (JSON strict) :
 {{
     "exercises": [
         {{
-            "statement": "Texte de l'exercice avec des blancs indiqués par _____. Ex: Le délai de _____ est de _____ jours.",
+            "statement": "Énoncé qui FAIT RAISONNER : décrit une situation, puis demande de mobiliser la notion. Ex: « Un agent public est sanctionné après avoir affiché ses convictions religieuses au guichet. Le principe juridique mobilisé pour justifier la sanction est celui de _____, qui impose à tout agent une obligation de _____ dans l'exercice de ses fonctions. »",
             "blanks": [
-                {{"position": 1, "answer": "recours", "context": "Le délai de [BLANC] est de _____ jours."}},
-                {{"position": 2, "answer": "30", "context": "Le délai de _____ est de [BLANC] jours."}}
+                {{"position": 1, "answer": "laïcité", "accepted_answers": ["laïcité", "laicite", "neutralité religieuse"], "context": "Le principe juridique mobilisé pour justifier la sanction est celui de [BLANC]", "pedagogical_note": "Mobilise la notion de laïcité du service public (et non la liberté de conscience)."}},
+                {{"position": 2, "answer": "neutralité", "accepted_answers": ["neutralité", "réserve"], "context": "qui impose à tout agent une obligation de [BLANC]", "pedagogical_note": "Distingue la neutralité (devoir d'expression) de la simple discrétion."}}
             ],
-            "correction": "Correction détaillée expliquant chaque réponse...",
+            "correction": "Correction détaillée et pédagogique : pour chaque blanc, énonce la notion attendue, explique le raisonnement (à partir du contexte donné), et précise le piège pédagogique évité.",
+            "pedagogical_comment": "Commentaire pédagogique global : ce que cet exercice évalue, à quel moment du cours il s'inscrit, et quelles confusions fréquentes il aide à dissiper.",
             "citation": "Citation exacte du passage du texte qui inspire l'exercice...",
             "source_page": 1,
             "related_notions": ["Titre notion 1"]
@@ -97,10 +100,11 @@ EXERCISE_JSON_FORMAT_CAS_PRATIQUE = """FORMAT DE RÉPONSE (JSON strict) :
         {{
             "statement": "Contexte complet du cas pratique (situation, données, contexte réglementaire si applicable)...",
             "sub_questions": [
-                {{"question": "Question 1 ?", "answer": "Réponse développée à la question 1..."}},
-                {{"question": "Question 2 ?", "answer": "Réponse développée à la question 2..."}}
+                {{"question": "Question 1 ?", "answer": "Réponse développée à la question 1...", "feedback": "Commentaire pédagogique pour cette sous-question : notion mobilisée, raisonnement attendu, erreur fréquente."}},
+                {{"question": "Question 2 ?", "answer": "Réponse développée à la question 2...", "feedback": "..."}}
             ],
-            "correction": "Correction globale et commentaires pédagogiques sur l'ensemble du cas...",
+            "correction": "Correction globale et commentaires pédagogiques détaillés (par sous-question) — explique pourquoi chaque réponse est correcte.",
+            "pedagogical_comment": "Commentaire pédagogique global de l'exercice : objectifs visés, notions évaluées, lien avec la progression du cours, pièges classiques.",
             "verification_code": "# Code Python de vérification des calculs (OPTIONNEL, seulement si des calculs sont demandés)\\n# Étape 1 : Données\\nbase = 50000\\ntaux = 0.2\\n# Étape 2 : Calcul\\nresult = base * taux\\nprint(f'Résultat: {{result}}')",
             "citation": "Citation exacte du passage du texte qui inspire le cas...",
             "source_page": 1,
@@ -133,23 +137,39 @@ RÈGLES (appliquées automatiquement) :
 6. Variable 'result' pour le résultat final
 7. Page exacte et citation du passage source
 8. print() pour chaque étape intermédiaire
-9. 'related_notions' avec les titres exacts des notions couvertes"""
+9. 'related_notions' avec les titres exacts des notions couvertes
+10. Champ "pedagogical_comment" : commentaire pédagogique global (notion évaluée, méthode attendue, erreurs classiques à éviter, lien avec le cours)"""
 
 EXERCISE_FIXED_RULES_TROU = """CONTEXTE IMPORTANT :
 Les étudiants ne possèdent PAS le document source au moment de l'exercice.
 Chaque exercice doit être AUTONOME.
 INTERDIT ABSOLU dans l'énoncé : toute référence au document source.
 
+PRINCIPE PÉDAGOGIQUE (cœur de la refonte) :
+Une question à trou DOIT évaluer la mobilisation d'une NOTION, pas la mémoire d'un mot
+exact ou la complétion syntaxique d'une phrase. L'attention de l'étudiant doit porter
+sur LE RAISONNEMENT (« quelle notion correspond à cette situation ? »), pas sur la
+syntaxe (« quel mot précis manque dans cette phrase ? »).
+Conséquences :
+- L'énoncé décrit une SITUATION, un RAISONNEMENT, ou un MÉCANISME ; le blanc porte sur
+  la notion, le principe ou la valeur à identifier.
+- Plusieurs formulations équivalentes doivent être acceptées via `accepted_answers` (liste).
+- Inclure un `pedagogical_note` par blanc : pourquoi cette notion, quel piège elle évite.
+- Inclure un `pedagogical_comment` global pour l'exercice.
+
 RÈGLES (appliquées automatiquement) :
 1. Blancs matérialisés par _____ dans l'énoncé
-2. Chaque blanc = un terme, une valeur ou une notion clé
+2. Chaque blanc = une NOTION, un PRINCIPE, ou une valeur clé du cours (jamais un mot grammatical anodin)
 3. Entre 2 et 5 blancs par exercice
 4. Blancs sur des informations importantes, pas anecdotiques
 5. Champ "context" avec [BLANC] à la place du terme manquant
-6. Page exacte et citation du passage source
-7. 'related_notions' avec les titres exacts des notions couvertes
-8. L'énoncé doit fournir SUFFISAMMENT DE CONTEXTE pour répondre sans le document
-9. Au minimum 3 phrases, dont au moins une phrase de contexte SANS blanc"""
+6. Champ "accepted_answers" : liste de variantes lexicales équivalentes (ex: ["laïcité", "neutralité religieuse"])
+7. Champ "pedagogical_note" par blanc : justification pédagogique courte (notion mobilisée + piège évité)
+8. Page exacte et citation du passage source
+9. 'related_notions' avec les titres exacts des notions couvertes
+10. L'énoncé doit fournir SUFFISAMMENT DE CONTEXTE SITUATIONNEL pour que l'étudiant puisse mobiliser la notion sans le document
+11. Au minimum 3 phrases, dont au moins une phrase de mise en situation SANS blanc avant la phrase à compléter
+12. Champ "pedagogical_comment" : commentaire pédagogique global de l'exercice (objectifs, notions évaluées, confusions fréquentes dissipées)"""
 
 EXERCISE_FIXED_RULES_CAS_PRATIQUE = """CONTEXTE IMPORTANT :
 Les étudiants ne possèdent PAS le document source au moment de l'exercice.
@@ -162,10 +182,12 @@ RÈGLES (appliquées automatiquement) :
 3. Entre 2 et 4 sous-questions progressives
 4. Analyse, calcul ou argumentation demandée
 5. Correction complète et pédagogique par sous-question
-6. Page exacte et citation du passage source
-7. 'related_notions' avec les titres exacts des notions couvertes
-8. Pour les sous-questions avec calculs, fournir un verification_code Python avec les étapes arithmétiques (PAS de code arbitraire)
-9. Le code doit stocker le résultat final dans 'result' et afficher chaque étape avec print()"""
+6. Champ "feedback" par sous-question : commentaire pédagogique court (notion mobilisée, raisonnement attendu, erreur fréquente)
+7. Champ "pedagogical_comment" global : objectifs visés, notions évaluées, lien avec la progression du cours
+8. Page exacte et citation du passage source
+9. 'related_notions' avec les titres exacts des notions couvertes
+10. Pour les sous-questions avec calculs, fournir un verification_code Python avec les étapes arithmétiques (PAS de code arbitraire)
+11. Le code doit stocker le résultat final dans 'result' et afficher chaque étape avec print()"""
 
 # Dict pour accéder aux règles fixes par type
 EXERCISE_FIXED_RULES_BY_TYPE = {
@@ -182,17 +204,29 @@ Les étudiants suivent une formation mais ne possèdent PAS le document source a
 Chaque exercice doit être AUTONOME.
 INTERDIT ABSOLU dans l'énoncé : toute référence au document source.
 
+PRINCIPE PÉDAGOGIQUE — la question à trou doit faire MOBILISER UNE NOTION, pas compléter une syntaxe :
+L'attention doit porter sur le RAISONNEMENT (« quelle notion correspond à cette situation ? »),
+PAS sur la mémoire d'un mot exact ou la complétion grammaticale d'une phrase. C'est la
+critique principale faite aux questions à trou classiques : elles évaluent la mémoire de
+surface plutôt que la compréhension. Évite-le en construisant des situations qui forcent
+l'étudiant à reconnaître la notion à mobiliser.
+
 RÈGLES POUR LES QUESTIONS À TROU :
-1. L'énoncé est une ou plusieurs phrases avec des blancs matérialisés par _____
-2. Chaque blanc correspond à un terme, une valeur ou une notion clé du cours
-3. Il doit y avoir entre 2 et 5 blancs par exercice
-4. Les blancs doivent porter sur des informations importantes, pas des détails anecdotiques
-5. Le champ "context" de chaque blanc montre la phrase avec [BLANC] à la place du terme manquant
-6. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte
-7. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes
-8. L'énoncé doit fournir SUFFISAMMENT DE CONTEXTE pour que l'étudiant puisse répondre sans le document.
-   Chaque phrase à trou doit être entourée de phrases explicatives qui donnent le cadre nécessaire (définitions, exemples, contexte).
-9. L'exercice doit comporter au minimum 3 phrases, dont au moins une phrase de contexte SANS blanc avant les phrases à compléter.
+1. L'énoncé décrit une SITUATION, un MÉCANISME ou un RAISONNEMENT (pas juste une phrase de cours à recopier).
+2. Les blancs sont matérialisés par _____ et portent sur des NOTIONS / PRINCIPES / valeurs clés — jamais sur un mot grammatical anodin.
+3. Il doit y avoir entre 2 et 5 blancs par exercice.
+4. Champ "context" de chaque blanc : la phrase avec [BLANC] à la place du terme manquant.
+5. Champ "accepted_answers" de chaque blanc : LISTE de variantes lexicales équivalentes
+   acceptables (ex: ["laïcité", "neutralité religieuse"]). Le champ "answer" reste la
+   formulation principale.
+6. Champ "pedagogical_note" par blanc : justification pédagogique courte expliquant
+   POURQUOI cette notion (et quel piège on évite, ex: confusion avec une notion proche).
+7. Champ "pedagogical_comment" pour l'exercice : commentaire pédagogique global (objectif,
+   notions évaluées, confusions classiques à dissiper).
+8. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte.
+9. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes.
+10. L'énoncé doit fournir SUFFISAMMENT DE CONTEXTE SITUATIONNEL pour que l'étudiant puisse mobiliser la notion sans le document.
+11. Au minimum 3 phrases, dont au moins une de mise en situation SANS blanc avant les phrases à compléter.
 {notions_block}"""
 
 _COMMON_RULES_CAS_PRATIQUE = """
@@ -243,9 +277,21 @@ RÈGLES :
 # ── Instructions par difficulté (éditables par le formateur) ─────────────────
 
 DEFAULT_EXERCISE_PROMPTS_TROU = {
-    "facile": "NIVEAU FACILE : Les blancs portent sur des définitions simples, des termes clés ou des valeurs directement mentionnées dans le texte.",
-    "moyen": "NIVEAU MOYEN : Les blancs portent sur des concepts importants, des conditions ou des articulations logiques du cours.",
-    "difficile": "NIVEAU DIFFICILE : Les blancs portent sur des nuances, des exceptions, des conditions précises ou des articulations complexes entre notions.",
+    "facile": (
+        "NIVEAU FACILE : Mise en situation simple suivie d'un blanc qui demande d'identifier "
+        "la notion ou le principe directement mobilisé. Évite de faire copier un terme exact "
+        "du cours — privilégie la reconnaissance de la notion à partir d'un exemple concret."
+    ),
+    "moyen": (
+        "NIVEAU MOYEN : Situation nécessitant de relier une description à la notion mobilisée, "
+        "ou d'identifier la condition d'application d'un principe. Le blanc porte sur l'articulation "
+        "logique entre le contexte et la notion."
+    ),
+    "difficile": (
+        "NIVEAU DIFFICILE : Situation impliquant une nuance, une exception, ou la distinction "
+        "entre deux notions proches. Le blanc force à choisir précisément la bonne notion parmi "
+        "des notions concurrentes (la `pedagogical_note` doit expliciter le piège évité)."
+    ),
 }
 
 DEFAULT_EXERCISE_PROMPTS_CAS_PRATIQUE = {
@@ -303,6 +349,7 @@ class Exercise:
     blanks: List[dict] = field(default_factory=list)  # Pour type "trou"
     sub_questions: List[dict] = field(default_factory=list)  # Pour type "cas_pratique"
     sub_parts: List[dict] = field(default_factory=list)  # Multi-questions (Q1, Q2...) pour calcul
+    pedagogical_comment: str = ""  # Commentaire pédagogique global (objectifs, notions évaluées, pièges)
 
 
 def _get_langchain_llm(model: Optional[str] = None):
@@ -819,6 +866,7 @@ def _parse_exercises(
                     exercise_type="trou",
                     verified=False,
                     verification_output="",
+                    pedagogical_comment=validated.get("pedagogical_comment", ""),
                 )
             elif exercise_type == "cas_pratique":
                 exercise = Exercise(
@@ -835,6 +883,7 @@ def _parse_exercises(
                     exercise_type="cas_pratique",
                     verified=False,
                     verification_output="",
+                    pedagogical_comment=validated.get("pedagogical_comment", ""),
                 )
             else:
                 exercise = Exercise(
@@ -851,6 +900,7 @@ def _parse_exercises(
                     related_notions=validated.get("related_notions", []),
                     exercise_type="calcul",
                     sub_parts=validated.get("sub_parts", []),
+                    pedagogical_comment=validated.get("pedagogical_comment", ""),
                 )
             exercises.append(exercise)
         except Exception as e:
@@ -922,7 +972,9 @@ def generate_exercises_from_chunk(
         )
 
         try:
-            if vision_mode and chunk.page_images:
+            if vision_mode and getattr(chunk, "qwen_payload", None):
+                result = call_llm_vision_payload_json(system_prompt, user_prompt, chunk.qwen_payload, model=model, temperature=0.5, enable_thinking=enable_thinking)
+            elif vision_mode and chunk.page_images:
                 result = call_llm_vision_json(system_prompt, user_prompt, chunk.page_images, model=model, temperature=0.5, enable_thinking=enable_thinking)
             else:
                 result = call_llm_json(system_prompt, user_prompt, model=model, temperature=0.5, enable_thinking=enable_thinking)
@@ -1053,8 +1105,9 @@ def generate_exercises(
                 existing_exercises_text=prior_text,
             )
             custom_id = f"exercise_{diff_name}_{idx}"
-            images = chunk.page_images if (vision_mode and chunk.page_images) else None
-            target_model = (VISION_MODEL_NAME or model or MODEL_NAME) if (vision_mode and images) else (model or MODEL_NAME)
+            payload = chunk.qwen_payload if (vision_mode and getattr(chunk, "qwen_payload", None)) else None
+            images = chunk.page_images if (vision_mode and not payload and chunk.page_images) else None
+            target_model = (VISION_MODEL_NAME or model or MODEL_NAME) if (vision_mode and (images or payload)) else (model or MODEL_NAME)
 
             batch_requests.append(BatchRequest(
                 custom_id=custom_id,
@@ -1063,6 +1116,7 @@ def generate_exercises(
                 model=target_model,
                 temperature=0.5,
                 images=images,
+                qwen_payload=payload,
             ))
             task_map[custom_id] = (chunk, diff_name, n_ex)
 

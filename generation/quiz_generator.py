@@ -178,7 +178,16 @@ RÈGLES STRICTES :
 {"12. Pour chaque question, indique dans 'related_notions' le(s) titre(s) exact(s) des notions fondamentales couvertes par cette question. Utilise les titres tels qu'ils apparaissent dans la liste des notions. N'invente JAMAIS une notion qui ne figure pas dans la liste fournie." if notions_text else ""}
 {"13. NOTIONS PAR QUESTION : Chaque question doit couvrir UNE SEULE notion à la fois. Le champ 'related_notions' doit contenir exactement 1 élément. Ne mélange pas plusieurs notions dans une même question." if (notions_text and not notion_mixing) else ""}
 {"13bis. NOTIONS PAR QUESTION : Chaque question doit être centrée sur UNE notion dominante. Le champ 'related_notions' contient 1 notion (cas le plus fréquent), exceptionnellement 2 si la question articule réellement deux notions liées, et JAMAIS plus de 3. Ne surcharge pas le champ avec toutes les notions tangentes : ne retiens que celles qui sont effectivement testées par la question." if (notions_text and notion_mixing) else ""}
-{"14. HUMOUR : Pour chaque question, rends exactement UN choix parmi les mauvaises réponses légèrement humoristique ou décalé, tout en restant professionnel et pertinent par rapport au domaine." if humor else ""}
+{'''14. HUMOUR & LEURRES PLAUSIBLES : Pour chaque question, ajoute une touche d'humour subtil
+    en travaillant la formulation des choix (énoncé un peu décalé, exemple absurde mais
+    cohérent avec le domaine). L'humour PEUT toucher la BONNE réponse aussi : un libellé
+    avec un trait d'esprit, un clin d'œil culturel, une mise en situation amusante mais
+    EXACTE — tant qu'il reste la bonne réponse.
+    PRINCIPE PÉDAGOGIQUE : les distracteurs doivent rester des LEURRES PLAUSIBLES :
+    ni trop proches de la bonne réponse (sinon ambigu), ni trop loin (sinon évidents).
+    Surtout, NE PAS rendre la mauvaise réponse évidente en la marquant comme « la blague » :
+    l'humour ne doit pas servir d'indice pour éliminer un choix. Reste professionnel,
+    factuellement correct sur le contenu testé, et adapté au domaine.''' if humor else ""}
 {notions_block}{acronyms_block}{f"""
 
 QUESTIONS DÉJÀ GÉNÉRÉES — À NE PAS DUPLIQUER NI PARAPHRASER :
