@@ -33,6 +33,9 @@ class TextChunk:
     token_count: int = 0
     source_document: str = ""
     page_images: List[str] = field(default_factory=list)  # base64 images pour vision
+    # Payload multimodal Qwen (séquence texte + image_url) pré-formaté par un parser externe.
+    # Quand non-vide, remplace la construction text + page_images côté appel LLM.
+    qwen_payload: List[Any] = field(default_factory=list)
 
 
 def _extract_from_pdf(file: BinaryIO) -> List[dict]:

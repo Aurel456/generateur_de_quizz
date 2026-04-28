@@ -959,6 +959,83 @@ def call_llm_vision_json(
     )
 
 
+def call_llm_vision_payload(
+    system_prompt: str,
+    user_prompt: str,
+    payload: List[dict],
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.7,
+    retries: int = 3,
+    enable_thinking: bool = False,
+) -> str:
+    """
+    Appel vision avec un payload multimodal pré-formaté (liste d'items
+    {"type": "text"|"image_url", ...}) — typiquement issu d'un parser externe.
+
+    Le prompt utilisateur est injecté en tête du contenu, suivi du payload.
+    """
+    target_model = model or VISION_MODEL_NAME or MODEL_NAME
+
+    user_content: List[dict] = [{"type": "text", "text": user_prompt}]
+    user_content.extend(payload)
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+    return _execute_completion(
+        messages=messages,
+        model=target_model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        retries=retries,
+        enable_thinking=enable_thinking,
+        caller_name="call_llm_vision_payload",
+    )
+
+
+def call_llm_vision_payload_json(
+    system_prompt: str,
+    user_prompt: str,
+    payload: List[dict],
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: float = 0.5,
+    retries: int = 3,
+    enable_thinking: bool = False,
+) -> dict:
+    """Version JSON de `call_llm_vision_payload` avec retry et parsing résilient."""
+    json_system = system_prompt + (
+        "\n\nIMPORTANT: Tu DOIS répondre UNIQUEMENT avec un objet JSON valide. "
+        "Pas de texte avant ou après le JSON. Pas de bloc markdown."
+    )
+
+    last_raw = None
+    for attempt in range(retries):
+        try:
+            raw = call_llm_vision_payload(
+                json_system, user_prompt, payload, model, max_tokens, temperature,
+                retries=2, enable_thinking=enable_thinking,
+            )
+        except Exception as e:
+            print(f"LLM vision payload call failed (attempt {attempt + 1}/{retries}): {e}")
+            continue
+
+        last_raw = raw
+        parsed = _parse_json_response(raw)
+        if parsed is not None:
+            return parsed
+
+        print(f"JSON parse failed (vision payload attempt {attempt + 1}/{retries}), retrying...")
+
+    raise ValueError(
+        f"Impossible de parser la réponse JSON (vision payload) après {retries} tentatives.\n"
+        f"Dernière réponse brute :\n{(last_raw or '')[:500]}"
+    )
+
+
 def get_model_info(model: Optional[str] = None) -> dict:
     """Retourne les informations sur le modèle configuré."""
     return {

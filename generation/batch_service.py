@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
-from core.llm_service import call_llm_json, call_llm_vision_json
+from core.llm_service import call_llm_json, call_llm_vision_json, call_llm_vision_payload_json
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ class BatchRequest:
     temperature: float = 0.5
     max_tokens: Optional[int] = None
     images: Optional[List[str]] = None  # base64 images pour vision
+    qwen_payload: Optional[List[dict]] = None  # payload multimodal pré-formaté (parser API)
     enable_thinking: bool = True
 
 
@@ -41,7 +42,17 @@ def _execute_single_request(req: BatchRequest, max_retries: int = 2) -> tuple:
     last_error = None
     for attempt in range(max_retries + 1):
         try:
-            if req.images:
+            if req.qwen_payload:
+                result = call_llm_vision_payload_json(
+                    system_prompt=req.system_prompt,
+                    user_prompt=req.user_prompt,
+                    payload=req.qwen_payload,
+                    model=req.model,
+                    max_tokens=req.max_tokens,
+                    temperature=req.temperature,
+                    enable_thinking=req.enable_thinking,
+                )
+            elif req.images:
                 result = call_llm_vision_json(
                     system_prompt=req.system_prompt,
                     user_prompt=req.user_prompt,
