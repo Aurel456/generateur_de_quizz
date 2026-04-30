@@ -171,8 +171,20 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.popover("🏷️ v4.2"):
+with st.popover("🏷️ v5"):
     st.markdown("""
+**Nouveautés v5 :**
+- **Mode Vrai/Faux :** nouveau type de question activable par toggle (remplace les 4 choix QCM par vrai/faux)
+- **Nombre de choix configurable :** slider 2 à 6 options par question QCM
+- **Quiz sur base de connaissance LLM :** génération sans document, en mode libre (chat)
+- **Leurres humoristiques :** option pour générer des distracteurs décalés et mémorables
+- **Refonte des exercices à trou :** meilleure sélection des blancs, options plus plausibles
+- **Commentaire pédagogique :** explication contextuelle générée pour chaque exercice
+- **Ancrage thématique des notions :** les notions sont mieux rattachées aux questions (1 dominante max)
+- **Reformulation QCM améliorée :** garde-fou de forme interrogative renforcé, rollback automatique si non conforme
+- **Fixes acronymes :** widgets basés sur l'identité de l'acronyme, purge des clés orphelines
+- **Fix notions disparues :** les notions sont correctement préservées entre les runs
+
 **Nouveautés v4.2 :**
 - **Qualité des quiz améliorée :** instructions du formateur injectées en tête de prompt (prioritaires, non diluées)
 - **Anti-extrapolation :** le LLM ne peut plus affirmer qu'un article/dispositif « n'existe pas » s'il n'est pas dans le passage
@@ -423,25 +435,13 @@ with st.sidebar:
         )
         if vision_enabled:
             st.info(
-                "📸 Le Mode Vision analyse les pages comme **images**. "
+                "📸 Le Mode Vision analyse les pages comme **images** via le parser MinerU. "
                 "Recommandé pour les documents avec **tableaux, schémas ou formules**.\n\n"
                 "⏱️ Augmente le temps de traitement de **2 à 5×** par rapport au mode texte."
             )
-            vision_sub = st.radio(
-                "Sous-mode vision",
-                ["Images seules", "Images + Texte"],
-                horizontal=True,
-                label_visibility="collapsed",
-                help=(
-                    "**Images seules** : envoie uniquement les images au modèle vision.\n\n"
-                    "**Images + Texte** : envoie les images ET le texte extrait de chaque page."
-                ),
-            )
-            vision_text_mode = vision_sub == "Images + Texte"
-
             parser_api_enabled = st.toggle(
                 "Utiliser le parser API (MinerU)",
-                value=False,
+                value=True,
                 key="parser_api_toggle",
                 help=(
                     "Envoie les documents à un service externe qui produit un payload "
@@ -454,6 +454,7 @@ with st.sidebar:
             if parser_api_enabled:
                 from processing.parser_api import PARSER_API_URL as _PARSER_URL
                 st.caption(f"🔌 Endpoint : `{_PARSER_URL}`")
+            vision_text_mode = parser_api_enabled
         else:
             st.caption("💡 Activez ce mode si votre document contient des tableaux, diagrammes ou formules.")
             st.caption("⚠️ Attention : le temps de traitement des documents est plus long")
