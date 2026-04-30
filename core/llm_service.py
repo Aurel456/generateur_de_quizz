@@ -3,14 +3,15 @@ llm_service.py — Client OpenAI pour gtp-oss-120b avec gestion des tokens, retr
 cache SHA256 et tracking des tokens.
 """
 
+import hashlib
 import json
 import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Callable, Dict, Generator, List, Optional, Tuple
 
-import tiktoken
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
@@ -67,6 +68,36 @@ SYSTEM_PROMPT_MARGIN = 500
 RESPONSE_TOKEN_RATIO = 0.3
 
 # Encodeur tiktoken (configurable via TIKTOKEN_ENCODING dans .env)
+# Mode offline : tiktoken télécharge normalement le fichier .tiktoken depuis
+# openaipublic.blob.core.windows.net et le met en cache sous SHA1(url). On
+# pré-remplit ce cache avec le fichier bundlé pour les serveurs sans accès web.
+_TIKTOKEN_ENCODING_URLS = {
+    "cl100k_base": "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken",
+    "o200k_base": "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken",
+}
+
+
+def _setup_tiktoken_offline_cache() -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    bundled = project_root / f"{TIKTOKEN_ENCODING}.tiktoken"
+    if not bundled.exists():
+        return
+    url = _TIKTOKEN_ENCODING_URLS.get(TIKTOKEN_ENCODING)
+    if not url:
+        return
+    cache_dir = project_root / "tiktoken_cache"
+    cache_dir.mkdir(exist_ok=True)
+    cache_key = hashlib.sha1(url.encode()).hexdigest()
+    cache_file = cache_dir / cache_key
+    if not cache_file.exists():
+        cache_file.write_bytes(bundled.read_bytes())
+    os.environ["TIKTOKEN_CACHE_DIR"] = str(cache_dir)
+
+
+_setup_tiktoken_offline_cache()
+
+import tiktoken  # noqa: E402  (import après configuration du cache offline)
+
 _encoder = tiktoken.get_encoding(TIKTOKEN_ENCODING)
 
 # Client OpenAI
