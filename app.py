@@ -2353,7 +2353,7 @@ if app_mode == "📄 Depuis un document":
                     for idx, entry in enumerate(reversed(changelog)):
                         action = entry["action"]
                         q_num = entry["index"]
-                        before = entry.get("before", {})
+                        before = entry.get("before") or {}
                         after = entry.get("after")
 
                         st.markdown(f"**{action}** — Question {q_num}")
@@ -2361,6 +2361,9 @@ if app_mode == "📄 Depuis un document":
                         if after is None:
                             # Supprimée
                             st.markdown(f"> ~~{before.get('question', '')}~~")
+                        elif not before:
+                            # Ajout (pas d'état avant)
+                            st.markdown(f"> ➕ {after.get('question', '')}")
                         else:
                             before_text = before.get("question", "")
                             after_text = after.get("question", "")
