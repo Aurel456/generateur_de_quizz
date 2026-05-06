@@ -340,6 +340,22 @@ Le module `exercise_verifier.py` gère la boucle vérifier → reformuler (max 3
 
 Les générations successives s'ajoutent aux exercices existants (`st.session_state.exercises + new`). Bouton "Effacer tout" pour réinitialiser. Même logique pour le mode document et le mode libre.
 
+### Édition et ajout manuel d'exercices (v5.1)
+
+- **Édition** : `_render_exercise_card()` (app.py) bascule en mode édition quand `st.session_state._editing_exercise_idx == idx`. La fonction `_render_exercise_edit_form()` rend le formulaire (énoncé, difficulté, notions, correction, citation, `pedagogical_comment`) + champs spécifiques au type :
+  - `calcul` → `expected_answer`
+  - `trou` → liste de `blanks` éditables (position / answer / context)
+  - `cas_pratique` → liste de `sub_questions` éditables (question / answer)
+  - Sauvegarde via `dataclasses.replace()`. Suppression directe via le bouton 🗑️.
+- **Ajout manuel** : expander "➕ Ajouter un exercice manuellement" placé entre le bouton de génération et la liste — fonctionne sans génération préalable. Le nouvel exercice est créé avec `Exercise(...)` puis ajouté à `st.session_state.exercises` (initialisé à `[new_ex]` si `None`).
+- Les deux invalident le cache des exports via `_invalidate_download_cache()`.
+
+### Notions — activation en masse (v5.1)
+
+- Boutons "✓ Tout cocher" / "✗ Tout décocher" dans l'onglet Notions, à côté du bouton "Regrouper".
+- Implémentation : itère sur `st.session_state.notions`, modifie `n.enabled`, **purge** les clés `notion_check_{idx}` du `session_state` avant rerun (sinon les widgets checkbox conservent leur valeur précédente).
+- Les boutons sont désactivés selon l'état (tout coché → "Tout cocher" disabled, et inverse).
+
 ### Sessions étudiantes
 
 - **Mode standard** : toutes les questions, scoring direct.

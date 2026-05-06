@@ -171,8 +171,13 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.popover("🏷️ v5"):
+with st.popover("🏷️ v5.1"):
     st.markdown("""
+**Nouveautés v5.1 :**
+- **Notions — boutons "Tout cocher / Tout décocher" :** activez ou désactivez toutes les notions en un clic depuis l'onglet Notions.
+- **Édition des exercices :** chaque exercice (calcul, trou, cas pratique) dispose désormais d'un bouton **✏️ Éditer** pour modifier énoncé, difficulté, notions associées, réponse(s), correction, citation et commentaire pédagogique.
+- **Ajout manuel d'exercices :** expander "➕ Ajouter un exercice manuellement" dans l'onglet Exercices — choix du type, champs adaptatifs (réponse pour calcul / blancs pour trou / sous-questions pour cas pratique).
+
 **Nouveautés v5 :**
 - **Mode Vrai/Faux :** nouveau type de question activable par toggle (remplace les 4 choix QCM par vrai/faux)
 - **Nombre de choix configurable :** slider 2 à 6 options par question QCM
@@ -336,6 +341,8 @@ if "guide_chat_messages" not in st.session_state:
     st.session_state.guide_chat_messages = []
 if "_editing_question_idx" not in st.session_state:
     st.session_state._editing_question_idx = None
+if "_editing_exercise_idx" not in st.session_state:
+    st.session_state._editing_exercise_idx = None
 if "_ai_assist_instruction" not in st.session_state:
     st.session_state._ai_assist_instruction = {}
 if "_quiz_changelog" not in st.session_state:
@@ -1351,9 +1358,25 @@ if app_mode == "📄 Depuis un document":
         if st.session_state.notions is not None:
             notions = st.session_state.notions
             active_count = sum(1 for n in notions if n.enabled)
-            col_meta, col_group = st.columns([4, 1])
+            col_meta, col_uncheck, col_check, col_group = st.columns([3, 1, 1, 1])
             with col_meta:
                 st.markdown(f"**{len(notions)} notion(s) détectée(s)** — {active_count} active(s)")
+            with col_uncheck:
+                if st.button("✗ Tout décocher", width='stretch',
+                             help="Décoche toutes les notions",
+                             disabled=(active_count == 0)):
+                    for _ni, _n in enumerate(st.session_state.notions):
+                        _n.enabled = False
+                        st.session_state.pop(f"notion_check_{_ni}", None)
+                    st.rerun()
+            with col_check:
+                if st.button("✓ Tout cocher", width='stretch',
+                             help="Coche toutes les notions",
+                             disabled=(active_count == len(notions))):
+                    for _ni, _n in enumerate(st.session_state.notions):
+                        _n.enabled = True
+                        st.session_state.pop(f"notion_check_{_ni}", None)
+                    st.rerun()
             with col_group:
                 if st.button("🔗 Regrouper les notions", width='stretch',
                              help="Fusionne les notions similaires ou redondantes entre elles"):
@@ -2600,6 +2623,122 @@ if app_mode == "📄 Depuis un document":
                 progress_bar.empty()
                 st.error(f"❌ Erreur lors de la génération : {str(e)}")
 
+        # ─── Ajout manuel d'un exercice ──────────────────────────────────────
+        with st.expander("➕ Ajouter un exercice manuellement", expanded=False):
+            _add_ex_type_label = st.radio(
+                "Type",
+                ["Calcul numérique", "Questions à trou", "Cas pratique"],
+                horizontal=True,
+                key="add_ex_type",
+            )
+            _add_ex_type_map = {
+                "Calcul numérique": "calcul",
+                "Questions à trou": "trou",
+                "Cas pratique": "cas_pratique",
+            }
+            _add_ex_type = _add_ex_type_map[_add_ex_type_label]
+
+            _add_ex_stmt = st.text_area(
+                "Énoncé", key="add_ex_stmt", height=120,
+                placeholder="Décrivez la situation et la question…",
+            )
+            _add_ex_diff = st.selectbox(
+                "Difficulté", options=["facile", "moyen", "difficile"], index=1, key="add_ex_diff",
+                format_func=lambda d: {"facile": "🟢 Facile", "moyen": "🟡 Moyen", "difficile": "🔴 Difficile"}.get(d, str(d)),
+            )
+
+            _add_ex_notions = []
+            if st.session_state.notions:
+                _all_titles = [n.title for n in st.session_state.notions if n.enabled]
+                _add_ex_notions = st.multiselect(
+                    "Notions associées", options=_all_titles, key="add_ex_notions",
+                )
+
+            _add_ex_expected = ""
+            _add_ex_blanks = []
+            _add_ex_sub_qs = []
+
+            if _add_ex_type == "calcul":
+                _add_ex_expected = st.text_input(
+                    "Réponse attendue (numérique)", key="add_ex_expected",
+                    placeholder="Ex: 1250.50",
+                )
+            elif _add_ex_type == "trou":
+                _add_ex_nb = st.number_input(
+                    "Nombre de blancs", min_value=1, max_value=10, value=1, key="add_ex_nb",
+                )
+                for _bi in range(int(_add_ex_nb)):
+                    _bcols = st.columns([3, 4])
+                    with _bcols[0]:
+                        _b_ans = st.text_input(
+                            f"Réponse blanc #{_bi+1}", key=f"add_ex_b_ans_{_bi}",
+                        )
+                    with _bcols[1]:
+                        _b_ctx = st.text_input(
+                            f"Contexte blanc #{_bi+1}", key=f"add_ex_b_ctx_{_bi}",
+                            placeholder="Ex: nom du principe attendu",
+                        )
+                    if _b_ans:
+                        _add_ex_blanks.append({
+                            "position": _bi + 1,
+                            "answer": _b_ans,
+                            "context": _b_ctx,
+                            "accepted_answers": [_b_ans],
+                            "pedagogical_note": "",
+                        })
+            else:  # cas_pratique
+                _add_ex_nq = st.number_input(
+                    "Nombre de sous-questions", min_value=1, max_value=10, value=2, key="add_ex_nq",
+                )
+                for _si in range(int(_add_ex_nq)):
+                    _sq_q = st.text_area(
+                        f"Sous-question {_si+1}", key=f"add_ex_sq_q_{_si}", height=60,
+                    )
+                    _sq_a = st.text_area(
+                        f"Réponse {_si+1}", key=f"add_ex_sq_a_{_si}", height=60,
+                    )
+                    if _sq_q:
+                        _add_ex_sub_qs.append({
+                            "question": _sq_q,
+                            "answer": _sq_a,
+                            "feedback": "",
+                        })
+
+            _add_ex_corr = st.text_area(
+                "Correction détaillée", key="add_ex_corr", height=80,
+            )
+            _add_ex_cit = st.text_input("Citation source (optionnel)", key="add_ex_cit")
+            _add_ex_ped = st.text_area(
+                "Commentaire pédagogique (optionnel)", key="add_ex_ped", height=60,
+            )
+
+            _can_add_ex = bool(_add_ex_stmt.strip()) and (
+                (_add_ex_type == "calcul" and bool(_add_ex_expected.strip())) or
+                (_add_ex_type == "trou" and len(_add_ex_blanks) > 0) or
+                (_add_ex_type == "cas_pratique" and len(_add_ex_sub_qs) > 0)
+            )
+
+            if st.button("✅ Ajouter l'exercice", key="add_ex_btn", disabled=not _can_add_ex):
+                new_ex = Exercise(
+                    statement=_add_ex_stmt,
+                    expected_answer=_add_ex_expected,
+                    difficulty_level=_add_ex_diff,
+                    related_notions=_add_ex_notions,
+                    correction=_add_ex_corr,
+                    citation=_add_ex_cit,
+                    pedagogical_comment=_add_ex_ped,
+                    exercise_type=_add_ex_type,
+                    blanks=_add_ex_blanks,
+                    sub_questions=_add_ex_sub_qs,
+                )
+                if st.session_state.exercises is None:
+                    st.session_state.exercises = [new_ex]
+                else:
+                    st.session_state.exercises = st.session_state.exercises + [new_ex]
+                _invalidate_download_cache()
+                st.success("✅ Exercice ajouté.")
+                st.rerun()
+
         # Affichage des exercices
         if st.session_state.exercises is not None:
             exercises = st.session_state.exercises
@@ -2627,6 +2766,132 @@ if app_mode == "📄 Depuis un document":
                 text = _re.sub(r'((?:(?:^|\n)[-*•][^\n]*)+)\n([^\n\-\*•])', r'\1\n\n\2', text)
                 return text
 
+            def _render_exercise_edit_form(ex, idx, key_prefix=""):
+                """Formulaire d'édition d'un exercice."""
+                ex_type = getattr(ex, "exercise_type", "calcul")
+                ek = f"{key_prefix}{idx}"
+
+                edit_statement = st.text_area(
+                    "Énoncé", value=ex.statement or "",
+                    key=f"edit_ex_stmt_{ek}", height=140,
+                )
+
+                _diff_options = ["facile", "moyen", "difficile"]
+                _diff_index = _diff_options.index(ex.difficulty_level) if ex.difficulty_level in _diff_options else 1
+                edit_difficulty = st.selectbox(
+                    "Niveau de difficulté", options=_diff_options, index=_diff_index,
+                    key=f"edit_ex_diff_{ek}",
+                    format_func=lambda d: {"facile": "🟢 Facile", "moyen": "🟡 Moyen", "difficile": "🔴 Difficile"}.get(d, str(d)),
+                )
+
+                if st.session_state.notions:
+                    _notion_titles = [n.title for n in st.session_state.notions]
+                    _default_n = [t for t in (ex.related_notions or []) if t in _notion_titles]
+                    edit_notions_list = st.multiselect(
+                        "Notions associées", options=_notion_titles, default=_default_n,
+                        key=f"edit_ex_notions_{ek}",
+                    )
+                else:
+                    edit_notions_list = list(ex.related_notions or [])
+
+                edit_expected_answer = ex.expected_answer or ""
+                edit_blanks = list(ex.blanks or [])
+                edit_sub_questions = list(ex.sub_questions or [])
+
+                if ex_type == "calcul":
+                    edit_expected_answer = st.text_input(
+                        "Réponse attendue (numérique)", value=ex.expected_answer or "",
+                        key=f"edit_ex_ans_{ek}",
+                    )
+                elif ex_type == "trou":
+                    st.markdown("**✏️ Blancs à compléter**")
+                    new_blanks = []
+                    for bi, b in enumerate(ex.blanks or []):
+                        bcols = st.columns([1, 3, 4])
+                        with bcols[0]:
+                            pos = st.number_input(
+                                f"Pos. #{bi+1}", min_value=1,
+                                value=int(b.get("position", bi+1)),
+                                key=f"edit_ex_b_pos_{ek}_{bi}",
+                            )
+                        with bcols[1]:
+                            ans = st.text_input(
+                                f"Réponse #{bi+1}", value=b.get("answer", ""),
+                                key=f"edit_ex_b_ans_{ek}_{bi}",
+                            )
+                        with bcols[2]:
+                            ctx = st.text_input(
+                                f"Contexte #{bi+1}", value=b.get("context", ""),
+                                key=f"edit_ex_b_ctx_{ek}_{bi}",
+                            )
+                        nb = dict(b)
+                        nb["position"] = int(pos)
+                        nb["answer"] = ans
+                        nb["context"] = ctx
+                        new_blanks.append(nb)
+                    edit_blanks = new_blanks
+                elif ex_type == "cas_pratique":
+                    st.markdown("**❓ Sous-questions**")
+                    new_sub_qs = []
+                    for si, sq in enumerate(ex.sub_questions or []):
+                        sq_q = st.text_area(
+                            f"Sous-question {si+1}", value=sq.get("question", ""),
+                            key=f"edit_ex_sq_q_{ek}_{si}", height=60,
+                        )
+                        sq_a = st.text_area(
+                            f"Réponse {si+1}", value=sq.get("answer", ""),
+                            key=f"edit_ex_sq_a_{ek}_{si}", height=60,
+                        )
+                        nsq = dict(sq)
+                        nsq["question"] = sq_q
+                        nsq["answer"] = sq_a
+                        new_sub_qs.append(nsq)
+                    edit_sub_questions = new_sub_qs
+
+                edit_correction = st.text_area(
+                    "Correction détaillée", value=ex.correction or "",
+                    key=f"edit_ex_corr_{ek}", height=100,
+                )
+                edit_citation = st.text_input(
+                    "Citation source", value=ex.citation or "",
+                    key=f"edit_ex_cit_{ek}",
+                )
+                edit_pedagog = st.text_area(
+                    "Commentaire pédagogique", value=ex.pedagogical_comment or "",
+                    key=f"edit_ex_ped_{ek}", height=80,
+                )
+
+                col_save, col_cancel, col_delete = st.columns([2, 2, 1])
+                with col_save:
+                    if st.button("💾 Sauvegarder", key=f"save_ex_{ek}", type="primary"):
+                        from dataclasses import replace as dc_replace
+                        new_ex = dc_replace(
+                            ex,
+                            statement=edit_statement,
+                            expected_answer=edit_expected_answer,
+                            difficulty_level=edit_difficulty,
+                            related_notions=edit_notions_list,
+                            blanks=edit_blanks,
+                            sub_questions=edit_sub_questions,
+                            correction=edit_correction,
+                            citation=edit_citation,
+                            pedagogical_comment=edit_pedagog,
+                        )
+                        st.session_state.exercises[idx] = new_ex
+                        st.session_state._editing_exercise_idx = None
+                        _invalidate_download_cache()
+                        st.rerun()
+                with col_cancel:
+                    if st.button("✖️ Annuler", key=f"cancel_ex_{ek}"):
+                        st.session_state._editing_exercise_idx = None
+                        st.rerun()
+                with col_delete:
+                    if st.button("🗑️", key=f"delete_ex_{ek}", help="Supprimer cet exercice"):
+                        st.session_state.exercises.pop(idx)
+                        st.session_state._editing_exercise_idx = None
+                        _invalidate_download_cache()
+                        st.rerun()
+
             def _render_exercise_card(ex, idx, key_prefix=""):
                 """Affiche une carte d'exercice dans un st.expander."""
                 diff_label = ex.difficulty_level or "moyen"
@@ -2636,10 +2901,15 @@ if app_mode == "📄 Depuis un document":
                     verified_label = "✅ Vérifié (code)" if ex_type == "calcul" else "✅ Vérifié (LLM)"
                 else:
                     verified_label = "⚠️ Non vérifié"
+                is_editing_ex = (st.session_state._editing_exercise_idx == idx)
                 with st.expander(
                     f"{diff_emoji} **Exercice {idx+1}** — {verified_label}",
                     expanded=True
                 ):
+                    if is_editing_ex:
+                        st.markdown("#### ✏️ Édition de l'exercice")
+                        _render_exercise_edit_form(ex, idx, key_prefix)
+                        return
                     if ex.verified:
                         if ex_type == "calcul":
                             st.success("✅ Réponse vérifiée par exécution de code Python")
@@ -2750,6 +3020,17 @@ if app_mode == "📄 Depuis un document":
 
                     if ex.citation:
                         st.markdown(f"📝 **Citation :** *\"{ex.citation}\"*")
+
+                    col_edit_ex, col_del_ex = st.columns([8, 1])
+                    with col_edit_ex:
+                        if st.button("✏️ Éditer", key=f"edit_btn_ex_{key_prefix}{idx}"):
+                            st.session_state._editing_exercise_idx = idx
+                            st.rerun()
+                    with col_del_ex:
+                        if st.button("🗑️", key=f"del_read_ex_{key_prefix}{idx}", help="Supprimer cet exercice"):
+                            st.session_state.exercises.pop(idx)
+                            _invalidate_download_cache()
+                            st.rerun()
 
             # Affichage groupé par type si plusieurs types
             type_labels = {"calcul": "🔢 Calcul", "trou": "✏️ Questions à trou", "cas_pratique": "📋 Cas pratique"}

@@ -44,6 +44,8 @@ Application Streamlit permettant de générer automatiquement des **Quiz QCM** e
 - **Vérification IA pour tous les types** : Boucle vérifier → reformuler (max 3 tentatives) → supprimer, similaire aux QCM. Les exercices à trou et cas pratiques sont aussi vérifiés par le LLM.
 - **Vérification pas à pas** (calcul numérique) : Le code Python affiche chaque étape intermédiaire ; auto-correction LLM si le résultat ne correspond pas.
 - **Accumulation** : Les générations successives s'ajoutent sans écraser les exercices existants. Bouton "Effacer tout" disponible.
+- **Édition interactive des exercices** ✏️ : Bouton "Éditer" sur chaque exercice pour modifier énoncé, difficulté, notions, correction, citation et commentaire pédagogique, ainsi que les champs spécifiques au type (réponse attendue, blancs, sous-questions). Bouton de suppression dédié.
+- **Ajout manuel d'exercice** ➕ : Expander dans l'onglet Exercices pour saisir un exercice à la main (calcul / trou / cas pratique), avec champs adaptatifs.
 - **Retry hybride JSON** : Si le LLM produit un JSON invalide ou incomplet, les items déjà extraits sont conservés et le système relance uniquement pour le nombre manquant (jusqu'à 3 tentatives).
 - **Validation Pydantic** : Les réponses JSON du LLM sont validées par des modèles Pydantic v2 avant traitement.
 
@@ -60,6 +62,7 @@ Application Streamlit permettant de générer automatiquement des **Quiz QCM** e
 
 - **Détection automatique** : L'IA identifie les concepts clés, définitions, théorèmes et principes des documents.
 - **Fusion des notions similaires** : Bouton **"🔗 Regrouper les notions"** — le LLM fusionne automatiquement les notions redondantes.
+- **Activation en masse** : Boutons **"✓ Tout cocher"** / **"✗ Tout décocher"** pour activer ou désactiver l'ensemble des notions en un clic.
 - **Édition interactive** : Activez/désactivez, supprimez ou ajoutez manuellement des notions.
 - **Chat LLM** : Modifiez les notions en langage naturel (ex: *« Ajoute une notion sur les dérivées partielles »*).
 - **Comptage par notion** : Après génération, un badge "3 questions ✅" / "0 questions ⚠️" s'affiche à côté de chaque notion.
@@ -397,6 +400,12 @@ generateur_de_quizz/
 ---
 
 ## 📋 Changelog
+
+### v5.1
+
+- **Notions — Tout cocher / Tout décocher** : deux boutons dans l'onglet Notions à côté du compteur d'actives permettent d'activer ou désactiver toutes les notions en un clic. Le bouton "Tout décocher" est désactivé quand plus aucune notion n'est active, "Tout cocher" l'est quand toutes le sont. Les clés Streamlit `notion_check_*` sont purgées avant rerun pour que les checkboxes reflètent immédiatement le nouvel état.
+- **Édition des exercices** : chaque carte d'exercice (calcul, trou, cas pratique) dispose désormais d'un bouton **✏️ Éditer**. Le formulaire couvre énoncé, difficulté, notions associées, correction, citation et commentaire pédagogique, plus les champs spécifiques au type (réponse attendue pour `calcul` ; blancs avec position/réponse/contexte pour `trou` ; sous-questions pour `cas_pratique`). Bouton **🗑️** pour supprimer.
+- **Ajout manuel d'exercices** : expander "➕ Ajouter un exercice manuellement" dans l'onglet Exercices. Sélecteur de type, champs adaptatifs (nombre de blancs ou de sous-questions configurable), notions associées sélectionnables parmi les notions actives. Le nouvel exercice s'accumule comme les générations existantes.
 
 ### v5
 

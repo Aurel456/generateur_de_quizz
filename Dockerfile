@@ -3,7 +3,7 @@ FROM python:3.12-slim
 
 ENV HTTP_PROXY='http://proxy.infra.dgfip:3128'
 ENV HTTPS_PROXY='http://proxy.infra.dgfip:3128'
-ENV NO_PROXY='localhost,10.156.253.10,100.70.1.199,10.125.47.87,*.rie.gouv.fr,web.assistant-ia-gen-dev-webapp.dgfip.nuage01.fi.francecloud.rie.gouv.fr,forge.dgfip.finances.rie.gouv.fr,pia-exp-back.dev.dgfip,100.70.1.199,forge.dgfip.finances.rie.gouv.fr,nexus-cloud.appli.dgfip'
+ENV NO_PROXY='10.156.226.143,localhost,10.156.253.10,100.70.1.199,10.125.47.87,*.rie.gouv.fr,web.assistant-ia-gen-dev-webapp.dgfip.nuage01.fi.francecloud.rie.gouv.fr,forge.dgfip.finances.rie.gouv.fr,pia-exp-back.dev.dgfip,100.70.1.199,forge.dgfip.finances.rie.gouv.fr,nexus-cloud.appli.dgfip'
 
 RUN apt-get update && apt-get install -y \
     libgl1 \
