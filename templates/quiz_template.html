@@ -505,7 +505,7 @@
             <div class="question-source">
                 📄 Source :
                 {% if q.source_document %}{{ q.source_document }}{% endif %}
-                {% if q.source_pages %} — p. {{ q.source_pages | join(', ') }}{% endif %}
+                {% if q.source_pages %} — p. {{ q.source_pages }}{% endif %}
             </div>
             {% endif %}
         </div>

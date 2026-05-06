@@ -173,7 +173,11 @@ uniquement grâce aux connaissances acquises pendant la formation, SANS avoir le
 6. Les choix de réponse doivent être du même type et de longueur similaire.
    Les mauvaises réponses doivent être des affirmations fausses mais plausibles — pas d'inventions.
    Les choix de réponse ne doivent PAS être en doublon au sein d'une même question.
-7. Pour chaque question, précise la PAGE EXACTE de la source
+7. Pour chaque question, précise dans `source_page` la page exacte de la source —
+   un SEUL entier correspondant au marqueur `[Début Page X]` qui précède le
+   passage qui justifie la bonne réponse. Si plusieurs pages sont strictement
+   nécessaires, utilise plutôt `source_pages` avec la liste minimale (ne JAMAIS
+   lister toutes les pages du chunk pour « être sûr »).
 8. Le niveau de difficulté est : {difficulty}
 9. INTERDIT — RÈGLE FONDAMENTALE : N'utilise JAMAIS de formulations qui supposeraient que
    l'étudiant a le document sous les yeux. CECI EST CRITIQUE car l'étudiant N'A PAS ACCÈS
@@ -259,7 +263,12 @@ def _parse_quiz_questions(
             # Validation Pydantic (normalise source_page → source_pages, vérifie correct_answers ⊆ choices)
             validated = validate_quiz_question(q_data)
 
-            source_pages = validated["source_pages"] if validated["source_pages"] else chunk.source_pages
+            # Si le LLM précise la page, on l'utilise telle quelle. Sinon on
+            # retombe sur l'ensemble des pages du chunk : c'est honnête (la
+            # question vient bien de quelque part dans cette plage) et le
+            # rendu compresse les pages contiguës en plages (ex: « p. 5-10 »)
+            # plutôt que d'énumérer chaque page individuellement.
+            source_pages = validated["source_pages"] if validated["source_pages"] else list(chunk.source_pages)
 
             # Dédoublonner les choix (garder le premier si deux choix identiques)
             choices = validated["choices"]

@@ -223,7 +223,7 @@ RÈGLES POUR LES QUESTIONS À TROU :
    POURQUOI cette notion (et quel piège on évite, ex: confusion avec une notion proche).
 7. Champ "pedagogical_comment" pour l'exercice : commentaire pédagogique global (objectif,
    notions évaluées, confusions classiques à dissiper).
-8. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte.
+8. Pour chaque exercice, précise dans `source_page` la page exacte (un entier, correspondant au marqueur `[Début Page X]` qui contient le passage qui inspire l'exercice). Si plusieurs pages sont strictement nécessaires, utilise `source_pages` avec la liste minimale — ne liste JAMAIS toutes les pages du chunk pour « être sûr » et une CITATION exacte.
 9. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes.
 10. L'énoncé doit fournir SUFFISAMMENT DE CONTEXTE SITUATIONNEL pour que l'étudiant puisse mobiliser la notion sans le document.
 11. Au minimum 3 phrases, dont au moins une de mise en situation SANS blanc avant les phrases à compléter.
@@ -241,7 +241,7 @@ RÈGLES POUR LES CAS PRATIQUES :
 3. Il doit y avoir entre 2 et 4 sous-questions progressives
 4. Les sous-questions doivent demander une analyse, un calcul ou une prise de position argumentée
 5. La correction de chaque sous-question doit être complète et pédagogique
-6. Pour chaque exercice, précise la PAGE EXACTE de la source et une CITATION exacte
+6. Pour chaque exercice, précise dans `source_page` la page exacte (un entier, correspondant au marqueur `[Début Page X]` qui contient le passage qui inspire l'exercice). Si plusieurs pages sont strictement nécessaires, utilise `source_pages` avec la liste minimale — ne liste JAMAIS toutes les pages du chunk pour « être sûr » et une CITATION exacte
 7. Indique dans 'related_notions' le(s) titre(s) exact(s) des notions couvertes
 8. Pour les sous-questions comportant des CALCULS, fournis un champ "verification_code" avec du code Python vérifiant les étapes de calcul.
    NE génère PAS de code Python arbitraire — uniquement les étapes arithmétiques reproduisant le raisonnement.
@@ -267,7 +267,7 @@ RÈGLES :
    Exemple INTERDIT : result = 42.5
    Exemple CORRECT : donnee_1 = 100 ; donnee_2 = 0.425 ; result = donnee_1 * donnee_2
 6. Le code doit stocker le résultat final dans une variable nommée 'result'
-7. Pour chaque exercice, précise la PAGE EXACTE de la source
+7. Pour chaque exercice, précise dans `source_page` la page exacte (un entier, correspondant au marqueur `[Début Page X]` qui contient le passage qui inspire l'exercice). Si plusieurs pages sont strictement nécessaires, utilise `source_pages` avec la liste minimale — ne liste JAMAIS toutes les pages du chunk pour « être sûr »
 8. Inclus une CITATION exacte du passage du texte qui inspire l'exercice
 9. Le code doit afficher chaque étape intermédiaire avec print() pour permettre la vérification pas à pas
    Exemple : print(f'Étape 1 — donnee_1 = {{donnee_1}}') ; print(f'Étape 2 — calcul = {{calcul}}')
@@ -850,7 +850,11 @@ def _parse_exercises(
             # Validation Pydantic (normalise source_page → source_pages)
             validated = validate_exercise(ex_data)
 
-            source_pages = validated["source_pages"] if validated["source_pages"] else chunk.source_pages
+            # Si le LLM précise la page, on l'utilise. Sinon on retombe sur
+            # l'ensemble des pages du chunk : honnête (l'exercice vient bien
+            # de quelque part dans cette plage) et le rendu compresse les
+            # pages contiguës en plages (ex: « p. 5-10 »).
+            source_pages = validated["source_pages"] if validated["source_pages"] else list(chunk.source_pages)
 
             if exercise_type == "trou":
                 exercise = Exercise(

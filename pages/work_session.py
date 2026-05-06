@@ -710,7 +710,8 @@ with tab_notions:
                         if src_doc:
                             parts.append(f"📄 {src_doc}")
                         if src_pages:
-                            parts.append(f"p. {', '.join(str(p) for p in src_pages)}")
+                            from core.page_utils import format_page_ranges
+                            parts.append(f"p. {format_page_ranges(src_pages)}")
                         st.caption(" · ".join(parts))
 
                     col_toggle, col_edit = st.columns([1, 1])

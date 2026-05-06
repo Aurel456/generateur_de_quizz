@@ -40,7 +40,8 @@ def render_source_info(source_document: Optional[str], source_pages: Optional[Li
     if source_document:
         source_parts.append(f"📄 {source_document}")
     if source_pages:
-        source_parts.append(f"p. {', '.join(map(str, source_pages))}")
+        from core.page_utils import format_page_ranges
+        source_parts.append(f"p. {format_page_ranges(source_pages)}")
     if source_parts:
         st.caption(f"Source : {', '.join(source_parts)}")
     return ", ".join(source_parts)

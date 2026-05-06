@@ -338,6 +338,8 @@ def generate_quiz_direct(
     batch_mode: bool = False,
     enable_thinking: bool = True,
     vrai_faux: bool = False,
+    variable_correct: bool = False,
+    max_correct: Optional[int] = None,
 ) -> Quiz:
     """
     Génère un quiz QCM directement à partir du sujet et des notions,
@@ -346,12 +348,18 @@ def generate_quiz_direct(
     `vrai_faux=True` force 2 choix « Vrai / Faux » et 1 bonne réponse, et
     demande au LLM de produire des AFFIRMATIONS à juger plutôt que des
     questions classiques.
+
+    `variable_correct=True` autorise le LLM à choisir 1 à `max_correct`
+    bonnes réponses par question (le nombre varie selon la question).
+    Ignoré si `vrai_faux=True`.
     """
     if vrai_faux:
         num_choices = 2
         num_correct = 1
+        variable_correct = False
     choice_labels = list(string.ascii_uppercase[:num_choices])
     labels_str = ", ".join(choice_labels)
+    effective_max = max_correct if max_correct is not None else (num_choices - 1)
 
     active_notions = [n for n in session.notions if n.enabled]
     notions_list = "\n".join(
@@ -386,7 +394,7 @@ Les questions doivent prioritairement couvrir ces notions fondamentales.
 {vf_block}
 RÈGLES STRICTES :
 1. {"Chaque question est une AFFIRMATION suivie de A. Vrai et B. Faux." if vrai_faux else f"Chaque question doit avoir exactement {num_choices} choix de réponse ({labels_str})"}
-2. Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)
+2. {"Varie le nombre de bonnes réponses entre 1 et " + str(effective_max) + " selon la question. Certaines questions ont 1 seule bonne réponse, d'autres en ont 2 ou plus. Ne mentionne JAMAIS le nombre de bonnes réponses dans l'énoncé." if variable_correct else f"Chaque question doit avoir exactement {num_correct} bonne(s) réponse(s)"}
 3. Chaque question doit inclure une explication de la réponse
 4. Les questions doivent être variées et couvrir différentes notions
 5. Les choix de réponse doivent être du même type et de longueur similaire
@@ -400,7 +408,7 @@ FORMAT DE RÉPONSE (JSON strict) :
         {{
             "question": {'"Affirmation à juger Vrai ou Faux."' if vrai_faux else '"La question posée ?"'},
             "choices": {'{"A": "Vrai", "B": "Faux"}' if vrai_faux else '{' + ", ".join(f'"{l}": "Choix {l}"' for l in choice_labels) + '}'},
-            "correct_answers": {list(choice_labels[:num_correct])},
+            "correct_answers": {('["A"] OU ["A", "C"] OU ["B", "C", "D"]... — choisis 1 à ' + str(effective_max) + ' labels parmi ' + labels_str) if variable_correct else list(choice_labels[:num_correct])},
             "explanation": "Explication détaillée de la bonne réponse...",
             "difficulty_level": "{difficulty}",
             "related_notions": ["Titre notion 1", "Titre notion 2"]
@@ -499,6 +507,8 @@ def generate_quiz_from_llm_knowledge(
     batch_mode: bool = False,
     enable_thinking: bool = True,
     vrai_faux: bool = False,
+    variable_correct: bool = False,
+    max_correct: Optional[int] = None,
 ) -> Quiz:
     """
     Génère un quiz QCM à partir de la BASE DE CONNAISSANCE DU MODÈLE LLM,
@@ -554,6 +564,8 @@ def generate_quiz_from_llm_knowledge(
         batch_mode=batch_mode,
         enable_thinking=enable_thinking,
         vrai_faux=vrai_faux,
+        variable_correct=variable_correct,
+        max_correct=max_correct,
     )
 
     # Marquer chaque question pour le badge UI et l'export.

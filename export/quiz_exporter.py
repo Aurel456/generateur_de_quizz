@@ -10,6 +10,7 @@ from typing import List, Optional
 from jinja2 import Template
 
 from generation.quiz_generator import Quiz
+from core.page_utils import format_page_ranges
 
 # Chemin du template (remonter d'un niveau depuis export/ vers la racine du projet)
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
@@ -67,7 +68,7 @@ def export_quiz_html(quiz: Quiz, acronyms: Optional[list] = None) -> str:
             "difficulty_level": q.difficulty_level or "moyen",
             "source_document": q.source_document or "",
             "citation": q.citation or "",
-            "source_pages": q.source_pages,
+            "source_pages": format_page_ranges(q.source_pages),
             "related_notions": getattr(q, 'related_notions', []) or [],
         })
 
@@ -135,7 +136,7 @@ def export_quiz_csv(quiz: Quiz) -> str:
         row.append(getattr(q, 'difficulty_level', '') or '')
         row.append(_sanitize_csv_field(getattr(q, 'citation', '') or ''))
         row.append(getattr(q, 'source_document', '') or '')
-        row.append(" | ".join(map(str, q.source_pages)))
+        row.append(format_page_ranges(q.source_pages))
         row.append(" | ".join(getattr(q, 'related_notions', []) or []))
         writer.writerow(row)
 
@@ -166,7 +167,7 @@ def export_exercises_csv(exercises: list) -> str:
             "Oui" if ex.verified else "Non",
             _sanitize_csv_field(getattr(ex, 'citation', '') or ''),
             getattr(ex, 'source_document', '') or '',
-            " | ".join(map(str, ex.source_pages)),
+            format_page_ranges(ex.source_pages),
             " | ".join(getattr(ex, 'related_notions', []) or []),
         ]
         writer.writerow(row)
@@ -203,7 +204,7 @@ def export_exercises_html(exercises: list, acronyms: Optional[list] = None) -> s
         if ex.source_document:
             source_parts.append(f"📄 {ex.source_document}")
         if ex.source_pages:
-            source_parts.append(f"p. {', '.join(map(str, ex.source_pages))}")
+            source_parts.append(f"p. {format_page_ranges(ex.source_pages)}")
         if source_parts:
             source_html = f'<p class="source">Source : {", ".join(source_parts)}</p>'
 
@@ -526,7 +527,7 @@ def export_combined_csv(quiz: Optional[Quiz], exercises: Optional[list]) -> str:
             row.append(getattr(q, 'difficulty_level', '') or '')
             row.append(_sanitize_csv_field(getattr(q, 'citation', '') or ''))
             row.append(getattr(q, 'source_document', '') or '')
-            row.append(" | ".join(map(str, q.source_pages)))
+            row.append(format_page_ranges(q.source_pages))
             row.append(" | ".join(getattr(q, 'related_notions', []) or []))
             writer.writerow(row)
         writer.writerow([])
@@ -546,7 +547,7 @@ def export_combined_csv(quiz: Optional[Quiz], exercises: Optional[list]) -> str:
                 "Oui" if ex.verified else "Non",
                 _sanitize_csv_field(getattr(ex, 'citation', '') or ''),
                 getattr(ex, 'source_document', '') or '',
-                " | ".join(map(str, ex.source_pages)),
+                format_page_ranges(ex.source_pages),
                 " | ".join(getattr(ex, 'related_notions', []) or []),
             ]
             writer.writerow(row)

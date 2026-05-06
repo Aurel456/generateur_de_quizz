@@ -177,6 +177,8 @@ with st.popover("🏷️ v5.1"):
 - **Notions — boutons "Tout cocher / Tout décocher" :** activez ou désactivez toutes les notions en un clic depuis l'onglet Notions.
 - **Édition des exercices :** chaque exercice (calcul, trou, cas pratique) dispose désormais d'un bouton **✏️ Éditer** pour modifier énoncé, difficulté, notions associées, réponse(s), correction, citation et commentaire pédagogique.
 - **Ajout manuel d'exercices :** expander "➕ Ajouter un exercice manuellement" dans l'onglet Exercices — choix du type, champs adaptatifs (réponse pour calcul / blancs pour trou / sous-questions pour cas pratique).
+- **Fix : Quiz sur base de connaissance LLM** — le mode "Variable (1 à N)" est désormais respecté (auparavant le LLM était toujours forcé à 1 bonne réponse).
+- **Fix : pages source compressées en plages** — quand le LLM oublie de préciser la page (ou en cite plusieurs), les pages contiguës sont désormais compressées en plages dans l'affichage et les exports (ex: `[5,6,7,9,10]` → `« p. 5-7, 9-10 »`). Plus rien n'est inventé : le fallback reste l'ensemble des pages du chunk, mais le rendu est lisible.
 
 **Nouveautés v5 :**
 - **Mode Vrai/Faux :** nouveau type de question activable par toggle (remplace les 4 choix QCM par vrai/faux)
@@ -1367,7 +1369,10 @@ if app_mode == "📄 Depuis un document":
                              disabled=(active_count == 0)):
                     for _ni, _n in enumerate(st.session_state.notions):
                         _n.enabled = False
-                        st.session_state.pop(f"notion_check_{_ni}", None)
+                        # Forcer la valeur du widget Streamlit avant le rerun :
+                        # un simple pop laisse le checkbox conserver son ancienne
+                        # valeur cochée à l'affichage. Set explicite = unchecked.
+                        st.session_state[f"notion_check_{_ni}"] = False
                     st.rerun()
             with col_check:
                 if st.button("✓ Tout cocher", width='stretch',
@@ -1375,7 +1380,7 @@ if app_mode == "📄 Depuis un document":
                              disabled=(active_count == len(notions))):
                     for _ni, _n in enumerate(st.session_state.notions):
                         _n.enabled = True
-                        st.session_state.pop(f"notion_check_{_ni}", None)
+                        st.session_state[f"notion_check_{_ni}"] = True
                     st.rerun()
             with col_group:
                 if st.button("🔗 Regrouper les notions", width='stretch',
@@ -2154,6 +2159,8 @@ if app_mode == "📄 Depuis un document":
                                 difficulty_counts=_kb_difficulty_counts,
                                 num_choices=2 if vrai_faux_mode else int(num_choices),
                                 num_correct=1 if vrai_faux_mode else (int(num_correct) if not variable_correct else 1),
+                                variable_correct=(not vrai_faux_mode) and variable_correct,
+                                max_correct=int(max_correct) if not vrai_faux_mode else 1,
                                 model=selected_model,
                                 batch_mode=batch_mode,
                                 enable_thinking=st.session_state.get("enable_thinking", True),

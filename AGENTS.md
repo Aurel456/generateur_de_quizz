@@ -356,6 +356,24 @@ Les générations successives s'ajoutent aux exercices existants (`st.session_st
 - Implémentation : itère sur `st.session_state.notions`, modifie `n.enabled`, **purge** les clés `notion_check_{idx}` du `session_state` avant rerun (sinon les widgets checkbox conservent leur valeur précédente).
 - Les boutons sont désactivés selon l'état (tout coché → "Tout cocher" disabled, et inverse).
 
+### Variable correct dans le mode "base de connaissance LLM" (v5.1)
+
+- `generate_quiz_direct()` et `generate_quiz_from_llm_knowledge()` (chat_mode.py) acceptent désormais `variable_correct: bool` et `max_correct: Optional[int]`.
+- Quand `variable_correct=True`, le prompt instruit le LLM de varier le nombre de bonnes réponses entre 1 et `max_correct` (défaut `num_choices - 1`). Le format JSON présente alors un exemple de liste à taille variable.
+- `vrai_faux=True` désactive `variable_correct` (force 1 bonne réponse, 2 choix).
+- app.py passe `variable_correct=(not vrai_faux_mode) and variable_correct` et `max_correct=int(max_correct)` lors de l'appel.
+
+### Source pages — compression en plages (v5.1)
+
+- Nouveau helper `core/page_utils.format_page_ranges(pages)` : compresse les pages contiguës (`[5,6,7,9,10]` → `"5-7, 9-10"`). Tri + déduplication automatiques. Pas de dépendance Streamlit, peut être importé depuis n'importe où.
+- **Principe** : on ne réduit JAMAIS arbitrairement les `source_pages` (rien d'inventé). Quand le LLM omet `source_page`, le fallback dans `_parse_quiz_questions` / `_parse_*_response` reste `list(chunk.source_pages)` — c'est honnête, la question/exercice provient bien d'une de ces pages. La compression au rendu rend l'attribution lisible (« p. 5-12 » au lieu de « p. 5, 6, 7, 8, 9, 10, 11, 12 »).
+- **Lieux d'application** :
+  - `ui/ui_components.render_source_info()` — UI app principale et work_session
+  - `pages/work_session.py` — affichage des notions
+  - `export/quiz_exporter.py` — HTML (via clé `source_pages` passée stringifiée au template), CSV individuels et combinés, exercises HTML inline
+  - `templates/quiz_template.html` — `{{ q.source_pages }}` (déjà formaté côté Python, pas de `| join`)
+- **Prompts** : `quiz_generator._build_quiz_prompt` (règle 7) et `exercise_generator` (règles communes) demandent un entier dans `source_page`, ou une liste minimale dans `source_pages` si plusieurs pages strictement nécessaires — l'interdiction est de lister toutes les pages du chunk « par sécurité ».
+
 ### Sessions étudiantes
 
 - **Mode standard** : toutes les questions, scoring direct.
