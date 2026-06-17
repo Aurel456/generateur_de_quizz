@@ -11,10 +11,7 @@
         "dev": "vite",
         "build": "vite build",
         "preview": "vite preview",
-        "test:unit": "vitest",
-        "type-check": "vue-tsc --noEmit -p tsconfig.vitest.json --composite false",
-        "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-pattern .gitignore",
-        "format": "prettier --write src/"
+        "type-check": "vue-tsc --noEmit -p tsconfig.app.json --composite false"
     },
     "dependencies": {
         "@dgfip/clir-dsfr-components": "^1.5.0",
@@ -28,17 +25,10 @@
         "@tsconfig/node20": "^20.1.4",
         "@types/node": "^20.17.24",
         "@vitejs/plugin-vue": "^5.2.3",
-        "@vue/eslint-config-prettier": "^10.2.0",
-        "@vue/eslint-config-typescript": "^14.5.0",
         "@vue/tsconfig": "^0.7.0",
-        "eslint": "^9.21.0",
-        "eslint-plugin-vue": "^9.33.0",
-        "jiti": "^2.4.2",
-        "prettier": "^3.3.3",
         "rollup-plugin-brotli": "^3.1.0",
         "rollup-plugin-gzip": "^4.0.1",
         "typescript": "^5.8.2",
-        "vite": "^6.2.1",
         "vue-tsc": "^2.2.8"
     },
     "volta": {
