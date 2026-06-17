@@ -1,0 +1,5 @@
+# Couche web ajoutée par le backend. Les dépendances métier (langchain, pdfplumber,
+# tiktoken, PyMuPDF...) proviennent du requirements.txt de la racine du repo.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9

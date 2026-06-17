@@ -1,0 +1,6 @@
+# DGFIP — copier en `.npmrc` pour installer le CLIR depuis le nexus interne.
+registry=https://nexus3.appli.dgfip/repository/npmjs_group/
+proxy=http://proxy.infra.dgfip:3128
+https-proxy=http://proxy.infra.dgfip:3128
+noproxy=nexus3.appli.dgfip
+strict-ssl=false

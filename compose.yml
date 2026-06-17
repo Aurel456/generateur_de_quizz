@@ -1,3 +1,9 @@
+# Migration DSFR (branche dev-dsfr) : 3 services coexistent.
+#   - streamlit : app historique (toutes les fonctionnalités), port 3051
+#   - backend   : API FastAPI réutilisant la logique métier, port 3054
+#   - frontend  : nouvelle UI Vue + DSFR, port 3052
+# Quand la migration sera terminée, le service `streamlit` pourra être retiré.
+
 services:
   streamlit:
     build: .
@@ -8,6 +14,23 @@ services:
     volumes:
       - shared_data:/app/shared_data
 
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    ports:
+      - "3054:8000"
+    volumes:
+      # Partage la même base SQLite de sessions que Streamlit.
+      - shared_data:/app/shared_data
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "3052:8080"
+
 volumes:
   shared_data:
-

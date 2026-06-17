@@ -1,0 +1,47 @@
+{
+    "name": "quizz-front",
+    "description": "Frontend Vue 3 + CLIR DSFR du générateur de quiz (migration DSFR)",
+    "version": "0.1.0",
+    "private": true,
+    "engines": {
+        "node": ">=20.18.x",
+        "npm": ">=10.x.x"
+    },
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "test:unit": "vitest",
+        "type-check": "vue-tsc --noEmit -p tsconfig.vitest.json --composite false",
+        "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-pattern .gitignore",
+        "format": "prettier --write src/"
+    },
+    "dependencies": {
+        "@dgfip/clir-dsfr-components": "^1.5.0",
+        "@dgfip/clir-utils": "1.1.0",
+        "marked": "^17.0.5",
+        "pinia": "^3.0.4",
+        "vue": "^3.5.13",
+        "vue-router": "^4.6.4"
+    },
+    "devDependencies": {
+        "@tsconfig/node20": "^20.1.4",
+        "@types/node": "^20.17.24",
+        "@vitejs/plugin-vue": "^5.2.3",
+        "@vue/eslint-config-prettier": "^10.2.0",
+        "@vue/eslint-config-typescript": "^14.5.0",
+        "@vue/tsconfig": "^0.7.0",
+        "eslint": "^9.21.0",
+        "eslint-plugin-vue": "^9.33.0",
+        "jiti": "^2.4.2",
+        "prettier": "^3.3.3",
+        "rollup-plugin-brotli": "^3.1.0",
+        "rollup-plugin-gzip": "^4.0.1",
+        "typescript": "^5.8.2",
+        "vite": "^6.2.1",
+        "vue-tsc": "^2.2.8"
+    },
+    "volta": {
+        "node": "22.22.0"
+    }
+}

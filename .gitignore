@@ -9,3 +9,10 @@ __pycache__/
 shared_data/
 .pytest_cache
 reference_data/acronyms.json
+
+# Frontend (migration DSFR)
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+frontend/.npmrc

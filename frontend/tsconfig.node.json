@@ -1,0 +1,12 @@
+{
+    "extends": "@tsconfig/node20/tsconfig.json",
+    "include": ["vite.config.*", "vitest.config.*", "env.d.ts"],
+    "compilerOptions": {
+        "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+        "composite": true,
+        "module": "ESNext",
+        "types": ["node"],
+        "noEmit": true,
+        "moduleResolution": "bundler"
+    }
+}
