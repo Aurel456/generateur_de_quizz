@@ -26,6 +26,7 @@ from backend.app.api import (  # noqa: E402
     exercises,
     exports,
     health,
+    jobs,
     notions,
     quiz,
     sessions,
@@ -54,6 +55,7 @@ app.include_router(sessions.router)
 app.include_router(workshops.router)
 app.include_router(chat.router)
 app.include_router(stats.router)
+app.include_router(jobs.router)
 
 
 @app.get("/")

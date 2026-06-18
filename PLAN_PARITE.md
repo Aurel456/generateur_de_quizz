@@ -99,9 +99,18 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 ## Plan par phases (ordre conseillé)
 
 **Phase 1 — Infra & feedback** (débloque tout le reste)
-- [ ] Jobs async + progression (SSE/polling) pour génération, vérification, batch + barres UI
-- [ ] Affichage incrémental des items (on_item)
-- [ ] Persistance doc_store/chat_store (Redis ou disque)
+- [x] Jobs async + progression (polling) pour génération quiz/exercices, détection notions,
+      vérification + barres UI DSFR. Endpoints `POST /…-async` → `job_id` ; suivi via
+      `GET /jobs/{id}` (polling) ou `GET /jobs/{id}/stream` (SSE). Voir `backend/app/jobs.py`,
+      `backend/app/api/jobs.py`, `frontend/src/services/api.ts` (`runJob`),
+      `frontend/src/components/GenerationProgress.vue`.
+- [x] Affichage incrémental des items (on_item) : questions & exercices s'affichent au fil
+      de l'eau (le métier expose `stream=True` + `on_item`, hors mode batch).
+- [ ] Génération en **mode libre (chat)** encore synchrone (`/chat/{id}/generate-quiz`) → à
+      passer en async en Phase 4 (mode libre complet).
+- [ ] Persistance doc_store/chat_store/**job_store** (Redis ou disque) — **différé** : nécessite
+      une décision d'infra (Redis dispo sur le nexus figé ?) ; OK en mono-instance podman pour
+      l'instant. Les 3 stores partagent la même limite mémoire mono-instance.
 
 **Phase 2 — Parité quiz & exercices**
 - [ ] Éditeur de prompts par niveau + règles fixes (quiz & exercices)

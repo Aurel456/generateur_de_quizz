@@ -213,6 +213,54 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return response.json() as Promise<T>;
 }
 
+// ── Tâches asynchrones (jobs) ────────────────────────────────────────────────
+export interface JobStatus {
+    job_id: string;
+    kind: string;
+    status: 'pending' | 'running' | 'done' | 'error' | string;
+    current: number;
+    total: number;
+    message: string;
+    items: Record<string, unknown>[];
+    result: Record<string, unknown> | null;
+    error: string;
+}
+
+/** Callback de progression : reçoit chaque instantané du job (barre + items au fil de l'eau). */
+export type JobProgress = (status: JobStatus) => void;
+
+const JOB_POLL_INTERVAL_MS = 700;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function jsonPost(path: string, body: unknown): Promise<{ job_id: string }> {
+    return request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+}
+
+/**
+ * Lance une tâche asynchrone (`POST …-async` → job_id) puis interroge `GET /jobs/{id}`
+ * jusqu'à `done`/`error`, en notifiant `onProgress` à chaque instantané. Renvoie le
+ * `result` final typé. Le polling est robuste derrière tout reverse-proxy.
+ */
+async function runJob<T>(submitPath: string, body: unknown, onProgress?: JobProgress): Promise<T> {
+    const { job_id } = await jsonPost(submitPath, body);
+    for (;;) {
+        const status = await request<JobStatus>(`/jobs/${encodeURIComponent(job_id)}`);
+        onProgress?.(status);
+        if (status.status === 'done') {
+            return (status.result ?? {}) as T;
+        }
+        if (status.status === 'error') {
+            throw new Error(status.error || 'Échec de la tâche.');
+        }
+        await sleep(JOB_POLL_INTERVAL_MS);
+    }
+}
+
 export const api = {
     uploadDocuments(files: File[], visionMode = false): Promise<UploadResponse> {
         const form = new FormData();
@@ -221,22 +269,15 @@ export const api = {
         return request<UploadResponse>('/documents', { method: 'POST', body: form });
     },
 
-    detectNotions(docId: string): Promise<{ notions: Notion[] }> {
-        return request('/notions/detect', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ doc_id: docId }),
-        });
+    detectNotions(docId: string, onProgress?: JobProgress): Promise<{ notions: Notion[] }> {
+        return runJob('/notions/detect-async', { doc_id: docId }, onProgress);
     },
 
     generateQuiz(
         payload: GenerateQuizPayload,
+        onProgress?: JobProgress,
     ): Promise<{ title: string; difficulty: string; questions: QuizQuestion[] }> {
-        return request('/quiz/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
+        return runJob('/quiz/generate-async', payload, onProgress);
     },
 
     improveQuestion(question: QuizQuestion, instruction: string): Promise<QuizQuestion> {
@@ -247,12 +288,11 @@ export const api = {
         });
     },
 
-    generateExercises(payload: GenerateExercisesPayload): Promise<{ exercises: Exercise[] }> {
-        return request('/exercises/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
+    generateExercises(
+        payload: GenerateExercisesPayload,
+        onProgress?: JobProgress,
+    ): Promise<{ exercises: Exercise[] }> {
+        return runJob('/exercises/generate-async', payload, onProgress);
     },
 
     improveExercise(exercise: Exercise, instruction: string): Promise<Exercise> {
@@ -302,12 +342,9 @@ export const api = {
     verifyQuiz(
         docId: string,
         questions: QuizQuestion[],
+        onProgress?: JobProgress,
     ): Promise<{ questions: QuizQuestion[]; results: VerificationResult[] }> {
-        return request('/quiz/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ doc_id: docId, questions }),
-        });
+        return runJob('/quiz/verify-async', { doc_id: docId, questions }, onProgress);
     },
 
     editNotions(notions: Notion[], instruction: string): Promise<{ notions: Notion[] }> {

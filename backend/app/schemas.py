@@ -301,3 +301,24 @@ class GlobalStats(ApiModel):
     total_documents: int = 0
     total_tokens: int = 0
     total_sessions: int = 0
+
+
+# ── Jobs asynchrones ─────────────────────────────────────────────────────────
+class JobCreatedResponse(ApiModel):
+    """Réponse immédiate d'un POST asynchrone : l'identifiant à interroger ensuite."""
+
+    job_id: str
+
+
+class JobStatusResponse(ApiModel):
+    """Instantané d'une tâche : progression, items au fil de l'eau, résultat final."""
+
+    job_id: str
+    kind: str
+    status: str  # pending | running | done | error
+    current: int = 0
+    total: int = 0
+    message: str = ""
+    items: list[dict] = Field(default_factory=list)  # items incrémentaux (questions, exercices…)
+    result: dict | None = None  # payload final (présent quand status == done)
+    error: str = ""

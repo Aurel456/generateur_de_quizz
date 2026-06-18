@@ -4,6 +4,7 @@ import {
     type Acronym,
     type Exercise,
     type ExerciseType,
+    type JobStatus,
     type Notion,
     type QuizQuestion,
     type UploadResponse,
@@ -21,6 +22,25 @@ type Busy =
     | 'session'
     | 'workshop';
 
+/** Progression d'une tâche asynchrone longue (génération / vérification). */
+interface Progress {
+    active: boolean;
+    kind: string;
+    current: number;
+    total: number;
+    message: string;
+    itemCount: number;
+}
+
+const EMPTY_PROGRESS: Progress = {
+    active: false,
+    kind: '',
+    current: 0,
+    total: 0,
+    message: '',
+    itemCount: 0,
+};
+
 interface GenerationState {
     upload: UploadResponse | null;
     notions: Notion[];
@@ -31,6 +51,7 @@ interface GenerationState {
     quizTitle: string;
     busy: Busy;
     error: string;
+    progress: Progress;
 }
 
 export const useGenerationStore = defineStore('generation', {
@@ -44,14 +65,39 @@ export const useGenerationStore = defineStore('generation', {
         quizTitle: '',
         busy: '',
         error: '',
+        progress: { ...EMPTY_PROGRESS },
     }),
     getters: {
         docId: (state) => state.upload?.doc_id ?? '',
         enabledNotions: (state) => state.notions.filter((n) => n.enabled),
+        progressPercent: (state) =>
+            state.progress.total > 0
+                ? Math.min(100, Math.round((state.progress.current / state.progress.total) * 100))
+                : 0,
     },
     actions: {
         reset() {
             this.$reset();
+        },
+
+        _startProgress(kind: string) {
+            this.progress = { ...EMPTY_PROGRESS, active: true, kind };
+        },
+
+        _endProgress() {
+            this.progress = { ...EMPTY_PROGRESS };
+        },
+
+        /** Met à jour l'état de progression à partir d'un instantané de job. */
+        _onProgress(status: JobStatus) {
+            this.progress = {
+                active: true,
+                kind: status.kind || this.progress.kind,
+                current: status.current,
+                total: status.total,
+                message: status.message,
+                itemCount: status.items.length,
+            };
         },
 
         async uploadDocuments(files: File[], visionMode = false) {
@@ -75,13 +121,15 @@ export const useGenerationStore = defineStore('generation', {
             if (!this.docId) return;
             this.busy = 'notions';
             this.error = '';
+            this._startProgress('notions');
             try {
-                const { notions } = await api.detectNotions(this.docId);
+                const { notions } = await api.detectNotions(this.docId, (s) => this._onProgress(s));
                 this.notions = notions;
             } catch (err) {
                 this.error = err instanceof Error ? err.message : 'Échec de la détection.';
             } finally {
                 this.busy = '';
+                this._endProgress();
             }
         },
 
@@ -99,19 +147,25 @@ export const useGenerationStore = defineStore('generation', {
             if (!this.docId) return;
             this.busy = 'quiz';
             this.error = '';
+            this.questions = [];
+            this.verifyResults = [];
+            this._startProgress('quiz');
             try {
-                const result = await api.generateQuiz({
-                    doc_id: this.docId,
-                    notions: this.notions,
-                    ...config,
-                });
-                this.questions = result.questions;
+                const result = await api.generateQuiz(
+                    { doc_id: this.docId, notions: this.notions, ...config },
+                    (s) => {
+                        this._onProgress(s);
+                        // Affichage incrémental : les questions s'affichent au fil de l'eau.
+                        this.questions = s.items as unknown as QuizQuestion[];
+                    },
+                );
+                this.questions = result.questions; // liste finale (autoritaire)
                 this.quizTitle = result.title;
-                this.verifyResults = [];
             } catch (err) {
                 this.error = err instanceof Error ? err.message : 'Échec de la génération.';
             } finally {
                 this.busy = '';
+                this._endProgress();
             }
         },
 
@@ -164,14 +218,20 @@ export const useGenerationStore = defineStore('generation', {
             if (!this.docId || !this.questions.length) return;
             this.busy = 'verify';
             this.error = '';
+            this._startProgress('verify');
             try {
-                const { questions, results } = await api.verifyQuiz(this.docId, this.questions);
+                const { questions, results } = await api.verifyQuiz(
+                    this.docId,
+                    this.questions,
+                    (s) => this._onProgress(s),
+                );
                 this.questions = questions;
                 this.verifyResults = results;
             } catch (err) {
                 this.error = err instanceof Error ? err.message : 'Échec de la vérification.';
             } finally {
                 this.busy = '';
+                this._endProgress();
             }
         },
 
@@ -206,18 +266,25 @@ export const useGenerationStore = defineStore('generation', {
             if (!this.docId) return;
             this.busy = 'exercises';
             this.error = '';
+            this._startProgress('exercises');
+            // Accumulation : les nouveaux exercices s'ajoutent aux précédents.
+            const base = [...this.exercises];
             try {
-                const { exercises } = await api.generateExercises({
-                    doc_id: this.docId,
-                    notions: this.notions,
-                    ...config,
-                });
-                // Accumulation : les nouveaux exercices s'ajoutent aux précédents.
-                this.exercises.push(...exercises);
+                const { exercises } = await api.generateExercises(
+                    { doc_id: this.docId, notions: this.notions, ...config },
+                    (s) => {
+                        this._onProgress(s);
+                        // Affichage incrémental : exercices existants + ceux reçus au fil de l'eau.
+                        this.exercises = [...base, ...(s.items as unknown as Exercise[])];
+                    },
+                );
+                this.exercises = [...base, ...exercises]; // liste finale (autoritaire)
             } catch (err) {
+                this.exercises = base; // restaure en cas d'échec
                 this.error = err instanceof Error ? err.message : 'Échec de la génération.';
             } finally {
                 this.busy = '';
+                this._endProgress();
             }
         },
 

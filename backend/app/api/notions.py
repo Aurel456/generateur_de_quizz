@@ -4,11 +4,13 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from backend.app.converters import dict_to_notion, notion_to_dict
-from backend.app.doc_store import doc_store
+from backend.app.doc_store import DocEntry, doc_store
+from backend.app.jobs import Job, job_store
 from backend.app.schemas import (
     DetectNotionsRequest,
     DetectNotionsResponse,
     EditNotionsRequest,
+    JobCreatedResponse,
     MergeNotionsRequest,
     MergeNotionsResponse,
     NotionDTO,
@@ -19,21 +21,42 @@ router = APIRouter(prefix="/notions", tags=["notions"])
 log = logging.getLogger(__name__)
 
 
+def _resolve_doc(doc_id: str) -> DocEntry:
+    entry = doc_store.get(doc_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Document inconnu ou expiré (doc_id).")
+    return entry
+
+
+def _run_detection(entry: DocEntry, *, progress_callback=None) -> DetectNotionsResponse:
+    # Pas d'items incrémentaux : les notions sont enrichies chunk par chunk (la liste
+    # finale supplante les versions intermédiaires) — on ne reporte que la progression.
+    notions = detect_notions(
+        entry.chunks, vision_mode=entry.vision, progress_callback=progress_callback
+    )
+    return DetectNotionsResponse(notions=[NotionDTO(**notion_to_dict(n)) for n in notions])
+
+
 # Endpoint synchrone (def) : l'appel LLM est bloquant et FastAPI l'exécute dans un
 # threadpool, sans bloquer la boucle asyncio.
 @router.post("/detect", response_model=DetectNotionsResponse)
 def detect(payload: DetectNotionsRequest) -> DetectNotionsResponse:
-    entry = doc_store.get(payload.doc_id)
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Document inconnu ou expiré (doc_id).")
-
+    entry = _resolve_doc(payload.doc_id)
     try:
-        notions = detect_notions(entry.chunks, vision_mode=entry.vision)
+        return _run_detection(entry)
     except Exception:
         log.exception("Échec détection des notions")
         raise HTTPException(status_code=502, detail="Erreur lors de la détection des notions.")
 
-    return DetectNotionsResponse(notions=[NotionDTO(**notion_to_dict(n)) for n in notions])
+
+@router.post("/detect-async", response_model=JobCreatedResponse)
+def detect_async(payload: DetectNotionsRequest) -> JobCreatedResponse:
+    entry = _resolve_doc(payload.doc_id)
+
+    def task(job: Job) -> dict:
+        return _run_detection(entry, progress_callback=job.progress).model_dump()
+
+    return JobCreatedResponse(job_id=job_store.submit("notions", task))
 
 
 @router.post("/edit", response_model=DetectNotionsResponse)

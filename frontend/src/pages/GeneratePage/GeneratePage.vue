@@ -62,6 +62,7 @@
         >
             {{ store.busy === 'notions' ? 'Détection…' : 'Détecter les notions' }}
         </button>
+        <GenerationProgress kind="notions" />
 
         <div v-if="store.notions.length" class="fr-mt-2w">
             <div class="fr-grid-row fr-grid-row--middle fr-mb-1v">
@@ -243,7 +244,8 @@
         >
             {{ store.busy === 'quiz' ? 'Génération en cours…' : `Générer ${totalQuestions} question(s)` }}
         </button>
-        <p v-if="store.busy === 'quiz'" class="fr-text--sm fr-mt-1v">
+        <GenerationProgress kind="quiz" />
+        <p v-if="store.busy === 'quiz' && !store.progress.total" class="fr-text--sm fr-mt-1v">
             La génération peut prendre plusieurs minutes selon le volume.
         </p>
     </section>
@@ -263,6 +265,7 @@
                 </button>
             </div>
         </div>
+        <GenerationProgress kind="verify" />
         <div v-if="store.verifyResults.length" class="fr-alert fr-alert--info fr-mb-2w">
             <p class="fr-mb-0">
                 Vérification : {{ verifySummary.verified }} validée(s),
@@ -403,6 +406,7 @@
         >
             {{ store.busy === 'exercises' ? 'Génération…' : `Générer ${totalExercises} exercice(s)` }}
         </button>
+        <GenerationProgress kind="exercises" />
         <p v-if="exConfig.exercise_type === 'calcul'" class="fr-text--sm fr-mt-1v">
             ⚠️ Les exercices de calcul sont auto-vérifiés par exécution Python côté serveur
             (sandbox).
@@ -426,6 +430,7 @@ import type { ExerciseType } from '@/services/api';
 import { useGenerationStore } from '@/stores/generationStore';
 import QuestionCard from '@/components/QuestionCard.vue';
 import ExerciseCard from '@/components/ExerciseCard.vue';
+import GenerationProgress from '@/components/GenerationProgress.vue';
 
 defineOptions({ name: 'GeneratePage' });
 
