@@ -9,6 +9,7 @@ import {
     type Notion,
     type PromptDefaults,
     type QuizQuestion,
+    type UploadOptions,
     type UploadResponse,
     type VerificationResult,
 } from '@/services/api';
@@ -101,6 +102,15 @@ export const useGenerationStore = defineStore('generation', {
             }
             return counts;
         },
+        /** Notions regroupées par thématique (catégorie), pour l'affichage groupé. */
+        notionsByCategory: (state): Record<string, Notion[]> => {
+            const groups: Record<string, Notion[]> = {};
+            for (const n of state.notions) {
+                const key = n.category?.trim() || 'Sans catégorie';
+                (groups[key] ??= []).push(n);
+            }
+            return groups;
+        },
     },
     actions: {
         reset() {
@@ -153,16 +163,17 @@ export const useGenerationStore = defineStore('generation', {
             };
         },
 
-        async uploadDocuments(files: File[], visionMode = false) {
+        async uploadDocuments(files: File[], options: UploadOptions = {}) {
             this.busy = 'upload';
             this.error = '';
             try {
-                this.upload = await api.uploadDocuments(files, visionMode);
+                this.upload = await api.uploadDocuments(files, options);
                 this.notions = [];
                 this.acronyms = [];
                 this.questions = [];
                 this.exercises = [];
                 this.verifyResults = [];
+                this.history = [];
             } catch (err) {
                 this.error = err instanceof Error ? err.message : 'Échec de l’upload.';
             } finally {
@@ -199,6 +210,8 @@ export const useGenerationStore = defineStore('generation', {
             user_instructions: string;
             classify_instructions?: boolean;
             difficulty_prompts?: Record<string, string> | null;
+            enable_thinking?: boolean;
+            notion_mixing?: boolean;
         }) {
             if (!this.docId) return;
             this.busy = 'quiz';
@@ -267,6 +280,37 @@ export const useGenerationStore = defineStore('generation', {
             }
         },
 
+        /** Ajoute un acronyme vierge à éditer manuellement. */
+        addAcronym() {
+            this.acronyms.push({
+                acronym: '',
+                definition: '',
+                all_definitions: [],
+                source_document: '',
+                source_pages: [],
+                enabled: true,
+                from_reference: false,
+            });
+        },
+
+        deleteAcronym(index: number) {
+            this.acronyms.splice(index, 1);
+        },
+
+        async editAcronyms(instruction: string) {
+            if (!instruction.trim()) return;
+            this.busy = 'acronyms';
+            this.error = '';
+            try {
+                const { acronyms } = await api.editAcronyms(this.acronyms, instruction);
+                this.acronyms = acronyms;
+            } catch (err) {
+                this.error = err instanceof Error ? err.message : 'Échec de l’édition.';
+            } finally {
+                this.busy = '';
+            }
+        },
+
         async editNotions(instruction: string) {
             if (!instruction.trim()) return;
             this.busy = 'notions';
@@ -296,6 +340,24 @@ export const useGenerationStore = defineStore('generation', {
 
         toggleAllNotions(enabled: boolean) {
             this.notions.forEach((n) => (n.enabled = enabled));
+        },
+
+        /** Ajoute une notion vierge à éditer manuellement. */
+        addNotion() {
+            this.notions.push({
+                title: '',
+                description: '',
+                source_document: '',
+                source_pages: [],
+                enabled: true,
+                category: '',
+                question_count: 0,
+            });
+        },
+
+        deleteNotion(notion: Notion) {
+            const i = this.notions.indexOf(notion);
+            if (i >= 0) this.notions.splice(i, 1);
         },
 
         async verifyQuiz() {
@@ -368,6 +430,8 @@ export const useGenerationStore = defineStore('generation', {
             batch_mode: boolean;
             classify_instructions?: boolean;
             custom_exercise_prompts?: Record<string, string> | null;
+            enable_thinking?: boolean;
+            notion_mixing?: boolean;
         }) {
             if (!this.docId) return;
             this.busy = 'exercises';

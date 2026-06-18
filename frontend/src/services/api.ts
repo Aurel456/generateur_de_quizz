@@ -17,6 +17,16 @@ export interface DocumentStats {
     total_tokens: number;
 }
 
+/** Options avancées de traitement documentaire (chunking, vision, one-shot). */
+export interface UploadOptions {
+    vision_mode?: boolean;
+    one_shot?: boolean;
+    max_tokens?: number;
+    max_images_per_chunk?: number;
+    min_dpi?: number;
+    max_dpi?: number;
+}
+
 export interface UploadResponse {
     doc_id: string;
     num_chunks: number;
@@ -287,10 +297,16 @@ async function runJob<T>(submitPath: string, body: unknown, onProgress?: JobProg
 }
 
 export const api = {
-    uploadDocuments(files: File[], visionMode = false): Promise<UploadResponse> {
+    uploadDocuments(files: File[], options: UploadOptions = {}): Promise<UploadResponse> {
         const form = new FormData();
         files.forEach((file) => form.append('files', file));
-        form.append('vision_mode', String(visionMode));
+        form.append('vision_mode', String(options.vision_mode ?? false));
+        form.append('one_shot', String(options.one_shot ?? false));
+        if (options.max_tokens) form.append('max_tokens', String(options.max_tokens));
+        if (options.max_images_per_chunk)
+            form.append('max_images_per_chunk', String(options.max_images_per_chunk));
+        if (options.min_dpi) form.append('min_dpi', String(options.min_dpi));
+        if (options.max_dpi) form.append('max_dpi', String(options.max_dpi));
         return request<UploadResponse>('/documents', { method: 'POST', body: form });
     },
 
@@ -404,6 +420,17 @@ export const api = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ doc_id: docId, use_llm: true }),
+        });
+    },
+
+    editAcronyms(
+        acronyms: Acronym[],
+        instruction: string,
+    ): Promise<{ acronyms: Acronym[]; summary: string }> {
+        return request('/acronyms/edit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ acronyms, instruction }),
         });
     },
 

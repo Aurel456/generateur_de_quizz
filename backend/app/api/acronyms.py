@@ -4,12 +4,19 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
-from backend.app.converters import acronym_to_dict
+from backend.app.converters import acronym_to_dict, dict_to_acronym
 from backend.app.doc_store import doc_store
-from backend.app.schemas import AcronymDTO, DetectAcronymsRequest, DetectAcronymsResponse
+from backend.app.schemas import (
+    AcronymDTO,
+    DetectAcronymsRequest,
+    DetectAcronymsResponse,
+    EditAcronymsRequest,
+    EditAcronymsResponse,
+)
 from generation.acronym_detector import (
     detect_acronyms_from_text,
     detect_unknown_acronyms_with_llm,
+    edit_acronyms_with_llm,
     load_acronym_reference,
 )
 
@@ -44,3 +51,18 @@ def detect(payload: DetectAcronymsRequest) -> DetectAcronymsResponse:
             log.exception("Échec détection LLM des acronymes")
 
     return DetectAcronymsResponse(acronyms=[AcronymDTO(**acronym_to_dict(a)) for a in acronyms])
+
+
+@router.post("/edit", response_model=EditAcronymsResponse)
+def edit(payload: EditAcronymsRequest) -> EditAcronymsResponse:
+    """Modifie la liste d'acronymes via une instruction en langage naturel (LLM)."""
+    current = [dict_to_acronym(a.model_dump()) for a in payload.acronyms]
+    try:
+        updated, summary = edit_acronyms_with_llm(current, payload.instruction)
+    except Exception:
+        log.exception("Échec édition des acronymes")
+        raise HTTPException(status_code=502, detail="Erreur lors de l'édition des acronymes.")
+    return EditAcronymsResponse(
+        acronyms=[AcronymDTO(**acronym_to_dict(a)) for a in updated],
+        summary=str(summary or ""),
+    )

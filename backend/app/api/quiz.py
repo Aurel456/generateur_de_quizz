@@ -108,6 +108,8 @@ def _run_generation(
         user_instructions=user_instructions,
         user_context=user_context,
         difficulty_prompts=payload.difficulty_prompts or None,
+        enable_thinking=payload.enable_thinking,
+        notion_mixing=payload.notion_mixing,
         notions=notions or None,
         vision_mode=entry.vision,
         batch_mode=payload.batch_mode,

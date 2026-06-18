@@ -60,6 +60,9 @@ class GenerateQuizRequest(ApiModel):
     classify_instructions: bool = False
     # Prompts éditables par niveau (facile/moyen/difficile). None → prompts par défaut.
     difficulty_prompts: dict[str, str] | None = None
+    # Réglages avancés.
+    enable_thinking: bool = True
+    notion_mixing: bool = True
     notions: list[NotionDTO] = Field(default_factory=list)
 
 
@@ -132,6 +135,8 @@ class GenerateExercisesRequest(ApiModel):
     classify_instructions: bool = False
     # Prompts éditables par niveau pour le type d'exercice choisi. None → défauts.
     custom_exercise_prompts: dict[str, str] | None = None
+    enable_thinking: bool = True
+    notion_mixing: bool = True
     notions: list[NotionDTO] = Field(default_factory=list)
 
 
@@ -241,6 +246,16 @@ class DetectAcronymsRequest(ApiModel):
 
 class DetectAcronymsResponse(ApiModel):
     acronyms: list[AcronymDTO]
+
+
+class EditAcronymsRequest(ApiModel):
+    acronyms: list[AcronymDTO]
+    instruction: str = Field(..., min_length=1, max_length=2_000)
+
+
+class EditAcronymsResponse(ApiModel):
+    acronyms: list[AcronymDTO]
+    summary: str = ""
 
 
 # ── Exports ──────────────────────────────────────────────────────────────────

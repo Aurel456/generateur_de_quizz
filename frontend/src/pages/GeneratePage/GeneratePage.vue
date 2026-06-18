@@ -24,12 +24,50 @@
             />
         </div>
         <div class="fr-checkbox-group fr-mt-1w">
-            <input id="vision" type="checkbox" v-model="visionMode" :disabled="store.busy === 'upload'" />
+            <input id="vision" type="checkbox" v-model="visionMode" :disabled="store.busy === 'upload' || oneShot" />
             <label class="fr-label" for="vision">
                 Mode Vision (PDF → images)
                 <span class="fr-hint-text">Analyse les pages PDF en images (schémas, formules). Nécessite un modèle vision configuré.</span>
             </label>
         </div>
+        <div class="fr-checkbox-group">
+            <input id="oneshot" type="checkbox" v-model="oneShot" :disabled="store.busy === 'upload'" />
+            <label class="fr-label" for="oneshot">
+                Mode One-shot
+                <span class="fr-hint-text">
+                    Envoie tout le(s) document(s) en un minimum de blocs au modèle à grand contexte
+                    (vision, DPI fixe). Idéal pour une vue d'ensemble.
+                </span>
+            </label>
+        </div>
+
+        <details class="fr-mt-2w prompt-editor">
+            <summary class="fr-text--sm">⚙️ Réglages avancés du découpage</summary>
+            <div class="fr-grid-row fr-grid-row--gutters fr-mt-1w">
+                <div class="fr-col-12 fr-col-md-6">
+                    <label class="fr-label fr-text--sm" for="adv-maxtok">
+                        Taille de bloc (tokens, mode texte)
+                        <span class="fr-hint-text">0 = valeur par défaut</span>
+                    </label>
+                    <input id="adv-maxtok" class="fr-input" type="number" min="0" step="1000" v-model.number="advUpload.max_tokens" />
+                </div>
+                <div class="fr-col-12 fr-col-md-6">
+                    <label class="fr-label fr-text--sm" for="adv-imgpc">
+                        Pages par bloc (mode vision)
+                    </label>
+                    <input id="adv-imgpc" class="fr-input" type="number" min="1" max="50" v-model.number="advUpload.max_images_per_chunk" />
+                </div>
+                <div class="fr-col-6 fr-col-md-6">
+                    <label class="fr-label fr-text--sm" for="adv-mindpi">DPI min (vision)</label>
+                    <input id="adv-mindpi" class="fr-input" type="number" min="40" max="300" v-model.number="advUpload.min_dpi" />
+                </div>
+                <div class="fr-col-6 fr-col-md-6">
+                    <label class="fr-label fr-text--sm" for="adv-maxdpi">DPI max (vision)</label>
+                    <input id="adv-maxdpi" class="fr-input" type="number" min="40" max="300" v-model.number="advUpload.max_dpi" />
+                </div>
+            </div>
+        </details>
+
         <button
             class="fr-btn fr-mt-2w"
             :disabled="!selectedFiles.length || store.busy === 'upload'"
@@ -62,6 +100,9 @@
         >
             {{ store.busy === 'notions' ? 'Détection…' : 'Détecter les notions' }}
         </button>
+        <button class="fr-btn fr-btn--secondary fr-ml-1w" @click="addNotionAndEdit">
+            ➕ Ajouter une notion
+        </button>
         <GenerationProgress kind="notions" />
 
         <div v-if="store.notions.length" class="fr-mt-2w">
@@ -89,33 +130,70 @@
                         :disabled="store.busy === 'notions'"
                         @click="store.mergeNotions()"
                     >
-                        🔗 Regrouper
+                        🔗 Fusionner (IA)
+                    </button>
+                    <button
+                        class="fr-btn fr-btn--tertiary fr-btn--sm"
+                        :class="{ 'fr-btn--secondary': notionsGrouped }"
+                        @click="notionsGrouped = !notionsGrouped"
+                    >
+                        🗂️ Par thématique
                     </button>
                 </div>
             </div>
-            <div class="fr-fieldset__content">
+
+            <template v-for="[category, group] in displayGroups" :key="category || '_flat'">
+                <h3 v-if="notionsGrouped" class="fr-h6 fr-mt-2w fr-mb-1v">{{ category }}</h3>
                 <div
-                    v-for="(notion, i) in store.notions"
-                    :key="i"
-                    class="fr-checkbox-group fr-checkbox-group--sm"
+                    v-for="notion in group"
+                    :key="notionIndex(notion)"
+                    class="notion-row fr-mb-1v"
                 >
-                    <input :id="`notion-${i}`" type="checkbox" v-model="notion.enabled" />
-                    <label class="fr-label" :for="`notion-${i}`">
-                        <strong>{{ notion.title }}</strong>
-                        <span v-if="notion.category" class="fr-badge fr-badge--sm fr-ml-1v">
-                            {{ notion.category }}
-                        </span>
-                        <span
-                            v-if="store.notionQuestionCounts[notion.title]"
-                            class="fr-badge fr-badge--sm fr-badge--green-emeraude fr-ml-1v"
-                            :title="'Questions rattachées à cette notion'"
-                        >
-                            {{ store.notionQuestionCounts[notion.title] }} Q
-                        </span>
-                        <span class="fr-hint-text">{{ notion.description }}</span>
-                    </label>
+                    <!-- Édition manuelle d'une notion -->
+                    <div v-if="editingNotionIndex === notionIndex(notion)" class="notion-edit fr-p-2w">
+                        <input class="fr-input fr-mb-1v" v-model="notion.title" placeholder="Titre" />
+                        <input class="fr-input fr-mb-1v" v-model="notion.category" placeholder="Catégorie / thématique" />
+                        <textarea class="fr-input fr-mb-1v" rows="2" v-model="notion.description" placeholder="Description" />
+                        <button class="fr-btn fr-btn--sm" @click="editingNotionIndex = -1">✓ Terminer</button>
+                    </div>
+                    <!-- Lecture -->
+                    <div v-else class="fr-grid-row fr-grid-row--middle">
+                        <div class="fr-col">
+                            <div class="fr-checkbox-group fr-checkbox-group--sm">
+                                <input :id="`notion-${notionIndex(notion)}`" type="checkbox" v-model="notion.enabled" />
+                                <label class="fr-label" :for="`notion-${notionIndex(notion)}`">
+                                    <strong>{{ notion.title || '(sans titre)' }}</strong>
+                                    <span v-if="notion.category && !notionsGrouped" class="fr-badge fr-badge--sm fr-ml-1v">
+                                        {{ notion.category }}
+                                    </span>
+                                    <span
+                                        v-if="store.notionQuestionCounts[notion.title]"
+                                        class="fr-badge fr-badge--sm fr-badge--green-emeraude fr-ml-1v"
+                                        title="Questions rattachées à cette notion"
+                                    >
+                                        {{ store.notionQuestionCounts[notion.title] }} Q
+                                    </span>
+                                    <span class="fr-hint-text">{{ notion.description }}</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="fr-col-auto">
+                            <button
+                                class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm"
+                                @click="editingNotionIndex = notionIndex(notion)"
+                            >
+                                ✏️
+                            </button>
+                            <button
+                                class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm"
+                                @click="store.deleteNotion(notion)"
+                            >
+                                🗑️
+                            </button>
+                        </div>
+                    </div>
                 </div>
-            </div>
+            </template>
 
             <div class="fr-input-group fr-mt-2w">
                 <label class="fr-label fr-text--sm" for="notion-edit">💬 Modifier les notions avec l'IA</label>
@@ -154,11 +232,65 @@
         >
             {{ store.busy === 'acronyms' ? 'Détection…' : 'Détecter les acronymes' }}
         </button>
-        <ul v-if="store.acronyms.length" class="fr-mt-2w fr-text--sm">
-            <li v-for="(a, i) in store.acronyms" :key="i">
-                <strong>{{ a.acronym }}</strong> — {{ a.definition }}
-            </li>
-        </ul>
+        <button class="fr-btn fr-btn--secondary fr-ml-1w" @click="store.addAcronym()">
+            ➕ Ajouter un acronyme
+        </button>
+
+        <div v-if="store.acronyms.length" class="fr-mt-2w">
+            <div
+                v-for="(a, i) in store.acronyms"
+                :key="i"
+                class="fr-grid-row fr-grid-row--gutters fr-grid-row--middle fr-mb-1v"
+            >
+                <div class="fr-col-auto">
+                    <div class="fr-checkbox-group fr-checkbox-group--sm">
+                        <input :id="`acro-${i}`" type="checkbox" v-model="a.enabled" />
+                        <label class="fr-label" :for="`acro-${i}`">
+                            <span class="fr-sr-only">Acronyme actif</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="fr-col-3">
+                    <input class="fr-input" v-model="a.acronym" placeholder="Sigle" />
+                </div>
+                <div class="fr-col">
+                    <input class="fr-input" v-model="a.definition" placeholder="Définition" />
+                </div>
+                <div class="fr-col-auto">
+                    <button
+                        class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm"
+                        @click="store.deleteAcronym(i)"
+                    >
+                        🗑️
+                    </button>
+                </div>
+            </div>
+
+            <div class="fr-input-group fr-mt-2w">
+                <label class="fr-label fr-text--sm" for="acro-edit">💬 Modifier les acronymes avec l'IA</label>
+                <div class="fr-grid-row fr-grid-row--gutters fr-grid-row--bottom">
+                    <div class="fr-col">
+                        <input
+                            id="acro-edit"
+                            class="fr-input"
+                            v-model="acronymInstruction"
+                            placeholder="Ex : ajoute la définition de DGFIP, supprime les sigles non pertinents"
+                            :disabled="store.busy === 'acronyms'"
+                            @keyup.enter="editAcronyms"
+                        />
+                    </div>
+                    <div class="fr-col-auto">
+                        <button
+                            class="fr-btn fr-btn--secondary"
+                            :disabled="store.busy === 'acronyms' || !acronymInstruction.trim()"
+                            @click="editAcronyms"
+                        >
+                            Appliquer
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </section>
 
     <!-- Étape 3 : Configuration -->
@@ -222,6 +354,20 @@
                 <label class="fr-label" for="batch">
                     Traitement par lots (Batch API)
                     <span class="fr-hint-text">Plus rapide si le serveur supporte /v1/batches.</span>
+                </label>
+            </div>
+            <div class="fr-checkbox-group">
+                <input id="thinking" type="checkbox" v-model="config.enable_thinking" />
+                <label class="fr-label" for="thinking">
+                    Mode raisonnement (thinking)
+                    <span class="fr-hint-text">Améliore la qualité des questions ; un peu plus lent.</span>
+                </label>
+            </div>
+            <div class="fr-checkbox-group">
+                <input id="mixing" type="checkbox" v-model="config.notion_mixing" />
+                <label class="fr-label" for="mixing">
+                    Mélange des notions
+                    <span class="fr-hint-text">Répartit les questions sur l'ensemble des notions sélectionnées.</span>
                 </label>
             </div>
         </div>
@@ -503,6 +649,14 @@
                 Analyser la consigne (style vs périmètre)
             </label>
         </div>
+        <div class="fr-checkbox-group">
+            <input id="ex-thinking" type="checkbox" v-model="exConfig.enable_thinking" />
+            <label class="fr-label" for="ex-thinking">Mode raisonnement (thinking)</label>
+        </div>
+        <div class="fr-checkbox-group">
+            <input id="ex-mixing" type="checkbox" v-model="exConfig.notion_mixing" />
+            <label class="fr-label" for="ex-mixing">Mélange des notions</label>
+        </div>
 
         <details v-if="exPrompts[exConfig.exercise_type]" class="fr-mt-2w prompt-editor">
             <summary class="fr-text--sm">⚙️ Personnaliser les consignes par niveau (exercices)</summary>
@@ -556,7 +710,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import type { ExerciseType } from '@/services/api';
+import type { ExerciseType, Notion } from '@/services/api';
 import { useGenerationStore } from '@/stores/generationStore';
 import QuestionCard from '@/components/QuestionCard.vue';
 import ExerciseCard from '@/components/ExerciseCard.vue';
@@ -624,7 +778,12 @@ function generateFromKnowledge() {
 
 const selectedFiles = ref<File[]>([]);
 const visionMode = ref(false);
+const oneShot = ref(false);
+const advUpload = reactive({ max_tokens: 0, max_images_per_chunk: 10, min_dpi: 65, max_dpi: 80 });
 const notionInstruction = ref('');
+const acronymInstruction = ref('');
+const editingNotionIndex = ref(-1);
+const notionsGrouped = ref(false);
 const counts = reactive<Record<string, number>>({ facile: 0, moyen: 5, difficile: 0 });
 const config = reactive({
     num_choices: 4,
@@ -635,6 +794,8 @@ const config = reactive({
     batch_mode: false,
     persona: '',
     user_instructions: '',
+    enable_thinking: true,
+    notion_mixing: true,
 });
 const sessionTitle = ref('');
 const sessionCode = ref('');
@@ -646,6 +807,8 @@ const exConfig = reactive({
     persona: '',
     user_instructions: '',
     batch_mode: false,
+    enable_thinking: true,
+    notion_mixing: true,
 });
 
 const totalQuestions = computed(() =>
@@ -654,6 +817,11 @@ const totalQuestions = computed(() =>
 
 const totalExercises = computed(() =>
     Object.values(exCounts).reduce((sum, n) => sum + (Number(n) || 0), 0),
+);
+
+// Notions affichées : groupées par thématique, ou liste plate sous une clé vide.
+const displayGroups = computed<[string, Notion[]][]>(() =>
+    notionsGrouped.value ? Object.entries(store.notionsByCategory) : [['', store.notions]],
 );
 
 const verifySummary = computed(() => ({
@@ -668,7 +836,28 @@ function onFilesChange(event: Event) {
 }
 
 function upload() {
-    store.uploadDocuments(selectedFiles.value, visionMode.value);
+    store.uploadDocuments(selectedFiles.value, {
+        vision_mode: visionMode.value,
+        one_shot: oneShot.value,
+        max_tokens: advUpload.max_tokens || undefined,
+        max_images_per_chunk: advUpload.max_images_per_chunk,
+        min_dpi: advUpload.min_dpi,
+        max_dpi: advUpload.max_dpi,
+    });
+}
+
+function notionIndex(notion: { title: string }) {
+    return store.notions.findIndex((n) => n === notion);
+}
+
+function addNotionAndEdit() {
+    store.addNotion();
+    editingNotionIndex.value = store.notions.length - 1;
+}
+
+function editAcronyms() {
+    store.editAcronyms(acronymInstruction.value);
+    acronymInstruction.value = '';
 }
 
 function generate() {
@@ -724,5 +913,10 @@ async function createWorkshop() {
     background: var(--background-alt-grey);
     padding: 0.5rem;
     border-radius: 0.25rem;
+}
+.notion-edit {
+    border: 1px dashed var(--border-default-grey);
+    border-radius: 0.25rem;
+    background: var(--background-alt-grey);
 }
 </style>

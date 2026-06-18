@@ -47,12 +47,12 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 
 ### Notions fondamentales
 - ✅ Détection, fusion (Regrouper), tout cocher/décocher, chat LLM (edit), toggle actif
-- 🟡 Catégorie affichée (badge) mais pas de **regroupement visuel par thématique**
-- ✅ Comptage « N questions » par notion après génération (Phase 2) ; ❌ ajout/suppression/édition manuelle d'une notion ; option mélange (`notion_mixing`)
+- ✅ Regroupement visuel par thématique (toggle « Par thématique ») (Phase 3)
+- ✅ Comptage « N questions » par notion (Phase 2) ; ajout/suppression/édition manuelle + mélange (`notion_mixing`) (Phase 3)
 
 ### Acronymes
 - ✅ Détection (référentiel + LLM)
-- ❌ Édition LLM (`edit_acronyms_with_llm`), toggle actif/inactif, ajout manuel, glossaire dans exports déjà géré côté métier
+- ✅ Édition LLM (`edit_acronyms_with_llm`), toggle actif/inactif, ajout/suppression manuelle (Phase 3) ; glossaire dans exports géré côté métier
 
 ### Sessions partagées & Analytics
 - ✅ Création session, page participant (questions manquantes), scoring serveur, correction
@@ -73,8 +73,8 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 
 ### Mode Vision / Batch / Raisonnement
 - ✅ Toggle Vision à l'upload, toggle Batch (quiz/exercices), cache LLM + token tracking (métier)
-- 🟡 Vision : DPI/pages-par-chunk en valeurs par défaut (non réglables UI) ; batch compatible vision
-- ❌ Réglage DPI / pages par chunk, mode One-shot, parser API externe ; toggle `enable_thinking` ; **suivi de progression** des batchs
+- ✅ Vision : DPI min/max + pages-par-bloc réglables UI (Phase 3) ; batch compatible vision
+- ✅ Réglage DPI / pages par bloc, mode One-shot, toggle `enable_thinking` (Phase 3) ; ❌ parser API externe ; suivi de progression spécifique des batchs (la barre globale couvre déjà le batch)
 
 ---
 
@@ -128,10 +128,15 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 - [x] Quiz sur base de connaissance LLM (sans document) : `POST /quiz/generate-from-knowledge[-async]`
       (`generate_quiz_from_llm_knowledge`), section dédiée + badge « ⚠️ base LLM » sur les questions.
 
-**Phase 3 — Notions, acronymes, options**
-- [ ] Notions : ajout/suppression/édition manuelle, regroupement par thématique, mélange, comptage
-- [ ] Acronymes : édition LLM, toggle, ajout manuel
-- [ ] Réglages avancés (chunk, thinking, vision DPI/pages, one-shot)
+**Phase 3 — Notions, acronymes, options** ✅ (2026-06-18)
+- [x] Notions : ajout/suppression/édition manuelle (titre/catégorie/description), regroupement
+      par thématique (toggle), mélange (`notion_mixing`), comptage (Phase 2).
+- [x] Acronymes : édition LLM (`POST /acronyms/edit`), toggle actif, ajout/suppression manuelle,
+      édition inline sigle/définition.
+- [x] Réglages avancés : taille de bloc (chunk), `enable_thinking`, mélange notions, vision
+      DPI min/max + pages par bloc, mode One-shot (`extract_oneshot_chunks`). Params Form ajoutés
+      à `/documents`.
+- [ ] Restent ❌ : parser API externe (vision), suivi de progression spécifique des batchs.
 
 **Phase 4 — Sessions, pool, ateliers**
 - [ ] Mode Pool (création + sous-ensemble participant + seuil + réessayer)
