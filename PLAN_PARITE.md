@@ -1,0 +1,137 @@
+# Plan de parité — porter TOUTES les fonctionnalités Streamlit dans l'app DSFR
+
+But : amener le nouveau couple **backend FastAPI + frontend Vue/DSFR** à la **parité
+fonctionnelle complète** avec l'app Streamlit historique, puis retirer Streamlit.
+
+Ce fichier est la **source de vérité** du reste à faire (il survit au compactage du
+contexte). Compléter au fur et à mesure. Voir aussi `MIGRATION_DSFR.md` (architecture,
+dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités d'origine.
+
+## Rappel d'architecture
+- La logique métier (`core/`, `generation/`, `processing/`, `sessions/`, `export/`) est
+  **réutilisée telle quelle** par le backend (`backend/app/api/*`). Le travail restant =
+  surtout **profondeur d'UI** + **jobs asynchrones** (les endpoints existent souvent déjà).
+- Ajouter une fonctionnalité = (1) endpoint/DTO dans `backend/app/`, (2) appel dans
+  `frontend/src/services/api.ts`, (3) action store + composant/page Vue. Voir `MIGRATION_DSFR.md §"Méthode"`.
+- Déploiement : `npm ci` + `package-lock.json` committé ; sous-chemin `/quizzator`. (cf. historique).
+
+## Légende
+✅ fait · 🟡 partiel · ❌ manquant
+
+---
+
+## Inventaire par domaine
+
+### Quiz QCM
+- ✅ Multi-documents, multi-format, chunking tokens, génération multi-niveaux, anti-doublons
+- ✅ Nb choix 2–6, mode Fixe/Variable, mode Vrai/Faux, badges difficulté, tags notions
+- ✅ Édition manuelle + amélioration IA (QuestionCard), vérification IA (reformulation/suppression)
+- ✅ Exports HTML/CSV/Moodle, citations
+- 🟡 Persona OK ; **instructions PAR niveau personnalisables + règles fixes en lecture seule** = ❌
+- 🟡 Affichage source (document + pages précises) à compléter dans QuestionCard
+- ❌ Consigne libre unifiée (classification formulation/périmètre via `instruction_classifier` + filtrage chunks par périmètre)
+- ❌ Quiz sur base de connaissance LLM sans document (`generate_quiz_from_llm_knowledge`)
+- ❌ Historique des modifications (avant/après)
+
+### Exercices (calcul / trou / cas pratique)
+- ✅ 3 types, 3 niveaux, accumulation, vérification calcul (sandbox Python), retry hybride JSON, tags
+- ✅ Édition champs communs + amélioration IA (ExerciseCard)
+- 🟡 Prompts par niveau + règles fixes affichées = ❌ ; vérification IA trou/cas_pratique à exposer
+- ❌ Édition fine des structures (blancs, sous-questions) ; ajout manuel d'exercice
+
+### Mode libre (génération par conversation)
+- ✅ Conversation, génération des notions depuis le chat, génération quiz directe (ChatPage)
+- 🟡 Notions affichées mais **non éditables/validables** dans le chat ; `suggested_config` renvoyé mais **non appliqué** au formulaire
+- ❌ Création de session partagée depuis le mode libre ; récupération du quiz dans le store principal
+- ❌ `generate_exercises_direct` (exercices en mode libre)
+
+### Notions fondamentales
+- ✅ Détection, fusion (Regrouper), tout cocher/décocher, chat LLM (edit), toggle actif
+- 🟡 Catégorie affichée (badge) mais pas de **regroupement visuel par thématique**
+- ❌ Ajout/suppression/édition manuelle d'une notion ; comptage « N questions » par notion après génération ; option mélange (`notion_mixing`)
+
+### Acronymes
+- ✅ Détection (référentiel + LLM)
+- ❌ Édition LLM (`edit_acronyms_with_llm`), toggle actif/inactif, ajout manuel, glossaire dans exports déjà géré côté métier
+
+### Sessions partagées & Analytics
+- ✅ Création session, page participant (questions manquantes), scoring serveur, correction
+- ✅ Dashboard analytics (métriques, taux/question, taux/notion, classement, recommandations IA)
+- 🟡 Fermeture de session (`deactivate_session`) non exposée
+- ❌ **Mode Pool** (création pool, sous-ensemble par participant, seuil, « réessayer » — `create_pool_session`/`get_next_subset`)
+- ❌ Sessions incluant les exercices (le back accepte `exercises_data`, le front ne l'envoie pas)
+
+### Ateliers formateurs
+- ✅ Création (depuis Génération), lecture, mise à jour, publication (avec option pool), rafraîchir
+- 🟡 WorkshopPage = vue + publication ; **édition** réelle limitée
+- ❌ 4 onglets (Questions/Exercices/Notions/Outils), édition complète + réordonnancement (⬆️/⬇️), chat LLM par onglet, ajout manuel, import depuis une session, fusion de deux ateliers
+
+### Guide formateur & Stats
+- ✅ Schéma pipeline, FAQ, stats globales (GuidePage)
+- 🟡 Points d'intervention détaillés ; stats en bandeau permanent
+- ❌ Chatbot « assistant formateur » (chat d'aide à l'usage, distinct du mode libre)
+
+### Mode Vision / Batch / Raisonnement
+- ✅ Toggle Vision à l'upload, toggle Batch (quiz/exercices), cache LLM + token tracking (métier)
+- 🟡 Vision : DPI/pages-par-chunk en valeurs par défaut (non réglables UI) ; batch compatible vision
+- ❌ Réglage DPI / pages par chunk, mode One-shot, parser API externe ; toggle `enable_thinking` ; **suivi de progression** des batchs
+
+---
+
+## Chantiers transverses (prioritaires — conditionnent la qualité du reste)
+
+1. **Jobs asynchrones + progression** 🔴 le plus important.
+   Les générations/vérifications sont aujourd'hui **synchrones** (risque de timeout, pas de
+   feedback). Transformer `/quiz/generate`, `/exercises/generate`, `/notions/detect`,
+   `/quiz/verify` (et batch) en **tâches asynchrones** : `POST` → `job_id`, puis **SSE** ou
+   polling `GET /jobs/{id}` (progression + items au fil de l'eau). Réutiliser les
+   `progress_callback` et `on_item` déjà présents dans le métier. UI : barre de progression
+   + affichage incrémental.
+2. **Persistance de l'état de travail** : `doc_store` / `chat_store` sont en mémoire
+   mono-instance → passer à Redis ou disque + TTL (sinon perte au redémarrage / multi-réplicas).
+3. **Réglages avancés exposés** : taille de chunk, `enable_thinking`, `notion_mixing`,
+   vision (DPI / pages), one-shot.
+4. **Tests d'API** (pytest + httpx) sur les nouveaux endpoints ; les 51 tests métier restent valables.
+5. **Auth** (si requise) : dépendance FastAPI `Depends` + SSO applicatif. (Désactivée aussi côté Streamlit.)
+
+---
+
+## Plan par phases (ordre conseillé)
+
+**Phase 1 — Infra & feedback** (débloque tout le reste)
+- [ ] Jobs async + progression (SSE/polling) pour génération, vérification, batch + barres UI
+- [ ] Affichage incrémental des items (on_item)
+- [ ] Persistance doc_store/chat_store (Redis ou disque)
+
+**Phase 2 — Parité quiz & exercices**
+- [ ] Éditeur de prompts par niveau + règles fixes (quiz & exercices)
+- [ ] Consigne libre unifiée (classification + filtrage chunks par périmètre)
+- [ ] Affichage sources (doc + pages), comptage questions/notion
+- [ ] Édition fine exercices (blancs/sous-questions) + ajout manuel question/exercice
+- [ ] Historique des modifications
+- [ ] Quiz sur base de connaissance LLM (sans document)
+
+**Phase 3 — Notions, acronymes, options**
+- [ ] Notions : ajout/suppression/édition manuelle, regroupement par thématique, mélange, comptage
+- [ ] Acronymes : édition LLM, toggle, ajout manuel
+- [ ] Réglages avancés (chunk, thinking, vision DPI/pages, one-shot)
+
+**Phase 4 — Sessions, pool, ateliers**
+- [ ] Mode Pool (création + sous-ensemble participant + seuil + réessayer)
+- [ ] Sessions avec exercices ; fermeture de session
+- [ ] Ateliers complets : 4 onglets, édition + réordonnancement, chat LLM par onglet, import depuis session, fusion d'ateliers
+- [ ] Mode libre complet : édition/validation notions, pré-remplissage config, création de session, exercices
+
+**Phase 5 — Compléments & bascule**
+- [ ] Guide : points d'intervention + chatbot assistant formateur ; stats en bandeau
+- [ ] Vision one-shot + parser API externe ; suivi progression batch
+- [ ] Tests d'API ; (auth si besoin)
+- [ ] Recette de bout en bout, puis **retrait du service Streamlit** de `compose.yml`
+
+---
+
+## Notes d'implémentation à ne pas oublier
+- Endpoints LLM longs → garder `def` (threadpool) tant que Phase 1 pas faite ; sinon timeouts.
+- Tout `fetch` passe par `frontend/src/services/api.ts` ; tout `os.getenv` par `backend/app/config.py`.
+- Reverse-proxy : back `proxy_pass …/;` (slash final), front sans slash, `--root-path /quizzator-back`.
+- Après changement de `frontend/config/.env.production` → **rebuild** l'image frontend.

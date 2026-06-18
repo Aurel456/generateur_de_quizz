@@ -27,5 +27,7 @@ RUN mkdir -p /app/shared_data
 
 EXPOSE 8000
 
+# --root-path = préfixe public de l'API (le reverse-proxy retire ce préfixe) :
+# nécessaire pour que Swagger /quizzator-back/docs charge sa spec.
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+     "--proxy-headers", "--forwarded-allow-ips", "*", "--root-path", "/quizzator-back"]

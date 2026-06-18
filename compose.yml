@@ -1,13 +1,20 @@
-# Migration DSFR (branche dev-dsfr) : 3 services coexistent.
-#   - streamlit : app historique (toutes les fonctionnalités), port 3051
-#   - backend   : API FastAPI réutilisant la logique métier, port 3054
-#   - frontend  : nouvelle UI Vue + DSFR, port 3052
+# Migration DSFR (branche dev-dsfr) : 3 services coexistent derrière le reverse-proxy.
+#   - frontend  : nouvelle UI Vue + DSFR   -> /quizzator              (port hôte 3049)
+#   - backend   : API FastAPI              -> /quizzator-back         (port hôte 3050)
+#   - streamlit : app historique           -> /quizzator-streamlit    (port hôte 3051)
 # Quand la migration sera terminée, le service `streamlit` pourra être retiré.
+# Astuce reverse-proxy : préfixez les ports par "127.0.0.1:" pour ne pas les exposer
+# publiquement (ex. "127.0.0.1:3049:8080").
 
 services:
   streamlit:
     build: .
-    command: ["streamlit", "run", "app.py"]
+    command: ["streamlit", "run", "app.py",
+              "--server.baseUrlPath", "/quizzator-streamlit",
+              "--server.address", "0.0.0.0",
+              "--server.enableCORS", "false",
+              "--server.enableXsrfProtection", "false",
+              "--server.maxUploadSize", "200"]
     env_file: .env
     ports:
       - "3051:8501"
@@ -20,7 +27,7 @@ services:
       dockerfile: backend/Dockerfile
     env_file: .env
     ports:
-      - "3054:8000"
+      - "3050:8000"
     volumes:
       # Partage la même base SQLite de sessions que Streamlit.
       - shared_data:/app/shared_data
@@ -30,7 +37,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "3052:8080"
+      - "3049:8080"
 
 volumes:
   shared_data:
