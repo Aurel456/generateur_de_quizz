@@ -20,6 +20,7 @@ from backend.app.schemas import (
 )
 from core.llm_service import VISION_MODEL_NAME
 from generation.exercise_generator import generate_exercises
+from generation.instruction_classifier import classify_user_input
 from generation.question_editor import improve_exercise_with_llm
 
 router = APIRouter(prefix="/exercises", tags=["exercises"])
@@ -41,6 +42,16 @@ def _resolve_counts(difficulty_counts: dict[str, int]) -> dict[str, int]:
     return counts
 
 
+def _split_instructions(payload: GenerateExercisesRequest, *, job: Job | None = None) -> tuple[str, str]:
+    text = (payload.user_instructions or "").strip()
+    if not text or not payload.classify_instructions:
+        return text, ""
+    gen_instr, chunk_instr = classify_user_input(text)
+    if job is not None and chunk_instr:
+        job.set_message(f"Périmètre documentaire détecté : {chunk_instr[:120]}")
+    return gen_instr, chunk_instr
+
+
 def _run_generation(
     entry: DocEntry,
     payload: GenerateExercisesRequest,
@@ -48,16 +59,20 @@ def _run_generation(
     *,
     progress_callback=None,
     on_item=None,
+    job: Job | None = None,
 ) -> ExercisesResponse:
     notions = [dict_to_notion(n.model_dump()) for n in payload.notions if n.enabled]
     stream = on_item is not None and not payload.batch_mode
+    user_instructions, user_context = _split_instructions(payload, job=job)
 
     exercises = generate_exercises(
         entry.chunks,
         difficulty_counts=counts,
         exercise_type=payload.exercise_type,
         persona=payload.persona,
-        user_instructions=payload.user_instructions,
+        user_instructions=user_instructions,
+        user_context=user_context,
+        custom_exercise_prompts=payload.custom_exercise_prompts or None,
         notions=notions or None,
         vision_mode=entry.vision,
         batch_mode=payload.batch_mode,
@@ -92,6 +107,7 @@ def generate_async(payload: GenerateExercisesRequest) -> JobCreatedResponse:
             counts,
             progress_callback=job.progress,
             on_item=lambda e: job.add_item(exercise_to_dict(e)),
+            job=job,
         )
         return response.model_dump()
 

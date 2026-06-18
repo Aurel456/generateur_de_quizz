@@ -27,17 +27,17 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 - ✅ Nb choix 2–6, mode Fixe/Variable, mode Vrai/Faux, badges difficulté, tags notions
 - ✅ Édition manuelle + amélioration IA (QuestionCard), vérification IA (reformulation/suppression)
 - ✅ Exports HTML/CSV/Moodle, citations
-- 🟡 Persona OK ; **instructions PAR niveau personnalisables + règles fixes en lecture seule** = ❌
-- 🟡 Affichage source (document + pages précises) à compléter dans QuestionCard
-- ❌ Consigne libre unifiée (classification formulation/périmètre via `instruction_classifier` + filtrage chunks par périmètre)
-- ❌ Quiz sur base de connaissance LLM sans document (`generate_quiz_from_llm_knowledge`)
-- ❌ Historique des modifications (avant/après)
+- ✅ Persona ; instructions PAR niveau personnalisables + règles fixes en lecture seule (Phase 2)
+- ✅ Affichage source (document + pages précises) + citation dans QuestionCard (Phase 2)
+- ✅ Consigne libre unifiée (classification formulation/périmètre via `instruction_classifier` + filtrage chunks par périmètre) (Phase 2)
+- ✅ Quiz sur base de connaissance LLM sans document (`generate_quiz_from_llm_knowledge`) (Phase 2)
+- ✅ Historique des modifications (undo, snapshot avant modif) (Phase 2)
 
 ### Exercices (calcul / trou / cas pratique)
 - ✅ 3 types, 3 niveaux, accumulation, vérification calcul (sandbox Python), retry hybride JSON, tags
 - ✅ Édition champs communs + amélioration IA (ExerciseCard)
-- 🟡 Prompts par niveau + règles fixes affichées = ❌ ; vérification IA trou/cas_pratique à exposer
-- ❌ Édition fine des structures (blancs, sous-questions) ; ajout manuel d'exercice
+- ✅ Prompts par niveau + règles fixes affichées (Phase 2) ; 🟡 vérification IA trou/cas_pratique à exposer
+- ✅ Édition fine des structures (étapes, blancs, sous-questions) ; ajout manuel d'exercice (Phase 2)
 
 ### Mode libre (génération par conversation)
 - ✅ Conversation, génération des notions depuis le chat, génération quiz directe (ChatPage)
@@ -48,7 +48,7 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 ### Notions fondamentales
 - ✅ Détection, fusion (Regrouper), tout cocher/décocher, chat LLM (edit), toggle actif
 - 🟡 Catégorie affichée (badge) mais pas de **regroupement visuel par thématique**
-- ❌ Ajout/suppression/édition manuelle d'une notion ; comptage « N questions » par notion après génération ; option mélange (`notion_mixing`)
+- ✅ Comptage « N questions » par notion après génération (Phase 2) ; ❌ ajout/suppression/édition manuelle d'une notion ; option mélange (`notion_mixing`)
 
 ### Acronymes
 - ✅ Détection (référentiel + LLM)
@@ -112,13 +112,21 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
       une décision d'infra (Redis dispo sur le nexus figé ?) ; OK en mono-instance podman pour
       l'instant. Les 3 stores partagent la même limite mémoire mono-instance.
 
-**Phase 2 — Parité quiz & exercices**
-- [ ] Éditeur de prompts par niveau + règles fixes (quiz & exercices)
-- [ ] Consigne libre unifiée (classification + filtrage chunks par périmètre)
-- [ ] Affichage sources (doc + pages), comptage questions/notion
-- [ ] Édition fine exercices (blancs/sous-questions) + ajout manuel question/exercice
-- [ ] Historique des modifications
-- [ ] Quiz sur base de connaissance LLM (sans document)
+**Phase 2 — Parité quiz & exercices** ✅ (2026-06-18)
+- [x] Éditeur de prompts par niveau + règles fixes (quiz & exercices) : `GET /prompts/defaults`,
+      params `difficulty_prompts` (quiz) / `custom_exercise_prompts` (exercices) ;
+      accordéons `<details>` dans GeneratePage avec reset + note « règles fixes » en lecture seule.
+- [x] Consigne libre unifiée : `classify_user_input` (style → `user_instructions`, périmètre →
+      `user_context` qui filtre les chunks) via case « Analyser la consigne » ; le périmètre
+      détecté s'affiche dans le message du job.
+- [x] Affichage sources (doc + pages) + citation dans QuestionCard/ExerciseCard ;
+      comptage questions/notion (getter `notionQuestionCounts`, badge « N Q »).
+- [x] Édition fine exercices (étapes/blancs/sous-questions avec add/remove) + ajout manuel
+      question/exercice (`addQuestion`/`addExercise`).
+- [x] Historique des modifications : snapshot avant chaque modif + bouton « ↩ Annuler »
+      (`history`/`undo`, profondeur 20).
+- [x] Quiz sur base de connaissance LLM (sans document) : `POST /quiz/generate-from-knowledge[-async]`
+      (`generate_quiz_from_llm_knowledge`), section dédiée + badge « ⚠️ base LLM » sur les questions.
 
 **Phase 3 — Notions, acronymes, options**
 - [ ] Notions : ajout/suppression/édition manuelle, regroupement par thématique, mélange, comptage

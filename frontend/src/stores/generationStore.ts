@@ -4,8 +4,10 @@ import {
     type Acronym,
     type Exercise,
     type ExerciseType,
+    type GenerateQuizFromKnowledgePayload,
     type JobStatus,
     type Notion,
+    type PromptDefaults,
     type QuizQuestion,
     type UploadResponse,
     type VerificationResult,
@@ -41,6 +43,16 @@ const EMPTY_PROGRESS: Progress = {
     itemCount: 0,
 };
 
+/** Instantané pour l'historique des modifications (undo). */
+interface Snapshot {
+    questions: QuizQuestion[];
+    exercises: Exercise[];
+}
+
+const MAX_HISTORY = 20;
+
+const deepClone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+
 interface GenerationState {
     upload: UploadResponse | null;
     notions: Notion[];
@@ -52,6 +64,8 @@ interface GenerationState {
     busy: Busy;
     error: string;
     progress: Progress;
+    promptDefaults: PromptDefaults | null;
+    history: Snapshot[];
 }
 
 export const useGenerationStore = defineStore('generation', {
@@ -66,6 +80,8 @@ export const useGenerationStore = defineStore('generation', {
         busy: '',
         error: '',
         progress: { ...EMPTY_PROGRESS },
+        promptDefaults: null,
+        history: [],
     }),
     getters: {
         docId: (state) => state.upload?.doc_id ?? '',
@@ -74,10 +90,47 @@ export const useGenerationStore = defineStore('generation', {
             state.progress.total > 0
                 ? Math.min(100, Math.round((state.progress.current / state.progress.total) * 100))
                 : 0,
+        canUndo: (state) => state.history.length > 0,
+        /** Nombre de questions rattachées à chaque notion (par titre). */
+        notionQuestionCounts: (state): Record<string, number> => {
+            const counts: Record<string, number> = {};
+            for (const q of state.questions) {
+                for (const title of q.related_notions ?? []) {
+                    counts[title] = (counts[title] ?? 0) + 1;
+                }
+            }
+            return counts;
+        },
     },
     actions: {
         reset() {
             this.$reset();
+        },
+
+        async loadPromptDefaults() {
+            if (this.promptDefaults) return;
+            try {
+                this.promptDefaults = await api.getPromptDefaults();
+            } catch {
+                /* non bloquant : l'édition des prompts restera indisponible */
+            }
+        },
+
+        // ── Historique des modifications (undo) ──────────────────────────────
+        /** Enregistre l'état courant (questions + exercices) avant une modification. */
+        _pushHistory() {
+            this.history.push({
+                questions: deepClone(this.questions),
+                exercises: deepClone(this.exercises),
+            });
+            if (this.history.length > MAX_HISTORY) this.history.shift();
+        },
+
+        undo() {
+            const snap = this.history.pop();
+            if (!snap) return;
+            this.questions = snap.questions;
+            this.exercises = snap.exercises;
         },
 
         _startProgress(kind: string) {
@@ -138,11 +191,14 @@ export const useGenerationStore = defineStore('generation', {
             num_choices: number;
             num_correct: number;
             variable_correct: boolean;
+            max_correct?: number | null;
             vrai_faux: boolean;
             humor: boolean;
             batch_mode: boolean;
             persona: string;
             user_instructions: string;
+            classify_instructions?: boolean;
+            difficulty_prompts?: Record<string, string> | null;
         }) {
             if (!this.docId) return;
             this.busy = 'quiz';
@@ -162,6 +218,34 @@ export const useGenerationStore = defineStore('generation', {
                 this.questions = result.questions; // liste finale (autoritaire)
                 this.quizTitle = result.title;
             } catch (err) {
+                this.error = err instanceof Error ? err.message : 'Échec de la génération.';
+            } finally {
+                this.busy = '';
+                this._endProgress();
+            }
+        },
+
+        /** Quiz à partir de la base de connaissance du LLM (sans document) — accumulation. */
+        async generateQuizFromKnowledge(
+            payload: Omit<GenerateQuizFromKnowledgePayload, 'notions'> & { notions?: Notion[] },
+        ) {
+            this.busy = 'quiz';
+            this.error = '';
+            if (this.questions.length) this._pushHistory();
+            this._startProgress('quiz');
+            const base = [...this.questions];
+            try {
+                const result = await api.generateQuizFromKnowledge(
+                    { notions: this.enabledNotions, ...payload },
+                    (s) => {
+                        this._onProgress(s);
+                        this.questions = [...base, ...(s.items as unknown as QuizQuestion[])];
+                    },
+                );
+                this.questions = [...base, ...result.questions];
+                if (!this.quizTitle) this.quizTitle = result.title;
+            } catch (err) {
+                this.questions = base;
                 this.error = err instanceof Error ? err.message : 'Échec de la génération.';
             } finally {
                 this.busy = '';
@@ -218,6 +302,7 @@ export const useGenerationStore = defineStore('generation', {
             if (!this.docId || !this.questions.length) return;
             this.busy = 'verify';
             this.error = '';
+            this._pushHistory();
             this._startProgress('verify');
             try {
                 const { questions, results } = await api.verifyQuiz(
@@ -237,18 +322,37 @@ export const useGenerationStore = defineStore('generation', {
 
         updateQuestion(index: number, question: QuizQuestion) {
             if (index >= 0 && index < this.questions.length) {
+                this._pushHistory();
                 this.questions[index] = question;
             }
         },
 
         deleteQuestion(index: number) {
+            this._pushHistory();
             this.questions.splice(index, 1);
+        },
+
+        /** Ajoute une question vierge à éditer manuellement. */
+        addQuestion() {
+            this._pushHistory();
+            this.questions.push({
+                question: '',
+                choices: { A: '', B: '', C: '', D: '' },
+                correct_answers: [],
+                explanation: '',
+                source_pages: [],
+                difficulty_level: 'moyen',
+                source_document: '',
+                citation: '',
+                related_notions: [],
+            });
         },
 
         async improveQuestion(index: number, instruction: string) {
             const current = this.questions[index];
             if (!current || !instruction.trim()) return;
             this.error = '';
+            this._pushHistory();
             try {
                 this.questions[index] = await api.improveQuestion(current, instruction);
             } catch (err) {
@@ -262,6 +366,8 @@ export const useGenerationStore = defineStore('generation', {
             persona: string;
             user_instructions: string;
             batch_mode: boolean;
+            classify_instructions?: boolean;
+            custom_exercise_prompts?: Record<string, string> | null;
         }) {
             if (!this.docId) return;
             this.busy = 'exercises';
@@ -290,18 +396,43 @@ export const useGenerationStore = defineStore('generation', {
 
         updateExercise(index: number, exercise: Exercise) {
             if (index >= 0 && index < this.exercises.length) {
+                this._pushHistory();
                 this.exercises[index] = exercise;
             }
         },
 
         deleteExercise(index: number) {
+            this._pushHistory();
             this.exercises.splice(index, 1);
+        },
+
+        /** Ajoute un exercice vierge du type donné à éditer manuellement. */
+        addExercise(type: ExerciseType) {
+            this._pushHistory();
+            this.exercises.push({
+                statement: '',
+                expected_answer: '',
+                steps: [],
+                correction: '',
+                verified: false,
+                verification_output: '',
+                source_pages: [],
+                source_document: '',
+                citation: '',
+                difficulty_level: 'moyen',
+                related_notions: [],
+                exercise_type: type,
+                blanks: type === 'trou' ? [{ position: 1, answer: '', context: '' }] : [],
+                sub_questions: type === 'cas_pratique' ? [{ question: '', answer: '' }] : [],
+                pedagogical_comment: '',
+            });
         },
 
         async improveExercise(index: number, instruction: string) {
             const current = this.exercises[index];
             if (!current || !instruction.trim()) return;
             this.error = '';
+            this._pushHistory();
             try {
                 this.exercises[index] = await api.improveExercise(current, instruction);
             } catch (err) {

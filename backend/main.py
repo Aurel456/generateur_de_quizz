@@ -28,6 +28,7 @@ from backend.app.api import (  # noqa: E402
     health,
     jobs,
     notions,
+    prompts,
     quiz,
     sessions,
     stats,
@@ -56,6 +57,7 @@ app.include_router(workshops.router)
 app.include_router(chat.router)
 app.include_router(stats.router)
 app.include_router(jobs.router)
+app.include_router(prompts.router)
 
 
 @app.get("/")

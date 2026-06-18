@@ -49,11 +49,31 @@ class GenerateQuizRequest(ApiModel):
     num_choices: int = Field(default=4, ge=2, le=6)
     num_correct: int = Field(default=1, ge=1)
     variable_correct: bool = False
+    max_correct: int | None = None
     vrai_faux: bool = False
     humor: bool = False
     batch_mode: bool = False
     persona: str = ""
     user_instructions: str = ""
+    # Si True, la consigne libre est classée (style vs périmètre) : la partie « périmètre »
+    # filtre les chunks, la partie « style » est injectée dans le prompt de génération.
+    classify_instructions: bool = False
+    # Prompts éditables par niveau (facile/moyen/difficile). None → prompts par défaut.
+    difficulty_prompts: dict[str, str] | None = None
+    notions: list[NotionDTO] = Field(default_factory=list)
+
+
+# ── Quiz sans document (base de connaissance du LLM) ──────────────────────────
+class GenerateQuizFromKnowledgeRequest(ApiModel):
+    topic: str = Field(..., min_length=1, max_length=500)
+    additional_context: str = ""
+    difficulty_counts: dict[str, int] = Field(default_factory=lambda: {"moyen": 5})
+    num_choices: int = Field(default=4, ge=2, le=6)
+    num_correct: int = Field(default=1, ge=1)
+    variable_correct: bool = False
+    max_correct: int | None = None
+    vrai_faux: bool = False
+    batch_mode: bool = False
     notions: list[NotionDTO] = Field(default_factory=list)
 
 
@@ -109,6 +129,9 @@ class GenerateExercisesRequest(ApiModel):
     batch_mode: bool = False
     persona: str = ""
     user_instructions: str = ""
+    classify_instructions: bool = False
+    # Prompts éditables par niveau pour le type d'exercice choisi. None → défauts.
+    custom_exercise_prompts: dict[str, str] | None = None
     notions: list[NotionDTO] = Field(default_factory=list)
 
 
@@ -301,6 +324,19 @@ class GlobalStats(ApiModel):
     total_documents: int = 0
     total_tokens: int = 0
     total_sessions: int = 0
+
+
+# ── Prompts éditables par niveau ─────────────────────────────────────────────
+class PromptDefaultsResponse(ApiModel):
+    """Prompts par défaut (règles éditables par niveau) côté quiz et exercices.
+
+    Les *règles fixes* (structure JSON, contraintes de format) ne sont pas éditables :
+    elles sont décrites en lecture seule dans `fixed_rules` à titre informatif.
+    """
+
+    quiz: dict[str, str]  # {facile, moyen, difficile}
+    exercises: dict[str, dict[str, str]]  # {calcul: {…}, trou: {…}, cas_pratique: {…}}
+    fixed_rules: dict[str, str] = Field(default_factory=dict)  # {quiz: "...", exercises: "..."}
 
 
 # ── Jobs asynchrones ─────────────────────────────────────────────────────────

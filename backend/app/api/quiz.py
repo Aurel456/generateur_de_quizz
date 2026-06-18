@@ -18,6 +18,7 @@ from backend.app.converters import (
 from backend.app.doc_store import DocEntry, doc_store
 from backend.app.jobs import Job, job_store
 from backend.app.schemas import (
+    GenerateQuizFromKnowledgeRequest,
     GenerateQuizRequest,
     ImproveQuestionRequest,
     JobCreatedResponse,
@@ -28,6 +29,8 @@ from backend.app.schemas import (
     VerifyQuizResponse,
 )
 from core.llm_service import VISION_MODEL_NAME
+from generation.chat_mode import generate_quiz_from_llm_knowledge
+from generation.instruction_classifier import classify_user_input
 from generation.question_editor import improve_question_with_llm
 from generation.quiz_generator import generate_quiz
 from generation.quiz_verifier import verify_quiz
@@ -51,6 +54,30 @@ def _resolve_counts(difficulty_counts: dict[str, int]) -> dict[str, int]:
     return counts
 
 
+def _split_instructions(payload, *, job: Job | None = None) -> tuple[str, str]:
+    """Sépare la consigne libre en (style, périmètre) si la classification est demandée.
+
+    - périmètre → `user_context` (filtrage des chunks pertinents en amont),
+    - style → `user_instructions` (injecté dans le prompt de génération).
+    Sinon, la consigne entière sert de style et le périmètre est vide.
+    """
+    text = (payload.user_instructions or "").strip()
+    if not text or not getattr(payload, "classify_instructions", False):
+        return text, ""
+    gen_instr, chunk_instr = classify_user_input(text)
+    if job is not None and chunk_instr:
+        job.set_message(f"Périmètre documentaire détecté : {chunk_instr[:120]}")
+    return gen_instr, chunk_instr
+
+
+def _quiz_to_response(quiz) -> QuizResponse:
+    return QuizResponse(
+        title=quiz.title,
+        difficulty=quiz.difficulty,
+        questions=[QuizQuestionDTO(**question_to_dict(q)) for q in quiz.questions],
+    )
+
+
 def _run_generation(
     entry: DocEntry,
     payload: GenerateQuizRequest,
@@ -58,6 +85,7 @@ def _run_generation(
     *,
     progress_callback=None,
     on_item=None,
+    job: Job | None = None,
 ) -> QuizResponse:
     """Cœur de la génération, partagé par les variantes sync et async."""
     # Seules les notions activées guident la génération.
@@ -65,6 +93,7 @@ def _run_generation(
     model = _VISION_MODEL if entry.vision else None
     # Streaming incrémental possible hors mode batch (le batch agrège les résultats).
     stream = on_item is not None and not payload.batch_mode
+    user_instructions, user_context = _split_instructions(payload, job=job)
 
     quiz = generate_quiz(
         entry.chunks,
@@ -72,10 +101,13 @@ def _run_generation(
         num_choices=payload.num_choices,
         num_correct=payload.num_correct,
         variable_correct=payload.variable_correct,
+        max_correct=payload.max_correct if payload.variable_correct else None,
         vrai_faux=payload.vrai_faux,
         humor=payload.humor,
         persona=payload.persona,
-        user_instructions=payload.user_instructions,
+        user_instructions=user_instructions,
+        user_context=user_context,
+        difficulty_prompts=payload.difficulty_prompts or None,
         notions=notions or None,
         vision_mode=entry.vision,
         batch_mode=payload.batch_mode,
@@ -84,11 +116,7 @@ def _run_generation(
         stream=stream,
         on_item=on_item if stream else None,
     )
-    return QuizResponse(
-        title=quiz.title,
-        difficulty=quiz.difficulty,
-        questions=[QuizQuestionDTO(**question_to_dict(q)) for q in quiz.questions],
-    )
+    return _quiz_to_response(quiz)
 
 
 @router.post("/generate", response_model=QuizResponse)
@@ -115,6 +143,7 @@ def generate_async(payload: GenerateQuizRequest) -> JobCreatedResponse:
             counts,
             progress_callback=job.progress,
             on_item=lambda q: job.add_item(question_to_dict(q)),
+            job=job,
         )
         return response.model_dump()
 
@@ -168,3 +197,50 @@ def verify_async(payload: VerifyQuizRequest) -> JobCreatedResponse:
         return _run_verification(entry, payload, progress_callback=job.progress).model_dump()
 
     return JobCreatedResponse(job_id=job_store.submit("verify", task))
+
+
+# ── Quiz sans document (base de connaissance du LLM) ──────────────────────────
+def _run_knowledge_generation(
+    payload: GenerateQuizFromKnowledgeRequest,
+    counts: dict[str, int],
+    *,
+    progress_callback=None,
+) -> QuizResponse:
+    notions = [dict_to_notion(n.model_dump()) for n in payload.notions if n.enabled]
+    quiz = generate_quiz_from_llm_knowledge(
+        topic=payload.topic,
+        notions=notions or None,
+        additional_context=payload.additional_context,
+        difficulty_counts=counts,
+        num_choices=payload.num_choices,
+        num_correct=payload.num_correct,
+        variable_correct=payload.variable_correct,
+        max_correct=payload.max_correct if payload.variable_correct else None,
+        vrai_faux=payload.vrai_faux,
+        batch_mode=payload.batch_mode,
+        progress_callback=progress_callback,
+    )
+    return _quiz_to_response(quiz)
+
+
+@router.post("/generate-from-knowledge", response_model=QuizResponse)
+def generate_from_knowledge(payload: GenerateQuizFromKnowledgeRequest) -> QuizResponse:
+    """Génère un quiz à partir de la base de connaissance du LLM, sans document source."""
+    counts = _resolve_counts(payload.difficulty_counts)
+    try:
+        return _run_knowledge_generation(payload, counts)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        log.exception("Échec génération quiz (base LLM)")
+        raise HTTPException(status_code=502, detail="Erreur lors de la génération du quiz.")
+
+
+@router.post("/generate-from-knowledge-async", response_model=JobCreatedResponse)
+def generate_from_knowledge_async(payload: GenerateQuizFromKnowledgeRequest) -> JobCreatedResponse:
+    counts = _resolve_counts(payload.difficulty_counts)
+
+    def task(job: Job) -> dict:
+        return _run_knowledge_generation(payload, counts, progress_callback=job.progress).model_dump()
+
+    return JobCreatedResponse(job_id=job_store.submit("quiz", task))

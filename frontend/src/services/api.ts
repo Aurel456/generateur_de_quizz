@@ -64,6 +64,8 @@ export interface GenerateExercisesPayload {
     exercise_type: ExerciseType;
     persona: string;
     user_instructions: string;
+    classify_instructions?: boolean;
+    custom_exercise_prompts?: Record<string, string> | null;
     batch_mode: boolean;
     notions: Notion[];
 }
@@ -74,12 +76,35 @@ export interface GenerateQuizPayload {
     num_choices: number;
     num_correct: number;
     variable_correct: boolean;
+    max_correct?: number | null;
     vrai_faux: boolean;
     humor: boolean;
     batch_mode: boolean;
     persona: string;
     user_instructions: string;
+    classify_instructions?: boolean;
+    difficulty_prompts?: Record<string, string> | null;
     notions: Notion[];
+}
+
+export interface GenerateQuizFromKnowledgePayload {
+    topic: string;
+    additional_context: string;
+    difficulty_counts: Record<string, number>;
+    num_choices: number;
+    num_correct: number;
+    variable_correct: boolean;
+    max_correct?: number | null;
+    vrai_faux: boolean;
+    batch_mode: boolean;
+    notions: Notion[];
+}
+
+/** Prompts par défaut éditables par niveau (+ description des règles fixes). */
+export interface PromptDefaults {
+    quiz: Record<string, string>;
+    exercises: Record<string, Record<string, string>>;
+    fixed_rules: Record<string, string>;
 }
 
 export interface ParticipantQuestion {
@@ -278,6 +303,17 @@ export const api = {
         onProgress?: JobProgress,
     ): Promise<{ title: string; difficulty: string; questions: QuizQuestion[] }> {
         return runJob('/quiz/generate-async', payload, onProgress);
+    },
+
+    generateQuizFromKnowledge(
+        payload: GenerateQuizFromKnowledgePayload,
+        onProgress?: JobProgress,
+    ): Promise<{ title: string; difficulty: string; questions: QuizQuestion[] }> {
+        return runJob('/quiz/generate-from-knowledge-async', payload, onProgress);
+    },
+
+    getPromptDefaults(): Promise<PromptDefaults> {
+        return request('/prompts/defaults');
     },
 
     improveQuestion(question: QuizQuestion, instruction: string): Promise<QuizQuestion> {

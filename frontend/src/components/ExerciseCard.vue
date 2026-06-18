@@ -68,6 +68,10 @@
             <p v-if="exercise.pedagogical_comment" class="fr-text--sm fr-mb-1v pedago">
                 🎓 {{ exercise.pedagogical_comment }}
             </p>
+            <p v-if="exercise.citation" class="fr-text--sm fr-mb-1v citation">
+                « {{ exercise.citation }} »
+            </p>
+            <p v-if="sourceLabel" class="fr-text--xs fr-mb-1v source-line">📄 {{ sourceLabel }}</p>
 
             <!-- Amélioration IA -->
             <div class="fr-input-group fr-mt-1w">
@@ -108,6 +112,62 @@
                 <label class="fr-label" :for="`ex-ans-${index}`">Réponse attendue</label>
                 <input :id="`ex-ans-${index}`" class="fr-input" v-model="draft.expected_answer" />
             </div>
+
+            <!-- Calcul : étapes de résolution -->
+            <div class="fr-input-group" v-if="exercise.exercise_type === 'calcul'">
+                <label class="fr-label">Étapes de résolution</label>
+                <div
+                    v-for="(step, si) in draft.steps"
+                    :key="si"
+                    class="fr-grid-row fr-grid-row--gutters fr-grid-row--middle fr-mb-1v"
+                >
+                    <div class="fr-col"><input class="fr-input" v-model="draft.steps[si]" /></div>
+                    <div class="fr-col-auto">
+                        <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="removeStep(si)">✕</button>
+                    </div>
+                </div>
+                <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="addStep">➕ Ajouter une étape</button>
+            </div>
+
+            <!-- Trou : blancs -->
+            <div class="fr-input-group" v-if="exercise.exercise_type === 'trou'">
+                <label class="fr-label">Blancs</label>
+                <div
+                    v-for="(blank, bi) in draft.blanks"
+                    :key="bi"
+                    class="fr-grid-row fr-grid-row--gutters fr-grid-row--middle fr-mb-1v"
+                >
+                    <div class="fr-col-2">
+                        <input class="fr-input" type="number" min="1" v-model.number="blank.position" placeholder="N°" />
+                    </div>
+                    <div class="fr-col"><input class="fr-input" v-model="blank.answer" placeholder="Réponse" /></div>
+                    <div class="fr-col"><input class="fr-input" v-model="blank.context" placeholder="Contexte" /></div>
+                    <div class="fr-col-auto">
+                        <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="removeBlank(bi)">✕</button>
+                    </div>
+                </div>
+                <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="addBlank">➕ Ajouter un blanc</button>
+            </div>
+
+            <!-- Cas pratique : sous-questions -->
+            <div class="fr-input-group" v-if="exercise.exercise_type === 'cas_pratique'">
+                <label class="fr-label">Sous-questions</label>
+                <div v-for="(sq, qi) in draft.sub_questions" :key="qi" class="fr-mb-1v">
+                    <div class="fr-grid-row fr-grid-row--gutters fr-grid-row--middle">
+                        <div class="fr-col">
+                            <input class="fr-input" v-model="sq.question" placeholder="Question" />
+                        </div>
+                        <div class="fr-col-auto">
+                            <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="removeSubQuestion(qi)">✕</button>
+                        </div>
+                    </div>
+                    <input class="fr-input fr-mt-1v" v-model="sq.answer" placeholder="Réponse attendue" />
+                </div>
+                <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="addSubQuestion">
+                    ➕ Ajouter une sous-question
+                </button>
+            </div>
+
             <div class="fr-input-group">
                 <label class="fr-label" :for="`ex-cor-${index}`">Correction</label>
                 <textarea :id="`ex-cor-${index}`" class="fr-input" rows="2" v-model="draft.correction" />
@@ -155,13 +215,44 @@ const badgeClass = computed(() => {
     return 'fr-badge--new';
 });
 
+const sourceLabel = computed(() => {
+    const parts: string[] = [];
+    if (props.exercise.source_document) parts.push(props.exercise.source_document);
+    if (props.exercise.source_pages?.length)
+        parts.push(`p. ${props.exercise.source_pages.join(', ')}`);
+    return parts.join(' — ');
+});
+
 function clone(e: Exercise): Exercise {
     return JSON.parse(JSON.stringify(e));
 }
 
 function startEdit() {
     Object.assign(draft, clone(props.exercise));
+    // Garantit des tableaux éditables même si l'IA ne les a pas fournis.
+    draft.steps = draft.steps ?? [];
+    draft.blanks = draft.blanks ?? [];
+    draft.sub_questions = draft.sub_questions ?? [];
     editing.value = true;
+}
+
+function addStep() {
+    draft.steps.push('');
+}
+function removeStep(i: number) {
+    draft.steps.splice(i, 1);
+}
+function addBlank() {
+    draft.blanks.push({ position: draft.blanks.length + 1, answer: '', context: '' });
+}
+function removeBlank(i: number) {
+    draft.blanks.splice(i, 1);
+}
+function addSubQuestion() {
+    draft.sub_questions.push({ question: '', answer: '' });
+}
+function removeSubQuestion(i: number) {
+    draft.sub_questions.splice(i, 1);
 }
 
 function save() {
@@ -192,6 +283,14 @@ async function improve() {
     border-radius: 0.25rem;
 }
 .pedago {
+    color: var(--text-mention-grey);
+}
+.citation {
+    border-left: 3px solid var(--border-default-grey);
+    padding-left: 0.5rem;
+    color: var(--text-mention-grey);
+}
+.source-line {
     color: var(--text-mention-grey);
 }
 </style>

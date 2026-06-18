@@ -105,6 +105,13 @@
                         <span v-if="notion.category" class="fr-badge fr-badge--sm fr-ml-1v">
                             {{ notion.category }}
                         </span>
+                        <span
+                            v-if="store.notionQuestionCounts[notion.title]"
+                            class="fr-badge fr-badge--sm fr-badge--green-emeraude fr-ml-1v"
+                            :title="'Questions rattachées à cette notion'"
+                        >
+                            {{ store.notionQuestionCounts[notion.title] }} Q
+                        </span>
                         <span class="fr-hint-text">{{ notion.description }}</span>
                     </label>
                 </div>
@@ -236,6 +243,35 @@
             </label>
             <textarea id="instructions" class="fr-input" rows="3" v-model="config.user_instructions" />
         </div>
+        <div class="fr-checkbox-group">
+            <input id="classify-quiz" type="checkbox" v-model="classifyQuiz" />
+            <label class="fr-label" for="classify-quiz">
+                Analyser la consigne (style vs périmètre)
+                <span class="fr-hint-text">
+                    Sépare automatiquement la consigne : le « périmètre » filtre les passages du
+                    document, le « style » guide la formulation.
+                </span>
+            </label>
+        </div>
+
+        <details class="fr-mt-2w prompt-editor">
+            <summary class="fr-text--sm">⚙️ Personnaliser les consignes par niveau (quiz)</summary>
+            <p v-if="store.promptDefaults?.fixed_rules.quiz" class="fr-text--sm fr-mt-1w fixed-rules">
+                🔒 {{ store.promptDefaults.fixed_rules.quiz }}
+            </p>
+            <div v-for="level in levels" :key="`qp-${level.key}`" class="fr-input-group fr-mt-1w">
+                <label class="fr-label fr-text--sm" :for="`qp-${level.key}`">{{ level.label }}</label>
+                <textarea
+                    :id="`qp-${level.key}`"
+                    class="fr-input"
+                    rows="3"
+                    v-model="quizPrompts[level.key]"
+                />
+            </div>
+            <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="applyQuizDefaults">
+                ↺ Réinitialiser
+            </button>
+        </details>
 
         <button
             class="fr-btn fr-mt-2w"
@@ -244,24 +280,87 @@
         >
             {{ store.busy === 'quiz' ? 'Génération en cours…' : `Générer ${totalQuestions} question(s)` }}
         </button>
+        <button class="fr-btn fr-btn--secondary fr-mt-2w fr-ml-1w" @click="store.addQuestion()">
+            ➕ Ajouter une question manuelle
+        </button>
         <GenerationProgress kind="quiz" />
         <p v-if="store.busy === 'quiz' && !store.progress.total" class="fr-text--sm fr-mt-1v">
             La génération peut prendre plusieurs minutes selon le volume.
         </p>
+
+        <details class="fr-mt-3w prompt-editor">
+            <summary class="fr-text--sm">🧠 Générer des questions sans document (base du modèle)</summary>
+            <p class="fr-text--sm fr-mt-1w">
+                Utile pour compléter un document : pose des questions générales sur un sujet ou
+                une notion au-delà de ce que le document contient. Les questions sont ajoutées au
+                quiz courant et signalées comme issues de la base du modèle.
+            </p>
+            <div class="fr-input-group">
+                <label class="fr-label fr-text--sm" for="kb-topic">Sujet</label>
+                <input
+                    id="kb-topic"
+                    class="fr-input"
+                    v-model="kb.topic"
+                    placeholder="Ex : la laïcité dans le service public"
+                />
+            </div>
+            <div class="fr-input-group">
+                <label class="fr-label fr-text--sm" for="kb-context">
+                    Périmètre / contexte <span class="fr-hint-text">(optionnel)</span>
+                </label>
+                <textarea
+                    id="kb-context"
+                    class="fr-input"
+                    rows="2"
+                    v-model="kb.additional_context"
+                />
+            </div>
+            <div class="fr-grid-row fr-grid-row--gutters">
+                <div class="fr-col-4" v-for="level in levels" :key="`kb-${level.key}`">
+                    <label class="fr-label fr-text--sm" :for="`kb-count-${level.key}`">
+                        {{ level.label }}
+                    </label>
+                    <input
+                        :id="`kb-count-${level.key}`"
+                        class="fr-input"
+                        type="number"
+                        min="0"
+                        max="50"
+                        v-model.number="kbCounts[level.key]"
+                    />
+                </div>
+            </div>
+            <button
+                class="fr-btn fr-btn--secondary fr-mt-2w"
+                :disabled="store.busy === 'quiz' || !kb.topic.trim() || kbTotal === 0"
+                @click="generateFromKnowledge"
+            >
+                {{ store.busy === 'quiz' ? 'Génération…' : `Générer ${kbTotal} question(s) sans document` }}
+            </button>
+        </details>
     </section>
 
     <!-- Étape 4 : Résultats -->
     <section v-if="store.questions.length" class="fr-mb-4w">
         <h2 class="fr-h4">4. Quiz généré ({{ store.questions.length }} questions)</h2>
 
-        <div class="fr-grid-row fr-grid-row--middle fr-mb-2w">
-            <div class="fr-col">
+        <div class="fr-grid-row fr-grid-row--middle fr-mb-2w fr-grid-row--gutters">
+            <div class="fr-col-auto">
                 <button
                     class="fr-btn fr-btn--secondary"
                     :disabled="store.busy === 'verify'"
                     @click="store.verifyQuiz()"
                 >
                     {{ store.busy === 'verify' ? 'Vérification…' : '🔍 Vérifier les réponses (IA)' }}
+                </button>
+            </div>
+            <div class="fr-col-auto">
+                <button
+                    class="fr-btn fr-btn--tertiary"
+                    :disabled="!store.canUndo"
+                    @click="store.undo()"
+                >
+                    ↩ Annuler la dernière modification
                 </button>
             </div>
         </div>
@@ -398,6 +497,31 @@
             <input id="ex-batch" type="checkbox" v-model="exConfig.batch_mode" />
             <label class="fr-label" for="ex-batch">Traitement par lots (Batch API)</label>
         </div>
+        <div class="fr-checkbox-group">
+            <input id="classify-ex" type="checkbox" v-model="classifyEx" />
+            <label class="fr-label" for="classify-ex">
+                Analyser la consigne (style vs périmètre)
+            </label>
+        </div>
+
+        <details v-if="exPrompts[exConfig.exercise_type]" class="fr-mt-2w prompt-editor">
+            <summary class="fr-text--sm">⚙️ Personnaliser les consignes par niveau (exercices)</summary>
+            <p v-if="store.promptDefaults?.fixed_rules.exercises" class="fr-text--sm fr-mt-1w fixed-rules">
+                🔒 {{ store.promptDefaults.fixed_rules.exercises }}
+            </p>
+            <div v-for="level in levels" :key="`ep-${level.key}`" class="fr-input-group fr-mt-1w">
+                <label class="fr-label fr-text--sm" :for="`ep-${level.key}`">{{ level.label }}</label>
+                <textarea
+                    :id="`ep-${level.key}`"
+                    class="fr-input"
+                    rows="3"
+                    v-model="exPrompts[exConfig.exercise_type][level.key]"
+                />
+            </div>
+            <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="applyExerciseDefaults">
+                ↺ Réinitialiser
+            </button>
+        </details>
 
         <button
             class="fr-btn fr-mt-1w"
@@ -405,6 +529,12 @@
             @click="generateExercises"
         >
             {{ store.busy === 'exercises' ? 'Génération…' : `Générer ${totalExercises} exercice(s)` }}
+        </button>
+        <button
+            class="fr-btn fr-btn--secondary fr-mt-1w fr-ml-1w"
+            @click="store.addExercise(exConfig.exercise_type)"
+        >
+            ➕ Ajouter un exercice manuel
         </button>
         <GenerationProgress kind="exercises" />
         <p v-if="exConfig.exercise_type === 'calcul'" class="fr-text--sm fr-mt-1v">
@@ -425,7 +555,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { ExerciseType } from '@/services/api';
 import { useGenerationStore } from '@/stores/generationStore';
 import QuestionCard from '@/components/QuestionCard.vue';
@@ -441,6 +571,56 @@ const levels = [
     { key: 'moyen', label: '🟡 Moyen' },
     { key: 'difficile', label: '🔴 Difficile' },
 ] as const;
+
+// ── Prompts éditables par niveau ─────────────────────────────────────────────
+const quizPrompts = reactive<Record<string, string>>({ facile: '', moyen: '', difficile: '' });
+const exPrompts = reactive<Record<string, Record<string, string>>>({});
+const classifyQuiz = ref(false);
+const classifyEx = ref(false);
+
+function applyQuizDefaults() {
+    const d = store.promptDefaults?.quiz;
+    if (d) Object.assign(quizPrompts, d);
+}
+function applyExerciseDefaults() {
+    const d = store.promptDefaults?.exercises;
+    if (d) for (const [type, prompts] of Object.entries(d)) exPrompts[type] = { ...prompts };
+}
+
+onMounted(async () => {
+    await store.loadPromptDefaults();
+    applyQuizDefaults();
+    applyExerciseDefaults();
+});
+// Si les défauts arrivent après le montage (chargement asynchrone).
+watch(
+    () => store.promptDefaults,
+    () => {
+        applyQuizDefaults();
+        applyExerciseDefaults();
+    },
+);
+
+// ── Quiz sans document (base de connaissance du LLM) ─────────────────────────
+const kb = reactive({ topic: '', additional_context: '' });
+const kbCounts = reactive<Record<string, number>>({ facile: 0, moyen: 5, difficile: 0 });
+const kbTotal = computed(() =>
+    Object.values(kbCounts).reduce((sum, n) => sum + (Number(n) || 0), 0),
+);
+
+function generateFromKnowledge() {
+    sessionCode.value = '';
+    store.generateQuizFromKnowledge({
+        topic: kb.topic,
+        additional_context: kb.additional_context,
+        difficulty_counts: { ...kbCounts },
+        num_choices: config.num_choices,
+        num_correct: config.num_correct,
+        variable_correct: config.variable_correct,
+        vrai_faux: config.vrai_faux,
+        batch_mode: config.batch_mode,
+    });
+}
 
 const selectedFiles = ref<File[]>([]);
 const visionMode = ref(false);
@@ -493,11 +673,21 @@ function upload() {
 
 function generate() {
     sessionCode.value = '';
-    store.generateQuiz({ difficulty_counts: { ...counts }, ...config });
+    store.generateQuiz({
+        difficulty_counts: { ...counts },
+        ...config,
+        classify_instructions: classifyQuiz.value,
+        difficulty_prompts: { ...quizPrompts },
+    });
 }
 
 function generateExercises() {
-    store.generateExercises({ difficulty_counts: { ...exCounts }, ...exConfig });
+    store.generateExercises({
+        difficulty_counts: { ...exCounts },
+        ...exConfig,
+        classify_instructions: classifyEx.value,
+        custom_exercise_prompts: { ...(exPrompts[exConfig.exercise_type] ?? {}) },
+    });
 }
 
 function editNotions() {
@@ -519,5 +709,20 @@ async function createWorkshop() {
     border: 1px solid var(--border-default-grey);
     border-radius: 0.5rem;
     background: var(--background-alt-grey);
+}
+.prompt-editor {
+    border: 1px solid var(--border-default-grey);
+    border-radius: 0.5rem;
+    padding: 1rem;
+}
+.prompt-editor > summary {
+    cursor: pointer;
+    font-weight: 700;
+}
+.fixed-rules {
+    color: var(--text-mention-grey);
+    background: var(--background-alt-grey);
+    padding: 0.5rem;
+    border-radius: 0.25rem;
 }
 </style>

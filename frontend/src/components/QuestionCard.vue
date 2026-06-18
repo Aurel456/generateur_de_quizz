@@ -13,6 +13,13 @@
                 >
                     {{ notion }}
                 </span>
+                <span
+                    v-if="isLlmKnowledge"
+                    class="fr-badge fr-badge--sm fr-badge--warning fr-ml-1v"
+                    title="Question issue de la base de connaissance du modèle, sans appui documentaire"
+                >
+                    ⚠️ base LLM
+                </span>
             </div>
             <div class="fr-col-auto" v-if="!editing">
                 <button class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm" @click="startEdit">
@@ -43,6 +50,10 @@
             <p v-if="question.explanation" class="fr-text--sm fr-mb-1v">
                 <em>{{ question.explanation }}</em>
             </p>
+            <p v-if="question.citation" class="fr-text--sm fr-mb-1v citation">
+                « {{ question.citation }} »
+            </p>
+            <p v-if="sourceLabel" class="fr-text--xs fr-mb-1v source-line">📄 {{ sourceLabel }}</p>
 
             <!-- Amélioration par IA -->
             <div class="fr-input-group fr-mt-1w">
@@ -128,10 +139,23 @@ const improving = ref(false);
 const instruction = ref('');
 const draft = reactive<QuizQuestion>(clone(props.question));
 
+const LLM_KNOWLEDGE_SOURCE = 'Base de connaissance du modèle LLM';
+
 const badgeClass = computed(() => {
     if (props.question.difficulty_level === 'facile') return 'fr-badge--success';
     if (props.question.difficulty_level === 'difficile') return 'fr-badge--error';
     return 'fr-badge--new';
+});
+
+const isLlmKnowledge = computed(() => props.question.source_document === LLM_KNOWLEDGE_SOURCE);
+
+const sourceLabel = computed(() => {
+    if (isLlmKnowledge.value) return '';
+    const parts: string[] = [];
+    if (props.question.source_document) parts.push(props.question.source_document);
+    if (props.question.source_pages?.length)
+        parts.push(`p. ${props.question.source_pages.join(', ')}`);
+    return parts.join(' — ');
 });
 
 function clone(q: QuizQuestion): QuizQuestion {
@@ -173,5 +197,13 @@ async function improve() {
 .answer-correct {
     color: var(--text-default-success);
     font-weight: 700;
+}
+.citation {
+    border-left: 3px solid var(--border-default-grey);
+    padding-left: 0.5rem;
+    color: var(--text-mention-grey);
+}
+.source-line {
+    color: var(--text-mention-grey);
 }
 </style>
