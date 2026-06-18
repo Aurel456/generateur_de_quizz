@@ -5,7 +5,7 @@
         <p>{{ error }}</p>
     </div>
 
-    <!-- Accès : code + nom -->
+    <!-- Accès : code -->
     <section v-if="!session" class="fr-mb-4w">
         <div class="fr-input-group">
             <label class="fr-label" for="code">Code de session</label>
@@ -16,13 +16,36 @@
         </button>
     </section>
 
+    <!-- Pool : saisie du nom avant de tirer un sous-ensemble -->
+    <section v-else-if="needsStart && !result">
+        <h2 class="fr-h4">{{ session.title }}</h2>
+        <div class="fr-alert fr-alert--info fr-mb-2w">
+            <p class="fr-mb-0">
+                Quiz en mode <strong>pool</strong> : vous recevrez un sous-ensemble de questions
+                tiré au sort. Vous pourrez réessayer avec de nouvelles questions.
+            </p>
+        </div>
+        <div class="fr-input-group">
+            <label class="fr-label" for="name-pool">Votre nom</label>
+            <input id="name-pool" class="fr-input" v-model="participantName" />
+        </div>
+        <button
+            class="fr-btn fr-mt-1w"
+            :disabled="loading || !participantName.trim()"
+            @click="startPool"
+        >
+            {{ loading ? 'Préparation…' : 'Commencer le quiz' }}
+        </button>
+    </section>
+
     <!-- Quiz -->
     <section v-else-if="!result">
         <h2 class="fr-h4">{{ session.title }}</h2>
-        <div class="fr-input-group">
+        <div v-if="!isPool" class="fr-input-group">
             <label class="fr-label" for="name">Votre nom</label>
             <input id="name" class="fr-input" v-model="participantName" />
         </div>
+        <p v-else class="fr-text--sm">Participant : <strong>{{ participantName }}</strong></p>
 
         <article
             v-for="(q, qi) in session.questions"
@@ -30,11 +53,7 @@
             class="fr-my-3w fr-p-3w question-card"
         >
             <p class="fr-text--bold">{{ qi + 1 }}. {{ q.question }}</p>
-            <div
-                v-for="(text, label) in q.choices"
-                :key="label"
-                class="fr-checkbox-group"
-            >
+            <div v-for="(text, label) in q.choices" :key="label" class="fr-checkbox-group">
                 <input
                     :id="`q${qi}-${label}`"
                     type="checkbox"
@@ -62,8 +81,13 @@
     <!-- Résultats -->
     <section v-else>
         <h2 class="fr-h4">Résultat</h2>
-        <div class="fr-callout">
+        <div class="fr-callout" :class="passClass">
             <p class="fr-callout__title">Score : {{ result.score }} / {{ result.total }}</p>
+            <p v-if="isPool" class="fr-mb-0">
+                {{ scorePercent }} % —
+                <strong>{{ passed ? '✓ Seuil atteint' : '✗ Seuil non atteint' }}</strong>
+                (seuil : {{ Math.round(passThreshold * 100) }} %)
+            </p>
         </div>
 
         <article
@@ -92,7 +116,10 @@
             </p>
         </article>
 
-        <button class="fr-btn fr-btn--secondary" @click="restart">Recommencer</button>
+        <button v-if="isPool" class="fr-btn fr-mr-1w" :disabled="loading" @click="retryPool">
+            🔄 Réessayer (nouvelles questions)
+        </button>
+        <button class="fr-btn fr-btn--secondary" @click="restart">Quitter</button>
     </section>
 </template>
 
@@ -112,6 +139,23 @@ const result = ref<{ score: number; total: number; corrections: Correction[] } |
 const loading = ref(false);
 const error = ref('');
 
+// État pool.
+const started = ref(false);
+const poolIndices = ref<number[]>([]);
+const passThreshold = ref(0.7);
+
+const isPool = computed(() => session.value?.is_pool ?? false);
+const needsStart = computed(() => isPool.value && !started.value);
+const scorePercent = computed(() =>
+    result.value && result.value.total > 0
+        ? Math.round((result.value.score / result.value.total) * 100)
+        : 0,
+);
+const passed = computed(() => scorePercent.value / 100 >= passThreshold.value);
+const passClass = computed(() =>
+    isPool.value ? (passed.value ? 'pool-pass' : 'pool-fail') : '',
+);
+
 const missing = computed(() => {
     if (!session.value) return [];
     return session.value.questions
@@ -124,16 +168,40 @@ function correctionFor(index: number): Correction | undefined {
     return result.value?.corrections.find((c) => c.index === index);
 }
 
+function resetAnswers() {
+    answers.value = {};
+    session.value?.questions.forEach((_, i) => (answers.value[i] = []));
+}
+
 async function loadSession() {
     loading.value = true;
     error.value = '';
     try {
         session.value = await api.getSession(code.value.trim().toUpperCase());
-        answers.value = {};
-        session.value.questions.forEach((_, i) => (answers.value[i] = []));
+        started.value = false;
+        resetAnswers();
         if (!session.value.is_active) error.value = 'Cette session est fermée.';
     } catch (err) {
         error.value = err instanceof Error ? err.message : 'Session introuvable.';
+    } finally {
+        loading.value = false;
+    }
+}
+
+async function startPool() {
+    if (!session.value || !participantName.value.trim()) return;
+    loading.value = true;
+    error.value = '';
+    try {
+        const subset = await api.getPoolSubset(session.value.session_code, participantName.value.trim());
+        session.value.questions = subset.questions;
+        poolIndices.value = subset.pool_indices;
+        passThreshold.value = subset.pass_threshold;
+        started.value = true;
+        result.value = null;
+        resetAnswers();
+    } catch (err) {
+        error.value = err instanceof Error ? err.message : 'Impossible de charger le sous-ensemble.';
     } finally {
         loading.value = false;
     }
@@ -150,6 +218,7 @@ async function submit() {
             session.value.session_code,
             participantName.value.trim(),
             payload,
+            isPool.value ? poolIndices.value : undefined,
         );
     } catch (err) {
         error.value = err instanceof Error ? err.message : 'Échec de la soumission.';
@@ -158,9 +227,14 @@ async function submit() {
     }
 }
 
+function retryPool() {
+    startPool();
+}
+
 function restart() {
     result.value = null;
     session.value = null;
+    started.value = false;
     answers.value = {};
 }
 
@@ -187,5 +261,11 @@ onMounted(() => {
 .answer-correct {
     color: var(--text-default-success);
     font-weight: 700;
+}
+.pool-pass {
+    border-left: 4px solid var(--border-plain-success);
+}
+.pool-fail {
+    border-left: 4px solid var(--border-plain-error);
 }
 </style>

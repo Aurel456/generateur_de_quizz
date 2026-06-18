@@ -7,16 +7,29 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from backend.app.chat_store import chat_store
-from backend.app.converters import notion_to_dict, question_to_dict
+from backend.app.converters import (
+    dict_to_notion,
+    exercise_to_dict,
+    notion_to_dict,
+    question_to_dict,
+)
 from backend.app.schemas import (
+    ChatGenerateExercisesRequest,
     ChatGenerateRequest,
     ChatMessageRequest,
     ChatResponse,
+    ExerciseDTO,
+    ExercisesResponse,
     NotionDTO,
     QuizQuestionDTO,
     QuizResponse,
 )
-from generation.chat_mode import generate_quiz_direct, init_session, process_user_message
+from generation.chat_mode import (
+    generate_exercises_direct,
+    generate_quiz_direct,
+    init_session,
+    process_user_message,
+)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 log = logging.getLogger(__name__)
@@ -63,6 +76,11 @@ def generate_quiz_from_chat(chat_id: str, payload: ChatGenerateRequest) -> QuizR
     if not counts:
         raise HTTPException(status_code=400, detail="Indiquez au moins une question à générer.")
 
+    # Notions éditées/validées dans le chat : elles remplacent celles de la session.
+    if payload.notions:
+        session.notions = [dict_to_notion(n.model_dump()) for n in payload.notions]
+        chat_store.put(session, chat_id)
+
     try:
         quiz = generate_quiz_direct(
             session,
@@ -81,3 +99,32 @@ def generate_quiz_from_chat(chat_id: str, payload: ChatGenerateRequest) -> QuizR
         difficulty=quiz.difficulty,
         questions=[QuizQuestionDTO(**question_to_dict(q)) for q in quiz.questions],
     )
+
+
+@router.post("/{chat_id}/generate-exercises", response_model=ExercisesResponse)
+def generate_exercises_from_chat(
+    chat_id: str, payload: ChatGenerateExercisesRequest
+) -> ExercisesResponse:
+    session = chat_store.get(chat_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Conversation inconnue ou expirée.")
+
+    counts = {k: v for k, v in payload.difficulty_counts.items() if v > 0}
+    if not counts:
+        raise HTTPException(status_code=400, detail="Indiquez au moins un exercice à générer.")
+
+    if payload.notions:
+        session.notions = [dict_to_notion(n.model_dump()) for n in payload.notions]
+        chat_store.put(session, chat_id)
+
+    try:
+        exercises = generate_exercises_direct(
+            session,
+            difficulty_counts=counts,
+            batch_mode=payload.batch_mode,
+        )
+    except Exception:
+        log.exception("Échec génération exercices (mode libre)")
+        raise HTTPException(status_code=502, detail="Erreur lors de la génération des exercices.")
+
+    return ExercisesResponse(exercises=[ExerciseDTO(**exercise_to_dict(e)) for e in exercises])

@@ -512,10 +512,36 @@ export const useGenerationStore = defineStore('generation', {
                     title,
                     this.questions,
                     this.enabledNotions,
+                    this.exercises,
                 );
                 return session_code;
             } catch (err) {
                 this.error = err instanceof Error ? err.message : 'Échec de la création de session.';
+                return '';
+            } finally {
+                this.busy = '';
+            }
+        },
+
+        /** Crée une session « pool » : sous-ensemble aléatoire par participant. */
+        async createPoolSession(
+            title: string,
+            subsetSize: number,
+            passThreshold: number,
+        ): Promise<string> {
+            this.busy = 'session';
+            this.error = '';
+            try {
+                const { session_code } = await api.createPoolSession({
+                    title,
+                    questions: this.questions,
+                    notions: this.enabledNotions,
+                    subset_size: subsetSize,
+                    pass_threshold: passThreshold,
+                });
+                return session_code;
+            } catch (err) {
+                this.error = err instanceof Error ? err.message : 'Échec de la création de session pool.';
                 return '';
             } finally {
                 this.busy = '';

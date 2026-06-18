@@ -128,6 +128,16 @@ export interface ParticipantSession {
     session_code: string;
     title: string;
     is_active: boolean;
+    is_pool: boolean;
+    questions: ParticipantQuestion[];
+}
+
+export interface PoolSubset {
+    session_code: string;
+    title: string;
+    is_active: boolean;
+    pass_threshold: number;
+    pool_indices: number[];
     questions: ParticipantQuestion[];
 }
 
@@ -359,27 +369,54 @@ export const api = {
         title: string,
         questions: QuizQuestion[],
         notions: Notion[],
+        exercises: Exercise[] = [],
     ): Promise<{ session_code: string; title: string }> {
         return request('/sessions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, questions, notions }),
+            body: JSON.stringify({ title, questions, notions, exercises }),
         });
+    },
+
+    createPoolSession(body: {
+        title: string;
+        questions: QuizQuestion[];
+        notions: Notion[];
+        subset_size: number;
+        pass_threshold: number;
+    }): Promise<{ session_code: string; title: string }> {
+        return request('/sessions/create-pool', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+    },
+
+    deactivateSession(code: string): Promise<{ session_code: string; is_active: boolean }> {
+        return request(`/sessions/${encodeURIComponent(code)}/deactivate`, { method: 'POST' });
     },
 
     getSession(code: string): Promise<ParticipantSession> {
         return request(`/sessions/${encodeURIComponent(code)}`);
     },
 
+    getPoolSubset(code: string, participantName: string): Promise<PoolSubset> {
+        const q = `participant_name=${encodeURIComponent(participantName)}`;
+        return request(`/sessions/${encodeURIComponent(code)}/subset?${q}`);
+    },
+
     submitAnswers(
         code: string,
         participantName: string,
         answers: Record<string, string[]>,
+        poolIndices?: number[],
     ): Promise<SubmitResult> {
+        const body: Record<string, unknown> = { participant_name: participantName, answers };
+        if (poolIndices) body.pool_indices = poolIndices;
         return request(`/sessions/${encodeURIComponent(code)}/submit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ participant_name: participantName, answers }),
+            body: JSON.stringify(body),
         });
     },
 
@@ -510,9 +547,27 @@ export const api = {
     },
     chatGenerateQuiz(
         chatId: string,
-        body: { difficulty_counts: Record<string, number>; num_choices: number; num_correct: number },
+        body: {
+            difficulty_counts: Record<string, number>;
+            num_choices: number;
+            num_correct: number;
+            vrai_faux?: boolean;
+            variable_correct?: boolean;
+            notions?: Notion[];
+        },
     ): Promise<{ title: string; questions: QuizQuestion[] }> {
         return request(`/chat/${encodeURIComponent(chatId)}/generate-quiz`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+    },
+
+    chatGenerateExercises(
+        chatId: string,
+        body: { difficulty_counts: Record<string, number>; batch_mode?: boolean; notions?: Notion[] },
+    ): Promise<{ exercises: Exercise[] }> {
+        return request(`/chat/${encodeURIComponent(chatId)}/generate-exercises`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),

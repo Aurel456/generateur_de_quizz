@@ -556,12 +556,32 @@
                 <label class="fr-label" for="session-title">Titre de la session</label>
                 <input id="session-title" class="fr-input" v-model="sessionTitle" />
             </div>
+            <div class="fr-checkbox-group">
+                <input id="pool-mode" type="checkbox" v-model="poolMode" />
+                <label class="fr-label" for="pool-mode">
+                    Mode Pool
+                    <span class="fr-hint-text">
+                        Chaque participant tire un sous-ensemble aléatoire de questions ; il peut
+                        réessayer avec de nouvelles questions.
+                    </span>
+                </label>
+            </div>
+            <div v-if="poolMode" class="fr-grid-row fr-grid-row--gutters">
+                <div class="fr-col-6">
+                    <label class="fr-label fr-text--sm" for="subset-size">Questions par participant</label>
+                    <input id="subset-size" class="fr-input" type="number" min="1" :max="store.questions.length" v-model.number="subsetSize" />
+                </div>
+                <div class="fr-col-6">
+                    <label class="fr-label fr-text--sm" for="pass-threshold">Seuil de réussite (%)</label>
+                    <input id="pass-threshold" class="fr-input" type="number" min="0" max="100" v-model.number="passThreshold" />
+                </div>
+            </div>
             <button
                 class="fr-btn fr-mt-1w"
                 :disabled="store.busy === 'session' || !sessionTitle.trim()"
                 @click="createSession"
             >
-                {{ store.busy === 'session' ? 'Création…' : 'Créer la session' }}
+                {{ store.busy === 'session' ? 'Création…' : poolMode ? 'Créer la session pool' : 'Créer la session' }}
             </button>
 
             <div v-if="sessionCode" class="fr-alert fr-alert--success fr-mt-2w">
@@ -800,6 +820,9 @@ const config = reactive({
 const sessionTitle = ref('');
 const sessionCode = ref('');
 const workshopCode = ref('');
+const poolMode = ref(false);
+const subsetSize = ref(5);
+const passThreshold = ref(70); // en %
 
 const exCounts = reactive<Record<string, number>>({ facile: 0, moyen: 2, difficile: 0 });
 const exConfig = reactive({
@@ -885,7 +908,9 @@ function editNotions() {
 }
 
 async function createSession() {
-    sessionCode.value = await store.createSession(sessionTitle.value);
+    sessionCode.value = poolMode.value
+        ? await store.createPoolSession(sessionTitle.value, subsetSize.value, passThreshold.value / 100)
+        : await store.createSession(sessionTitle.value);
 }
 
 async function createWorkshop() {

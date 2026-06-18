@@ -154,6 +154,17 @@ class CreateSessionRequest(ApiModel):
     title: str = Field(..., min_length=1, max_length=200)
     questions: list[QuizQuestionDTO]
     notions: list[NotionDTO] = Field(default_factory=list)
+    exercises: list[ExerciseDTO] = Field(default_factory=list)
+
+
+class CreatePoolSessionRequest(ApiModel):
+    """Session « pool » : chaque participant reçoit un sous-ensemble aléatoire."""
+
+    title: str = Field(..., min_length=1, max_length=200)
+    questions: list[QuizQuestionDTO]
+    notions: list[NotionDTO] = Field(default_factory=list)
+    subset_size: int = Field(..., ge=1)
+    pass_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
 
 
 class CreateSessionResponse(ApiModel):
@@ -174,6 +185,19 @@ class ParticipantSessionResponse(ApiModel):
     session_code: str
     title: str
     is_active: bool
+    is_pool: bool = False  # session pool : passer par GET /sessions/{code}/subset
+    questions: list[ParticipantChoice]
+
+
+class PoolSubsetResponse(ApiModel):
+    """Sous-ensemble servi à un participant d'une session pool. `pool_indices` est
+    renvoyé tel quel au submit pour reconstruire le corrigé côté serveur (stateless)."""
+
+    session_code: str
+    title: str
+    is_active: bool
+    pass_threshold: float = 0.7
+    pool_indices: list[int]
     questions: list[ParticipantChoice]
 
 
@@ -181,6 +205,8 @@ class SubmitAnswersRequest(ApiModel):
     participant_name: str = Field(..., min_length=1, max_length=120)
     # {index_question (str): [labels sélectionnés]}
     answers: dict[str, list[str]]
+    # Session pool : indices du sous-ensemble reçu (ordre = ordre des questions vues).
+    pool_indices: list[int] | None = None
 
 
 class QuestionCorrection(ApiModel):
@@ -331,6 +357,14 @@ class ChatGenerateRequest(ApiModel):
     num_correct: int = Field(default=1, ge=1)
     vrai_faux: bool = False
     variable_correct: bool = False
+    # Notions éditées/validées dans le chat (remplacent celles de la session si fournies).
+    notions: list[NotionDTO] = Field(default_factory=list)
+
+
+class ChatGenerateExercisesRequest(ApiModel):
+    difficulty_counts: dict[str, int] = Field(default_factory=lambda: {"moyen": 3})
+    batch_mode: bool = False
+    notions: list[NotionDTO] = Field(default_factory=list)
 
 
 # ── Stats globales ───────────────────────────────────────────────────────────

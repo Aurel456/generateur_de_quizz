@@ -41,9 +41,9 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 
 ### Mode libre (génération par conversation)
 - ✅ Conversation, génération des notions depuis le chat, génération quiz directe (ChatPage)
-- 🟡 Notions affichées mais **non éditables/validables** dans le chat ; `suggested_config` renvoyé mais **non appliqué** au formulaire
-- ❌ Création de session partagée depuis le mode libre ; récupération du quiz dans le store principal
-- ❌ `generate_exercises_direct` (exercices en mode libre)
+- ✅ Notions éditables/validables dans le chat ; `suggested_config` appliqué au formulaire (Phase 4)
+- ✅ Création de session partagée depuis le mode libre (Phase 4)
+- ✅ `generate_exercises_direct` (exercices en mode libre) (Phase 4)
 
 ### Notions fondamentales
 - ✅ Détection, fusion (Regrouper), tout cocher/décocher, chat LLM (edit), toggle actif
@@ -57,14 +57,14 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 ### Sessions partagées & Analytics
 - ✅ Création session, page participant (questions manquantes), scoring serveur, correction
 - ✅ Dashboard analytics (métriques, taux/question, taux/notion, classement, recommandations IA)
-- 🟡 Fermeture de session (`deactivate_session`) non exposée
-- ❌ **Mode Pool** (création pool, sous-ensemble par participant, seuil, « réessayer » — `create_pool_session`/`get_next_subset`)
-- ❌ Sessions incluant les exercices (le back accepte `exercises_data`, le front ne l'envoie pas)
+- ✅ Fermeture de session (`deactivate_session`) exposée (Phase 4)
+- ✅ **Mode Pool** (création pool, sous-ensemble par participant, seuil, « réessayer ») (Phase 4)
+- ✅ Sessions incluant les exercices (`exercises` envoyé à la création) (Phase 4)
 
 ### Ateliers formateurs
 - ✅ Création (depuis Génération), lecture, mise à jour, publication (avec option pool), rafraîchir
-- 🟡 WorkshopPage = vue + publication ; **édition** réelle limitée
-- ❌ 4 onglets (Questions/Exercices/Notions/Outils), édition complète + réordonnancement (⬆️/⬇️), chat LLM par onglet, ajout manuel, import depuis une session, fusion de deux ateliers
+- ✅ WorkshopPage = éditeur à 4 onglets + publication (Phase 4)
+- ✅ 4 onglets (Questions/Exercices/Notions/Outils), édition + réordonnancement (⬆️/⬇️), chat IA notions par onglet, fusion d'ateliers, enregistrement (Phase 4) ; ❌ import depuis une session (réponses masquées côté participant)
 
 ### Guide formateur & Stats
 - ✅ Schéma pipeline, FAQ, stats globales (GuidePage)
@@ -138,11 +138,23 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
       à `/documents`.
 - [ ] Restent ❌ : parser API externe (vision), suivi de progression spécifique des batchs.
 
-**Phase 4 — Sessions, pool, ateliers**
-- [ ] Mode Pool (création + sous-ensemble participant + seuil + réessayer)
-- [ ] Sessions avec exercices ; fermeture de session
-- [ ] Ateliers complets : 4 onglets, édition + réordonnancement, chat LLM par onglet, import depuis session, fusion d'ateliers
-- [ ] Mode libre complet : édition/validation notions, pré-remplissage config, création de session, exercices
+**Phase 4 — Sessions, pool, ateliers** ✅ (2026-06-18)
+- [x] Mode Pool : `POST /sessions/create-pool`, `GET /sessions/{code}/subset` (flux stateless :
+      le sous-ensemble porte ses `pool_indices`, renvoyés au submit pour reconstruire le corrigé
+      depuis `pool_json`), seuil de réussite affiché, « Réessayer » (nouveau sous-ensemble).
+      ParticipantPage gère nom→sous-ensemble→réessayer.
+- [x] Sessions avec exercices (`exercises` dans CreateSessionRequest) ; fermeture de session
+      (`POST /sessions/{code}/deactivate` + bouton sur AnalyticsPage avec badge Ouverte/Fermée).
+- [x] Ateliers : éditeur à **4 onglets** (Questions/Exercices/Notions/Outils), édition inline +
+      **réordonnancement** ⬆️/⬇️ + suppression, **chat IA par onglet** (notions via `/notions/edit`),
+      **fusion d'un autre atelier** (append questions/exercices/notions), enregistrement
+      (`PUT /workshops/{code}`). NB : import *depuis une session* non faisable (réponses masquées
+      côté participant par design) → remplacé par la fusion d'ateliers (données complètes).
+- [x] Mode libre complet : notions éditables/validables (toggle/edit/suppr), `suggested_config`
+      appliquée au formulaire, exercices (`POST /chat/{id}/generate-exercises`), création de
+      session depuis le chat.
+- [ ] Reste optionnel : passer la génération mode libre en async (jobs) — couvert pour l'instant
+      par `proxy_read_timeout 600s`.
 
 **Phase 5 — Compléments & bascule**
 - [ ] Guide : points d'intervention + chatbot assistant formateur ; stats en bandeau

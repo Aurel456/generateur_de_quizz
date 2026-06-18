@@ -19,7 +19,25 @@
     </div>
 
     <template v-if="data">
-        <h2 class="fr-h4">{{ data.session.title }}</h2>
+        <div class="fr-grid-row fr-grid-row--middle fr-mb-2w">
+            <h2 class="fr-col fr-h4 fr-mb-0">{{ data.session.title }}</h2>
+            <div class="fr-col-auto">
+                <span
+                    class="fr-badge fr-mr-2v"
+                    :class="data.session.is_active ? 'fr-badge--success' : 'fr-badge--error'"
+                >
+                    {{ data.session.is_active ? 'Ouverte' : 'Fermée' }}
+                </span>
+                <button
+                    v-if="data.session.is_active"
+                    class="fr-btn fr-btn--secondary fr-btn--sm"
+                    :disabled="closing"
+                    @click="closeSession"
+                >
+                    {{ closing ? 'Fermeture…' : '🔒 Fermer la session' }}
+                </button>
+            </div>
+        </div>
 
         <!-- Métriques globales -->
         <div class="fr-grid-row fr-grid-row--gutters fr-mb-4w">
@@ -154,6 +172,7 @@ const data = ref<AnalyticsData | null>(null);
 const reco = ref<Recommendations | null>(null);
 const loading = ref(false);
 const recoLoading = ref(false);
+const closing = ref(false);
 const error = ref('');
 
 const metrics = computed(() => {
@@ -198,6 +217,20 @@ async function load() {
         data.value = null;
     } finally {
         loading.value = false;
+    }
+}
+
+async function closeSession() {
+    if (!data.value) return;
+    closing.value = true;
+    error.value = '';
+    try {
+        await api.deactivateSession(code.value.trim().toUpperCase());
+        data.value.session.is_active = false;
+    } catch (err) {
+        error.value = err instanceof Error ? err.message : 'Échec de la fermeture.';
+    } finally {
+        closing.value = false;
     }
 }
 
