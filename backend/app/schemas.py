@@ -367,6 +367,20 @@ class ChatGenerateExercisesRequest(ApiModel):
     notions: list[NotionDTO] = Field(default_factory=list)
 
 
+# ── Assistant formateur (chatbot d'aide à l'usage) ───────────────────────────
+class AssistantMessage(ApiModel):
+    role: str  # user | assistant
+    content: str = Field(..., min_length=1, max_length=5_000)
+
+
+class AssistantChatRequest(ApiModel):
+    messages: list[AssistantMessage] = Field(..., min_length=1)
+
+
+class AssistantChatResponse(ApiModel):
+    reply: str
+
+
 # ── Stats globales ───────────────────────────────────────────────────────────
 class GlobalStats(ApiModel):
     total_questions: int = 0

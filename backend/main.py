@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from backend.app.config import settings  # noqa: E402
 from backend.app.api import (  # noqa: E402
     acronyms,
+    assistant,
     chat,
     documents,
     exercises,
@@ -58,6 +59,7 @@ app.include_router(chat.router)
 app.include_router(stats.router)
 app.include_router(jobs.router)
 app.include_router(prompts.router)
+app.include_router(assistant.router)
 
 
 @app.get("/")

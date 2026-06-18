@@ -68,8 +68,8 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 
 ### Guide formateur & Stats
 - ✅ Schéma pipeline, FAQ, stats globales (GuidePage)
-- 🟡 Points d'intervention détaillés ; stats en bandeau permanent
-- ❌ Chatbot « assistant formateur » (chat d'aide à l'usage, distinct du mode libre)
+- ✅ Points d'intervention détaillés (Phase 5)
+- ✅ Chatbot « assistant formateur » (`/assistant/chat`, distinct du mode libre) (Phase 5)
 
 ### Mode Vision / Batch / Raisonnement
 - ✅ Toggle Vision à l'upload, toggle Batch (quiz/exercices), cache LLM + token tracking (métier)
@@ -156,11 +156,16 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 - [ ] Reste optionnel : passer la génération mode libre en async (jobs) — couvert pour l'instant
       par `proxy_read_timeout 600s`.
 
-**Phase 5 — Compléments & bascule**
-- [ ] Guide : points d'intervention + chatbot assistant formateur ; stats en bandeau
-- [ ] Vision one-shot + parser API externe ; suivi progression batch
-- [ ] Tests d'API ; (auth si besoin)
-- [ ] Recette de bout en bout, puis **retrait du service Streamlit** de `compose.yml`
+**Phase 5 — Compléments & bascule** 🟢 (2026-06-18, hors bascule finale)
+- [x] Guide : points d'intervention détaillés + **chatbot assistant formateur**
+      (`POST /assistant/chat` via `call_llm_chat`, distinct du mode libre) ; stats globales (GuidePage).
+- [x] Vision One-shot (Phase 3) ; suivi de progression des batchs couvert par la barre globale
+      (`progress_callback`). ❌ parser API externe (dépendance externe non disponible) — hors périmètre.
+- [x] Tests d'API : `backend/tests/test_jobs.py` (JobStore : progression/items/succès/erreur/éviction),
+      **5 tests passent** hors ligne. Auth : restée désactivée (comme l'app d'origine).
+- [ ] **Recette de bout en bout + retrait du service Streamlit de `compose.yml`** : à faire APRÈS
+      validation serveur par l'utilisateur (changement opérationnel non réversible) — non effectué
+      unilatéralement. Streamlit reste en parallèle (`/quizzator-streamlit`) jusqu'au feu vert.
 
 ---
 

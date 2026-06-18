@@ -577,4 +577,15 @@ export const api = {
     getGlobalStats(): Promise<GlobalStats> {
         return request('/stats/global');
     },
+
+    // Assistant formateur (aide à l'usage)
+    assistantChat(
+        messages: { role: string; content: string }[],
+    ): Promise<{ reply: string }> {
+        return request('/assistant/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages }),
+        });
+    },
 };

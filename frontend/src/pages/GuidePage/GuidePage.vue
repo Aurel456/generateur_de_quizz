@@ -22,6 +22,50 @@ Document(s)
                         └─► Session partagée  ──►  Participants  ──►  Analytics
                         └─► Atelier formateur (co-édition, publication)</pre>
 
+    <!-- Points d'intervention -->
+    <h2 class="fr-h4">Points d'intervention du formateur</h2>
+    <ul class="fr-mb-4w">
+        <li v-for="(p, i) in interventions" :key="i" class="fr-mb-1v">
+            <strong>{{ p.step }}</strong> — {{ p.detail }}
+        </li>
+    </ul>
+
+    <!-- Assistant formateur -->
+    <h2 class="fr-h4">Assistant d'aide</h2>
+    <p class="fr-text--sm">Posez une question sur l'utilisation de l'outil.</p>
+    <div v-if="chat.length" class="fr-mb-2w chat-box">
+        <div
+            v-for="(m, i) in chat"
+            :key="i"
+            class="fr-p-2w chat-msg"
+            :class="m.role === 'user' ? 'chat-user' : 'chat-assistant'"
+        >
+            <strong>{{ m.role === 'user' ? 'Vous' : 'Assistant' }} :</strong>
+            <span style="white-space: pre-wrap">{{ m.content }}</span>
+        </div>
+    </div>
+    <div class="fr-grid-row fr-grid-row--gutters fr-grid-row--bottom fr-mb-4w">
+        <div class="fr-col">
+            <label class="fr-label" for="assistant-input">Votre question</label>
+            <input
+                id="assistant-input"
+                class="fr-input"
+                v-model="assistantInput"
+                :disabled="asking"
+                placeholder="Ex : comment créer une session pool ?"
+                @keyup.enter="askAssistant"
+            />
+        </div>
+        <div class="fr-col-auto">
+            <button class="fr-btn" :disabled="asking || !assistantInput.trim()" @click="askAssistant">
+                {{ asking ? '…' : 'Demander' }}
+            </button>
+        </div>
+    </div>
+    <div v-if="assistantError" class="fr-alert fr-alert--warning fr-mb-3w" role="alert">
+        <p class="fr-mb-0">{{ assistantError }}</p>
+    </div>
+
     <!-- FAQ -->
     <h2 class="fr-h4">FAQ</h2>
     <div class="fr-accordions-group">
@@ -51,6 +95,36 @@ const stats = ref<GlobalStats>({
     total_sessions: 0,
 });
 const open = ref<number | null>(0);
+
+const interventions = [
+    { step: '1. Documents', detail: 'choisir des sources lisibles ; activer Vision pour les PDF riches en schémas, One-shot pour une vue d’ensemble.' },
+    { step: '2. Notions', detail: 'valider/compléter les notions détectées, regrouper par thématique, désactiver le hors-sujet avant de générer.' },
+    { step: '3. Configuration', detail: 'doser les niveaux, ajuster les prompts par niveau, préciser une consigne libre (style et/ou périmètre).' },
+    { step: '4. Relecture', detail: 'éditer manuellement ou via l’IA, lancer la vérification IA, annuler si besoin (historique).' },
+    { step: '5. Diffusion', detail: 'créer une session (ou pool), suivre les analytics, fermer la session, ou co-éditer via un atelier.' },
+];
+
+const chat = ref<{ role: 'user' | 'assistant'; content: string }[]>([]);
+const assistantInput = ref('');
+const asking = ref(false);
+const assistantError = ref('');
+
+async function askAssistant() {
+    const text = assistantInput.value.trim();
+    if (!text) return;
+    chat.value.push({ role: 'user', content: text });
+    assistantInput.value = '';
+    asking.value = true;
+    assistantError.value = '';
+    try {
+        const { reply } = await api.assistantChat(chat.value.map((m) => ({ role: m.role, content: m.content })));
+        chat.value.push({ role: 'assistant', content: reply });
+    } catch (err) {
+        assistantError.value = err instanceof Error ? err.message : 'Assistant indisponible.';
+    } finally {
+        asking.value = false;
+    }
+}
 
 const metrics = computed(() => [
     { label: 'Questions générées', value: stats.value.total_questions },
@@ -103,5 +177,17 @@ onMounted(async () => {
     border-radius: 0.5rem;
     overflow-x: auto;
     font-size: 0.85rem;
+}
+.chat-box {
+    border: 1px solid var(--border-default-grey);
+    border-radius: 0.5rem;
+    max-height: 20rem;
+    overflow-y: auto;
+}
+.chat-msg + .chat-msg {
+    border-top: 1px solid var(--border-default-grey);
+}
+.chat-user {
+    background: var(--background-alt-blue-france);
 }
 </style>
