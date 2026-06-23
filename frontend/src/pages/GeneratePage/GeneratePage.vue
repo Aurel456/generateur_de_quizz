@@ -68,6 +68,17 @@
             </div>
         </details>
 
+        <div v-if="selectedFiles.length" class="fr-mt-2w">
+            <p class="fr-text--sm fr-mb-1v">
+                <strong>{{ selectedFiles.length }}</strong> fichier(s) sélectionné(s) :
+            </p>
+            <ul class="fr-tags-group">
+                <li v-for="f in selectedFiles" :key="f.name">
+                    <span class="fr-tag fr-tag--sm">📄 {{ f.name }} · {{ formatSize(f.size) }}</span>
+                </li>
+            </ul>
+        </div>
+
         <button
             class="fr-btn fr-mt-2w"
             :disabled="!selectedFiles.length || store.busy === 'upload'"
@@ -76,17 +87,32 @@
             {{ store.busy === 'upload' ? 'Analyse…' : 'Analyser les documents' }}
         </button>
 
-        <div v-if="store.upload" class="fr-mt-2w fr-text--sm">
-            <p class="fr-mb-1v">
-                <strong>{{ store.upload.num_chunks }}</strong> blocs •
-                <strong>{{ store.upload.total_tokens }}</strong> tokens •
-                {{ store.upload.documents.length }} document(s)
-            </p>
-            <ul class="fr-mb-0">
-                <li v-for="doc in store.upload.documents" :key="doc.name">
-                    {{ doc.name }} — {{ doc.total_tokens }} tokens
-                </li>
-            </ul>
+        <div v-if="store.upload" class="fr-mt-2w">
+            <div class="fr-alert fr-alert--success fr-alert--sm fr-mb-2w">
+                <p class="fr-mb-0">
+                    ✅ Analyse terminée : <strong>{{ store.upload.documents.length }}</strong>
+                    document(s), <strong>{{ store.upload.num_chunks }}</strong> blocs,
+                    <strong>{{ store.upload.total_tokens.toLocaleString('fr-FR') }}</strong> tokens.
+                </p>
+            </div>
+            <div class="fr-table fr-table--sm fr-table--bordered">
+                <table>
+                    <thead>
+                        <tr>
+                            <th scope="col">Document</th>
+                            <th scope="col">Pages</th>
+                            <th scope="col">Tokens</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="doc in store.upload.documents" :key="doc.name">
+                            <td>{{ doc.name }}</td>
+                            <td>{{ doc.num_pages || '—' }}</td>
+                            <td>{{ doc.total_tokens.toLocaleString('fr-FR') }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </section>
 
@@ -856,6 +882,12 @@ const verifySummary = computed(() => ({
 function onFilesChange(event: Event) {
     const input = event.target as HTMLInputElement;
     selectedFiles.value = input.files ? Array.from(input.files) : [];
+}
+
+function formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} o`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} Ko`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
 function upload() {

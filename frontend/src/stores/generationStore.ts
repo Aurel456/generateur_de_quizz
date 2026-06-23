@@ -33,6 +33,7 @@ interface Progress {
     total: number;
     message: string;
     itemCount: number;
+    lastItemLabel: string; // aperçu du dernier item généré (style Streamlit)
 }
 
 const EMPTY_PROGRESS: Progress = {
@@ -42,6 +43,7 @@ const EMPTY_PROGRESS: Progress = {
     total: 0,
     message: '',
     itemCount: 0,
+    lastItemLabel: '',
 };
 
 /** Instantané pour l'historique des modifications (undo). */
@@ -153,13 +155,19 @@ export const useGenerationStore = defineStore('generation', {
 
         /** Met à jour l'état de progression à partir d'un instantané de job. */
         _onProgress(status: JobStatus) {
+            const items = status.items ?? [];
+            const last = items.length ? (items[items.length - 1] as Record<string, unknown>) : null;
+            const label = last
+                ? String(last.question ?? last.statement ?? last.title ?? '')
+                : '';
             this.progress = {
                 active: true,
                 kind: status.kind || this.progress.kind,
                 current: status.current,
                 total: status.total,
                 message: status.message,
-                itemCount: status.items.length,
+                itemCount: items.length,
+                lastItemLabel: label,
             };
         },
 

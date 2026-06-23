@@ -29,9 +29,14 @@
         <p v-if="store.progress.message" class="fr-text--sm fr-mt-1v fr-mb-0">
             {{ store.progress.message }}
         </p>
-        <p v-else-if="store.progress.itemCount > 0" class="fr-text--sm fr-mt-1v fr-mb-0">
-            {{ store.progress.itemCount }} élément(s) généré(s)…
-        </p>
+        <template v-if="store.progress.itemCount > 0">
+            <p class="fr-text--sm fr-mt-1v fr-mb-0">
+                ✅ {{ store.progress.itemCount }} élément(s) généré(s)
+            </p>
+            <p v-if="store.progress.lastItemLabel" class="fr-text--xs fr-mb-0 last-item">
+                Dernier : {{ truncate(store.progress.lastItemLabel) }}
+            </p>
+        </template>
     </div>
 </template>
 
@@ -59,6 +64,10 @@ const LABELS: Record<string, string> = {
 };
 
 const label = computed(() => LABELS[store.progress.kind] ?? 'Traitement en cours…');
+
+function truncate(text: string, max = 90): string {
+    return text.length > max ? `${text.slice(0, max)}…` : text;
+}
 </script>
 
 <style scoped>
@@ -90,6 +99,11 @@ const label = computed(() => LABELS[store.progress.kind] ?? 'Traitement en cours
     100% {
         margin-left: 100%;
     }
+}
+
+.last-item {
+    color: var(--text-mention-grey);
+    font-style: italic;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, Generator, List, Optional, Tuple
 
+import httpx
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
@@ -62,6 +63,73 @@ MODEL_NAME = TEXT_MODEL_NAME
 MODEL_CONTEXT_WINDOW = TEXT_MODEL_CONTEXT
 VISION_CONTEXT_WINDOW = VISION_MODEL_CONTEXT
 
+# ── Fournisseur LLM : nouveau serveur KALIA (prioritaire) + repli historique ──
+# KALIA est tenté en premier ; en cas d'échec (serveur injoignable ou modèle non
+# appelable), on conserve automatiquement la configuration OPENAI_API_BASE ci-dessus.
+KALIA_BASE_URL = os.getenv("BASE_URL_KALIA", "").strip()
+KALIA_API_KEY = os.getenv("API_KEY_KALIA", "").strip()
+KALIA_MODEL_NAME = os.getenv("MODEL_NAME_KALIA", "").strip()
+KALIA_VISION_MODEL_NAME = os.getenv("VISION_MODEL_NAME_KALIA", "").strip() or KALIA_MODEL_NAME
+# Délai (s) du test de disponibilité au démarrage.
+_PROVIDER_PROBE_TIMEOUT = float(os.getenv("LLM_PROBE_TIMEOUT", "10"))
+
+_USE_INSECURE_TLS = False  # True quand KALIA est actif (certificat auto-signé)
+ACTIVE_LLM_PROVIDER = "legacy"
+
+
+def _create_insecure_http_client() -> httpx.Client:
+    """Client httpx sans vérification TLS (serveur interne à certificat auto-signé)."""
+    return httpx.Client(verify=False)
+
+
+def _probe_provider(base_url: str, api_key: str, model: str, *, insecure: bool) -> bool:
+    """Teste qu'un serveur LLM répond ET que le modèle est appelable (petit appel)."""
+    try:
+        http_client = _create_insecure_http_client() if insecure else None
+        probe = OpenAI(
+            base_url=base_url,
+            api_key=api_key or "x",
+            http_client=http_client,
+            timeout=_PROVIDER_PROBE_TIMEOUT,
+            max_retries=0,
+        )
+        probe.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+            temperature=0,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — tout échec déclenche le repli
+        logger.warning("Test du serveur LLM %s (modèle %s) échoué : %s", base_url, model, exc)
+        return False
+
+
+def _select_provider() -> None:
+    """Sélectionne KALIA s'il est configuré et joignable, sinon garde la conf historique."""
+    global OPENAI_API_BASE, OPENAI_API_KEY, TEXT_MODEL_NAME, VISION_MODEL_NAME
+    global VISION_MODEL_NAMES, MODEL_NAME, _USE_INSECURE_TLS, ACTIVE_LLM_PROVIDER
+    if not (KALIA_BASE_URL and KALIA_MODEL_NAME):
+        return  # KALIA non configuré → conf historique
+    if _probe_provider(KALIA_BASE_URL, KALIA_API_KEY, KALIA_MODEL_NAME, insecure=True):
+        OPENAI_API_BASE = KALIA_BASE_URL
+        OPENAI_API_KEY = KALIA_API_KEY
+        TEXT_MODEL_NAME = KALIA_MODEL_NAME
+        VISION_MODEL_NAME = KALIA_VISION_MODEL_NAME
+        VISION_MODEL_NAMES = [KALIA_VISION_MODEL_NAME] if KALIA_VISION_MODEL_NAME else []
+        MODEL_NAME = KALIA_MODEL_NAME
+        _USE_INSECURE_TLS = True
+        ACTIVE_LLM_PROVIDER = "kalia"
+        logger.info("Fournisseur LLM actif : KALIA (%s, modèle %s)", KALIA_BASE_URL, KALIA_MODEL_NAME)
+    else:
+        logger.warning(
+            "KALIA injoignable ou modèle non appelable → repli sur %s (modèle %s)",
+            OPENAI_API_BASE, TEXT_MODEL_NAME,
+        )
+
+
+_select_provider()
+
 # Marge de sécurité pour les tokens (prompt system + overhead)
 SYSTEM_PROMPT_MARGIN = 500
 # Ratio de tokens réservé pour la réponse
@@ -109,12 +177,14 @@ _client = None
 
 
 def get_client() -> OpenAI:
-    """Retourne le client OpenAI (singleton)."""
+    """Retourne le client OpenAI (singleton) du fournisseur actif (KALIA ou historique)."""
     global _client
     if _client is None:
+        http_client = _create_insecure_http_client() if _USE_INSECURE_TLS else None
         _client = OpenAI(
             base_url=OPENAI_API_BASE,
-            api_key=OPENAI_API_KEY
+            api_key=OPENAI_API_KEY,
+            http_client=http_client,
         )
     return _client
 
