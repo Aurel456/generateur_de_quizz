@@ -16,3 +16,5 @@ dist/
 .vite/
 *.tsbuildinfo
 frontend/.npmrc
+
+*.quiz
