@@ -566,6 +566,13 @@
                     Quiz Moodle XML
                 </button>
                 <button
+                    class="fr-btn fr-btn--tertiary"
+                    @click="store.exportFile('scenari', store.exercises.length ? 'combined' : 'quiz')"
+                    title="Archive ZIP d'items .quiz importables dans SCENARI"
+                >
+                    SCENARI .quiz (ZIP)
+                </button>
+                <button
                     v-if="store.exercises.length"
                     class="fr-btn fr-btn--tertiary"
                     @click="store.exportFile('html', 'combined')"

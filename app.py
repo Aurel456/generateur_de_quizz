@@ -33,6 +33,7 @@ from export.quiz_exporter import (
     export_quiz_html, export_quiz_csv, export_exercises_csv, export_exercises_html,
     export_combined_html, export_combined_csv, export_quiz_moodle_xml,
 )
+from export.scenari_exporter import export_scenari_zip
 from generation.notion_detector import detect_notions_and_acronyms, edit_notions_with_llm, merge_similar_notions, Notion
 from generation.acronym_detector import (
     Acronym, load_acronym_reference, detect_acronyms_from_text,
@@ -1049,6 +1050,24 @@ if app_mode == "📄 Depuis un document":
                             key="exp_tab_combined_csv",
                             help="Export csv"
                         )
+
+                # ─── Export SCENARI (.quiz XML) ───────────────────────────────
+                _scenari_q = _exp_quiz if (_exp_quiz and _exp_quiz.questions) else None
+                _scenari_ex = _exp_exercises or None
+                if _scenari_q or _scenari_ex:
+                    st.markdown("**SCENARI (import chaîne éditoriale)**")
+                    _n_q = len(_scenari_q.questions) if _scenari_q else 0
+                    _n_ex = len(_scenari_ex) if _scenari_ex else 0
+                    scenari_zip = _get_cached("scenari_zip", export_scenari_zip, _scenari_q, _scenari_ex)
+                    st.download_button(
+                        label=f"🗂️ SCENARI .quiz ({_n_q}Q + {_n_ex}Ex)",
+                        data=scenari_zip,
+                        file_name="quiz_scenari.zip",
+                        mime="application/zip",
+                        width='stretch',
+                        key="exp_tab_scenari_zip",
+                        help="Archive ZIP d'items .quiz (un fichier XML par question/exercice) importables dans SCENARI : QCU (mcqSur), QCM cases à cocher (mcqMurBool), texte à trou (cloze), cas pratique (practQuiz).",
+                    )
 
                 st.caption("Les fichiers HTML sont standalone — ouvrez-les dans n'importe quel navigateur.")
             except Exception as e:

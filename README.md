@@ -161,6 +161,16 @@ Application Streamlit permettant de générer automatiquement des **Quiz QCM** e
 - **HTML combiné** : Export unique contenant les sections QCM et Exercices avec navigation par onglets.
 - **CSV combiné** : Export unique avec séparateurs de sections (`=== QUIZ QCM ===` / `=== EXERCICES ===`).
 
+### 🗂️ Export SCENARI (.quiz)
+
+- **Archive ZIP d'items `.quiz`** importables dans **SCENARI** (chaîne éditoriale libre). Un fichier XML par question/exercice, regroupant quiz QCM et exercices.
+- **Correspondance des primitives SCENARI** :
+  - QCM à **1 bonne réponse** (y compris Vrai/Faux) → **QCU** (`ent:mcqSur`, avec `<sc:solution choice="N"/>`).
+  - QCM à **plusieurs bonnes réponses** → **QCM cases à cocher** (`ent:mcqMurBool`, `solution="checked"` + explication globale).
+  - Exercice **type "trou"** → **Texte à trou** (`ent:cloze`) — menu déroulant (`sp:options`) si des variantes existent, sinon saisie libre.
+  - Exercice **type "cas pratique" / "calcul"** → **Quiz rédactionnel** (`ent:practQuiz`, énoncé dans `sp:desc`, corrigé dans `sp:sol`).
+- Bouton **"🗂️ SCENARI .quiz"** dans l'onglet Exports (Streamlit) et dans la page Génération (interface DSFR).
+
 ---
 
 ## 🛠️ Installation
@@ -400,6 +410,10 @@ generateur_de_quizz/
 ---
 
 ## 📋 Changelog
+
+### v5.2
+
+- **Export SCENARI (.quiz)** : nouveau module `export/scenari_exporter.py` qui convertit quiz et exercices en items XML SCENARI, regroupés dans une archive ZIP. Mapping : QCU (`ent:mcqSur`), QCM cases à cocher (`ent:mcqMurBool`), texte à trou (`ent:cloze`), cas pratique/calcul (`ent:practQuiz`). Bouton dédié dans l'onglet Exports (Streamlit) et la page Génération (DSFR), endpoint `format=scenari` côté API FastAPI. Couvert par `tests/test_scenari_exporter.py`.
 
 ### v5.1
 

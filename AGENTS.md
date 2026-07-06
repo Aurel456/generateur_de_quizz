@@ -194,7 +194,9 @@ Internes streaming : `_execute_completion_stream()`, `_execute_responses_stream(
 
 **`generation/exercise_verifier.py`** : `verify_exercises()`, `_verify_trou_with_llm()`, `_verify_cas_pratique_with_llm()`, `_verify_with_calc_agent()`, `_reformulate_exercise()`
 
-**`export/quiz_exporter.py`** : `export_quiz_html()`, `export_quiz_csv()`, `export_exercises_html()`, `export_exercises_csv()`, `export_combined_html()`, `export_combined_csv()`
+**`export/quiz_exporter.py`** : `export_quiz_html()`, `export_quiz_csv()`, `export_exercises_html()`, `export_exercises_csv()`, `export_combined_html()`, `export_combined_csv()`, `export_quiz_moodle_xml()`
+
+**`export/scenari_exporter.py`** : `question_to_scenari()` (QCU `ent:mcqSur` si 1 bonne réponse, sinon QCM `ent:mcqMurBool`), `exercise_to_scenari()` (`ent:cloze` pour type "trou", `ent:practQuiz` sinon), `build_scenari_items()` → liste `(nom.quiz, xml)`, `export_scenari_zip()` → bytes ZIP. Câblé : `app.py` onglet Exports, `backend/app/api/exports.py` (`format=scenari`), `frontend` (bouton GeneratePage.vue).
 
 **`sessions/session_store.py`** : `init_db()`, `create_session()`, `get_session()`, `submit_result()`, `get_session_results()`, `get_session_analytics()`, `deactivate_session()`, `list_sessions()`, `create_pool_session()`, `get_next_subset()`, `create_work_session()`, `get_work_session()`, `update_work_session_draft()`, `publish_work_session()`, `list_work_sessions()`
 
@@ -268,7 +270,8 @@ generateur_de_quizz/
 │   ├── chat_mode.py              ← machine à états (ChatState) pour le mode libre
 │   └── batch_service.py          ← traitement par lots (ThreadPoolExecutor, retry par requête, BatchResult)
 ├── export/
-│   └── quiz_exporter.py          ← export HTML/CSV (quiz, exercices, combiné quiz+exercices)
+│   ├── quiz_exporter.py          ← export HTML/CSV/Moodle (quiz, exercices, combiné quiz+exercices)
+│   └── scenari_exporter.py       ← export SCENARI .quiz (mcqSur/mcqMurBool/cloze/practQuiz, ZIP)
 ├── sessions/
 │   ├── session_store.py          ← backend SQLite (sessions + exercices + ateliers formateurs)
 │   └── analytics.py              ← dashboard Plotly + recommandations IA (generate_ai_recommendations)

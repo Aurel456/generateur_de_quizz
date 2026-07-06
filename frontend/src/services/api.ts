@@ -235,7 +235,7 @@ export interface GlobalStats {
 }
 
 export interface ExportPayload {
-    format: 'html' | 'csv' | 'moodle';
+    format: 'html' | 'csv' | 'moodle' | 'scenari';
     scope: 'quiz' | 'exercises' | 'combined';
     title: string;
     questions: QuizQuestion[];
@@ -480,7 +480,7 @@ export const api = {
         if (!response.ok) throw new Error(`Erreur export (${response.status})`);
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
-        const ext = payload.format === 'moodle' ? 'xml' : payload.format;
+        const ext = payload.format === 'moodle' ? 'xml' : payload.format === 'scenari' ? 'zip' : payload.format;
         const a = document.createElement('a');
         a.href = url;
         a.download = `${payload.scope}.${ext}`;

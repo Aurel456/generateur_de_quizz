@@ -556,7 +556,7 @@ export const useGenerationStore = defineStore('generation', {
             }
         },
 
-        async exportFile(format: 'html' | 'csv' | 'moodle', scope: 'quiz' | 'exercises' | 'combined') {
+        async exportFile(format: 'html' | 'csv' | 'moodle' | 'scenari', scope: 'quiz' | 'exercises' | 'combined') {
             this.error = '';
             try {
                 await api.downloadExport({

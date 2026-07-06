@@ -1,4 +1,4 @@
-"""Exports HTML / CSV / Moodle XML (réutilise export.quiz_exporter)."""
+"""Exports HTML / CSV / Moodle XML / SCENARI (réutilise export.quiz_exporter)."""
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -7,12 +7,13 @@ from fastapi.responses import Response
 from backend.app.converters import dict_to_acronym, dict_to_exercise, quiz_from_questions
 from backend.app.schemas import ExportRequest
 from export import quiz_exporter
+from export.scenari_exporter import export_scenari_zip
 
 router = APIRouter(prefix="/export", tags=["export"])
 log = logging.getLogger(__name__)
 
-_MEDIA = {"html": "text/html", "csv": "text/csv", "moodle": "application/xml"}
-_EXT = {"html": "html", "csv": "csv", "moodle": "xml"}
+_MEDIA = {"html": "text/html", "csv": "text/csv", "moodle": "application/xml", "scenari": "application/zip"}
+_EXT = {"html": "html", "csv": "csv", "moodle": "xml", "scenari": "zip"}
 
 
 @router.post("")
@@ -22,7 +23,12 @@ def export(payload: ExportRequest) -> Response:
     acronyms = [dict_to_acronym(a.model_dump()) for a in payload.acronyms]
 
     try:
-        if payload.scope == "quiz":
+        if payload.format == "scenari":
+            # Archive ZIP d'items .quiz, contenu selon le périmètre demandé.
+            scenari_quiz = quiz if payload.scope in ("quiz", "combined") else None
+            scenari_ex = exercises if payload.scope in ("exercises", "combined") else None
+            content = export_scenari_zip(scenari_quiz, scenari_ex)
+        elif payload.scope == "quiz":
             if payload.format == "html":
                 content = quiz_exporter.export_quiz_html(quiz, acronyms)
             elif payload.format == "csv":

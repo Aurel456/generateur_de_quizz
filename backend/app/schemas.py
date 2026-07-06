@@ -286,7 +286,7 @@ class EditAcronymsResponse(ApiModel):
 
 # ── Exports ──────────────────────────────────────────────────────────────────
 class ExportRequest(ApiModel):
-    format: str = Field(..., pattern="^(html|csv|moodle)$")
+    format: str = Field(..., pattern="^(html|csv|moodle|scenari)$")
     scope: str = Field(default="quiz", pattern="^(quiz|exercises|combined)$")
     title: str = "Quiz"
     questions: list[QuizQuestionDTO] = Field(default_factory=list)
