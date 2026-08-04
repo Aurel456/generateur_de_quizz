@@ -18,12 +18,12 @@
         <ul class="fr-tabs__list" role="tablist" :aria-label="tabsLabel">
             <li v-for="tab in tabs" :key="tab.key" role="presentation">
                 <button
-                    :id="`tab-${tab.key}`"
+                    :id="tabId(tab.key)"
                     class="fr-tabs__tab"
                     role="tab"
                     type="button"
                     :aria-selected="tab.key === modelValue"
-                    :aria-controls="`panel-${tab.key}`"
+                    :aria-controls="panelId(tab.key)"
                     :tabindex="tab.key === modelValue ? 0 : -1"
                     :disabled="tab.disabled"
                     :title="tab.disabled ? tab.disabledHint : undefined"
@@ -41,12 +41,12 @@
         <div
             v-for="tab in tabs"
             v-show="tab.key === modelValue"
-            :id="`panel-${tab.key}`"
+            :id="panelId(tab.key)"
             :key="`panel-${tab.key}`"
             class="fr-tabs__panel"
             :class="{ 'fr-tabs__panel--selected': tab.key === modelValue }"
             role="tabpanel"
-            :aria-labelledby="`tab-${tab.key}`"
+            :aria-labelledby="tabId(tab.key)"
             tabindex="0"
         >
             <slot :name="tab.key" />
@@ -55,6 +55,7 @@
 </template>
 
 <script setup lang="ts">
+import { useId } from 'vue';
 import type { TabDefinition } from './dsfrTabs';
 
 defineOptions({ name: 'DsfrTabs' });
@@ -72,6 +73,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'update:modelValue': [key: string] }>();
 
+// Identifiant propre à l'instance : deux groupes d'onglets peuvent coexister sur la
+// même page (onglets imbriqués) et partager des clés — les `id` doivent rester uniques
+// pour que `aria-controls` / `aria-labelledby` désignent le bon élément.
+const uid = useId();
+const tabId = (key: string) => `tab-${uid}-${key}`;
+const panelId = (key: string) => `panel-${uid}-${key}`;
+
 function select(tab: TabDefinition) {
     if (tab.disabled || tab.key === props.modelValue) return;
     emit('update:modelValue', tab.key);
@@ -85,7 +93,7 @@ function selectableTabs() {
 function focusTab(key: string) {
     emit('update:modelValue', key);
     // Le bouton n'existe qu'après le rendu : on attend la frame suivante.
-    requestAnimationFrame(() => document.getElementById(`tab-${key}`)?.focus());
+    requestAnimationFrame(() => document.getElementById(tabId(key))?.focus());
 }
 
 function onKeydown(event: KeyboardEvent) {

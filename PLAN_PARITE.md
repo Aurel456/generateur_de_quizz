@@ -53,6 +53,10 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 ### Acronymes
 - ✅ Détection (référentiel + LLM)
 - ✅ Édition LLM (`edit_acronyms_with_llm`), toggle actif/inactif, ajout/suppression manuelle (Phase 3) ; glossaire dans exports géré côté métier
+- ✅ **Auto-détection à l'upload** (scan du référentiel, sans LLM) + enrichissement dans la
+  même passe que les notions (`detect_notions_and_acronyms`) — comme Streamlit (Phase 6)
+- ✅ Glossaire **injecté dans les prompts** de génération quiz/exercices (`acronyms=`) et
+  enregistré dans les sessions / ateliers (Phase 6)
 
 ### Sessions partagées & Analytics
 - ✅ Création session, page participant (questions manquantes), scoring serveur, correction
@@ -87,10 +91,14 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
    polling `GET /jobs/{id}` (progression + items au fil de l'eau). Réutiliser les
    `progress_callback` et `on_item` déjà présents dans le métier. UI : barre de progression
    + affichage incrémental.
-2. **Persistance de l'état de travail** : `doc_store` / `chat_store` sont en mémoire
-   mono-instance → passer à Redis ou disque + TTL (sinon perte au redémarrage / multi-réplicas).
-3. **Réglages avancés exposés** : taille de chunk, `enable_thinking`, `notion_mixing`,
-   vision (DPI / pages), one-shot.
+2. **Persistance de l'état de travail** : côté **client** ✅ (Phase 6 — `localStorage`, reprise
+   du job en cours). Côté **serveur**, `doc_store` / `chat_store` / `job_store` restent en
+   mémoire mono-instance → un redémarrage du backend invalide les `doc_id` déjà restaurés
+   (l'API répond alors 404 « Document inconnu ou expiré ») → passer à Redis ou disque + TTL.
+3. **Réglages avancés exposés** : `notion_mixing` ✅. Volontairement **retirés de l'UI**
+   (Phase 6) car figés : Vision + One-shot toujours actifs, `enable_thinking` toujours vrai,
+   taille de bloc / DPI / pages par bloc gérés par le serveur
+   (`ONESHOT_MAX_TOTAL_TOKENS`, `ONESHOT_SLICE_TOKENS`, `CHUNK_MAX_TOKENS`).
 4. **Tests d'API** (pytest + httpx) sur les nouveaux endpoints ; les 51 tests métier restent valables.
 5. **Auth** (si requise) : dépendance FastAPI `Depends` + SSO applicatif. (Désactivée aussi côté Streamlit.)
 
@@ -166,6 +174,35 @@ dettes) et `README.md` (Streamlit) pour la liste exhaustive des fonctionnalités
 - [ ] **Recette de bout en bout + retrait du service Streamlit de `compose.yml`** : à faire APRÈS
       validation serveur par l'utilisateur (changement opérationnel non réversible) — non effectué
       unilatéralement. Streamlit reste en parallèle (`/quizzator-streamlit`) jusqu'au feu vert.
+
+**Phase 6 — Corrections d'usage & simplification de l'UI** ✅ (2026-08-04)
+
+- [x] **Notions au fil de l'eau** : `/notions/detect-async` diffuse chaque nouvelle notion
+      (`on_item`) ; le store les affiche pendant la détection.
+- [x] **Bug 500 « Modifier les notions avec l'IA »** : `edit_notions_with_llm` renvoie
+      `(notions, explication)` — le tuple n'était pas déballé côté API.
+- [x] **Parties/sous-parties conservées** : `edit_notions_with_llm` et `merge_similar_notions`
+      perdaient la catégorie (et le comptage/les sources) quand le LLM l'omettait →
+      report depuis la notion d'origine (`_inherit_from_previous`), tests dédiés.
+      Édition d'une notion sur **brouillon** (validation explicite) : changer la catégorie ne
+      fait plus sauter la notion de groupe à chaque frappe.
+- [x] **Blocs en échec remontés** (`on_error`) : « N blocs non analysés » au lieu d'une liste
+      vide silencieuse ; erreur explicite si *tous* les blocs échouent.
+- [x] **Acronymes** : détectés dès l'upload (référentiel), complétés par la passe notions
+      (1 appel LLM au lieu de 2), injectés dans les prompts et enregistrés en session/atelier.
+- [x] **Options figées retirées de l'UI** : Vision + One-shot toujours actifs (modèle à grand
+      contexte ; découpage automatique au-delà de `ONESHOT_MAX_TOTAL_TOKENS`), `enable_thinking`
+      toujours vrai, réglages avancés du découpage masqués.
+- [x] **Bonnes réponses — Fixe / Variable (1 à N)** : radio comme Streamlit, `max_correct`
+      enfin transmis (il ne l'était pas), champ unique dont le libellé suit le mode.
+- [x] **Sous-onglets** : Notions/Acronymes, Quiz (Configuration/Questions), Exercices
+      (Configuration + un onglet par type) — plus rien « à la suite ».
+- [x] **Page persistante** : documents, notions, acronymes, quiz, exercices et formulaire
+      restaurés au rechargement (`services/persist.ts`, `localStorage`) ; une génération en
+      cours est **reprise** via son `job_id` (`followJob`).
+- [x] Divers : `PUT` ajouté à `CORS_METHODS` (enregistrement d'atelier en dev cross-origin),
+      `id` d'onglets uniques par instance (`useId`) pour les onglets imbriqués, glossaire des
+      exports limité aux sigles actifs.
 
 ---
 

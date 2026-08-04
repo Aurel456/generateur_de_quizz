@@ -3,16 +3,21 @@
 Le client envoie un ou plusieurs fichiers ; le backend extrait le texte, découpe en
 chunks et conserve le résultat en mémoire sous un `doc_id` réutilisé par les étapes
 suivantes (notions, quiz).
+
+Par défaut le traitement est en **one-shot vision** : les pages sont envoyées telles
+quelles au modèle à grand contexte, ce qui préserve schémas, tableaux et mise en page.
+Le découpage reste automatique au-delà du budget de contexte (`ONESHOT_MAX_TOTAL_TOKENS`).
 """
 import io
 import logging
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from backend.app.acronym_reference import detect_reference_acronyms
 from backend.app.config import settings
-from backend.app.converters import chunk_preview
+from backend.app.converters import acronym_to_dict, chunk_preview
 from backend.app.doc_store import doc_store
-from backend.app.schemas import DocumentStats, UploadResponse
+from backend.app.schemas import AcronymDTO, DocumentStats, UploadResponse
 from processing.document_processor import (
     extract_and_chunk_multiple,
     extract_and_chunk_multiple_vision,
@@ -28,8 +33,8 @@ ALLOWED_EXT = (".pdf", ".docx", ".pptx", ".odt", ".odp", ".ods", ".txt")
 @router.post("", response_model=UploadResponse)
 def upload_documents(
     files: list[UploadFile] = File(...),
-    vision_mode: bool = Form(False),
-    one_shot: bool = Form(False),
+    vision_mode: bool = Form(True),
+    one_shot: bool = Form(True),
     max_tokens: int = Form(0),  # 0 → valeur par défaut (settings.CHUNK_MAX_TOKENS)
     max_images_per_chunk: int = Form(10),
     min_dpi: int = Form(65),
@@ -56,7 +61,11 @@ def upload_documents(
     uses_vision = vision_mode or one_shot
     try:
         if one_shot:
-            chunks = extract_oneshot_chunks(buffers)
+            chunks = extract_oneshot_chunks(
+                buffers,
+                max_total_tokens=settings.ONESHOT_MAX_TOTAL_TOKENS,
+                slice_tokens=settings.ONESHOT_SLICE_TOKENS,
+            )
         elif vision_mode:
             chunks = extract_and_chunk_multiple_vision(
                 buffers,
@@ -89,10 +98,15 @@ def upload_documents(
         stats.total_tokens += chunk.token_count
         stats.num_pages = max(stats.num_pages, len(chunk.source_pages))
 
+    # Acronymes du référentiel repérés d'emblée (scan regex, sans appel LLM) : la
+    # détection des notions viendra ensuite y ajouter les sigles inconnus.
+    acronyms = detect_reference_acronyms(chunks)
+
     return UploadResponse(
         doc_id=doc_id,
         num_chunks=len(chunks),
         total_tokens=sum(c.token_count for c in chunks),
         documents=list(per_doc.values()),
         chunks_preview=[chunk_preview(c) for c in chunks[:8]],
+        acronyms=[AcronymDTO(**acronym_to_dict(a)) for a in acronyms],
     )

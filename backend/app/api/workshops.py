@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from backend.app.schemas import (
+    AcronymDTO,
     CreateWorkshopRequest,
     ExerciseDTO,
     NotionDTO,
@@ -31,6 +32,7 @@ def _to_response(ws) -> WorkshopResponse:
     questions = quiz.get("questions", []) if isinstance(quiz, dict) else (quiz or [])
     notions = json.loads(ws.draft_notions_json or "[]")
     exercises = json.loads(ws.draft_exercises_json or "[]")
+    acronyms = json.loads(ws.draft_acronyms_json or "[]")
     return WorkshopResponse(
         work_code=ws.work_code,
         title=ws.title,
@@ -40,6 +42,7 @@ def _to_response(ws) -> WorkshopResponse:
         questions=[QuizQuestionDTO(**q) for q in questions],
         exercises=[ExerciseDTO(**e) for e in exercises],
         notions=[NotionDTO(**n) for n in notions],
+        acronyms=[AcronymDTO(**a) for a in acronyms],
     )
 
 
@@ -89,7 +92,10 @@ def update(work_code: str, payload: UpdateWorkshopRequest) -> WorkshopResponse:
         editor_name=payload.editor_name,
         notions_data=[n.model_dump() for n in payload.notions],
         exercises_data=[e.model_dump() for e in payload.exercises],
-        acronyms_data=[a.model_dump() for a in payload.acronyms],
+        # Absent de la requête → glossaire inchangé (l'éditeur d'atelier ne le gère pas).
+        acronyms_data=(
+            None if payload.acronyms is None else [a.model_dump() for a in payload.acronyms]
+        ),
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Atelier introuvable.")

@@ -5,6 +5,7 @@ Les notions fondamentales sont les concepts, définitions, théorèmes et princi
 clés identifiés dans les documents. Elles guident la génération de quiz et exercices.
 """
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -13,6 +14,8 @@ from typing import List, Optional, Dict
 
 from core.llm_service import call_llm_json, call_llm_vision_json, call_llm_vision_payload_json, call_llm
 from processing.document_processor import TextChunk
+
+log = logging.getLogger(__name__)
 
 
 # ─── Utilitaires de normalisation et matching ────────────────────────────────
@@ -280,6 +283,7 @@ def detect_notions(
     vision_mode: bool = False,
     enable_thinking: bool = True,
     on_item: Optional[callable] = None,
+    on_error: Optional[callable] = None,
 ) -> List[Notion]:
     """
     Détecte les notions fondamentales de manière itérative, chunk par chunk.
@@ -294,6 +298,9 @@ def detect_notions(
         model: Modèle LLM à utiliser.
         progress_callback: Fonction callback(current, total) pour la progression.
         vision_mode: Si True, envoie les images des chunks au modèle vision.
+        on_item: Callback appelé à chaque nouvelle notion détectée.
+        on_error: Callback(index, exception) appelé quand un bloc échoue. Sans lui,
+            l'échec d'un bloc reste silencieux (seulement journalisé).
 
     Returns:
         Liste de Notion détectées et consolidées.
@@ -327,7 +334,9 @@ def detect_notions(
                         on_item(n)
             notions = merged
         except Exception as e:
-            print(f"Erreur détection notions chunk {i}: {e}")
+            log.warning("Erreur détection notions bloc %s : %s", i, e)
+            if on_error:
+                on_error(i, e)
             continue
 
     if progress_callback:
@@ -429,6 +438,7 @@ def detect_notions_and_acronyms(
     vision_mode: bool = False,
     enable_thinking: bool = True,
     on_item: Optional[callable] = None,
+    on_error: Optional[callable] = None,
 ) -> tuple:
     """
     Détecte les notions fondamentales ET les acronymes inconnus en un seul appel LLM par chunk.
@@ -444,6 +454,7 @@ def detect_notions_and_acronyms(
         vision_mode: Si True, envoie les images des chunks au modèle vision.
         enable_thinking: Activer le mode raisonnement.
         on_item: Callback appelé à chaque nouvelle notion détectée.
+        on_error: Callback(index, exception) appelé quand un bloc échoue.
 
     Returns:
         (List[Notion], List[dict]) — notions consolidées + nouveaux acronymes
@@ -506,7 +517,9 @@ def detect_notions_and_acronyms(
                     })
 
         except Exception as e:
-            print(f"Erreur détection combinée chunk {i}: {e}")
+            log.warning("Erreur détection combinée bloc %s : %s", i, e)
+            if on_error:
+                on_error(i, e)
             continue
 
     if progress_callback:
@@ -515,12 +528,40 @@ def detect_notions_and_acronyms(
     return notions, new_acronyms
 
 
+def _inherit_from_previous(
+    notion: Notion,
+    previous: List[Notion],
+    threshold: float = 0.85,
+) -> Notion:
+    """Complète une notion produite par le LLM avec les champs de la notion d'origine.
+
+    Le LLM ne renvoie pas toujours la catégorie (ni l'état activé/désactivé ou le
+    comptage de questions) : sans ce report, une simple édition ferait basculer toutes
+    les notions dans « Sans catégorie » et casserait le regroupement par thématique.
+    """
+    match = match_notion_title(notion.title, previous, threshold=threshold)
+    if match is None:
+        return notion
+    origin = next((n for n in previous if n.title == match), None)
+    if origin is None:
+        return notion
+    return Notion(
+        title=notion.title,
+        description=notion.description or origin.description,
+        source_document=notion.source_document or origin.source_document,
+        source_pages=notion.source_pages or list(origin.source_pages or []),
+        enabled=notion.enabled,
+        category=notion.category or origin.category,
+        question_count=notion.question_count or origin.question_count,
+    )
+
+
 def edit_notions_with_llm(
     current_notions: List[Notion],
     user_instruction: str,
     model: Optional[str] = None,
     enable_thinking: bool = True,
-) -> List[Notion]:
+) -> tuple:
     """
     Permet à l'utilisateur de modifier les notions via une instruction en langage naturel.
 
@@ -530,7 +571,7 @@ def edit_notions_with_llm(
         model: Modèle LLM à utiliser.
 
     Returns:
-        Liste de Notion mise à jour.
+        (List[Notion], str) — liste mise à jour + explication des modifications.
     """
     # Sérialiser les notions actuelles
     notions_text = ""
@@ -538,6 +579,7 @@ def edit_notions_with_llm(
         status = "✅ activée" if n.enabled else "❌ désactivée"
         notions_text += (
             f"{i}. [{status}] **{n.title}**\n"
+            f"   Catégorie : {n.category or '(aucune)'}\n"
             f"   Description : {n.description}\n"
             f"   Source : {n.source_document}, pages {n.source_pages}\n\n"
         )
@@ -545,6 +587,11 @@ def edit_notions_with_llm(
     system_prompt = """Tu es un assistant pédagogique. L'utilisateur te donne une liste de notions fondamentales et une instruction pour les modifier.
 
 Tu dois retourner la liste COMPLÈTE des notions après modification.
+
+RÈGLES :
+1. Conserve la catégorie thématique existante de chaque notion inchangée.
+2. Attribue une catégorie cohérente (réutilise celles déjà présentes si possible) aux notions ajoutées.
+3. Conserve l'état activé/désactivé de chaque notion existante.
 
 FORMAT DE RÉPONSE (JSON strict) :
 {
@@ -554,6 +601,7 @@ FORMAT DE RÉPONSE (JSON strict) :
             "description": "Description de la notion",
             "source_document": "nom_du_fichier.pdf",
             "source_pages": [1, 2],
+            "category": "Fondements",
             "enabled": true
         }
     ],
@@ -579,8 +627,9 @@ Applique cette instruction et retourne la liste complète mise à jour."""
                 source_document=n_data.get("source_document", ""),
                 source_pages=n_data.get("source_pages", []),
                 enabled=n_data.get("enabled", True),
+                category=n_data.get("category", ""),
             )
-            notions.append(notion)
+            notions.append(_inherit_from_previous(notion, current_notions))
         except (KeyError, TypeError):
             continue
 
@@ -603,7 +652,7 @@ def merge_similar_notions(
         return notions, "Aucune fusion nécessaire."
 
     notions_text = "\n".join(
-        f"{i}. [{n.title}] : {n.description}"
+        f"{i}. [{n.title}] ({n.category or 'sans catégorie'}) : {n.description}"
         + (f" (Source: {n.source_document}, p. {', '.join(map(str, n.source_pages))})" if n.source_document else "")
         for i, n in enumerate(notions)
     )
@@ -616,6 +665,8 @@ RÈGLES :
 3. Conserve toutes les pages sources des notions fusionnées
 4. Garde les notions véritablement distinctes séparées
 5. Le résultat doit être une liste PLUS COURTE et plus claire
+6. Conserve la catégorie thématique de chaque notion (celle de la notion la plus
+   représentative en cas de fusion) — n'invente pas de nouvelles catégories
 
 FORMAT DE RÉPONSE (JSON strict) :
 {
@@ -624,7 +675,8 @@ FORMAT DE RÉPONSE (JSON strict) :
             "title": "Titre de la notion fusionnée ou conservée",
             "description": "Description complète combinant les infos pertinentes",
             "source_document": "nom_du_fichier.pdf",
-            "source_pages": [1, 2, 3]
+            "source_pages": [1, 2, 3],
+            "category": "Fondements"
         }
     ],
     "merge_summary": "Résumé court des fusions effectuées (ex: 'Fusionné 3 notions sur les dérivées en 1')"
@@ -641,13 +693,16 @@ FORMAT DE RÉPONSE (JSON strict) :
     merged = []
     for n_data in result.get("merged_notions", []):
         try:
-            merged.append(Notion(
+            candidate = Notion(
                 title=n_data["title"],
                 description=n_data.get("description", ""),
                 source_document=n_data.get("source_document", ""),
                 source_pages=n_data.get("source_pages", []),
                 enabled=True,
-            ))
+                category=n_data.get("category", ""),
+            )
+            # Le LLM omet souvent la catégorie : on la reprend de la notion d'origine.
+            merged.append(_inherit_from_previous(candidate, notions))
         except (KeyError, TypeError):
             continue
 

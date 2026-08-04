@@ -48,8 +48,15 @@ def create(payload: CreateSessionRequest) -> CreateSessionResponse:
     quiz_data = {"title": payload.title, "questions": [q.model_dump() for q in payload.questions]}
     notions_data = [n.model_dump() for n in payload.notions]
     exercises_data = [e.model_dump() for e in payload.exercises]
+    acronyms_data = [a.model_dump() for a in payload.acronyms if a.enabled]
     try:
-        session = create_session(quiz_data, notions_data, payload.title, exercises_data=exercises_data)
+        session = create_session(
+            quiz_data,
+            notions_data,
+            payload.title,
+            exercises_data=exercises_data,
+            acronyms_data=acronyms_data,
+        )
     except Exception:
         log.exception("Échec création de session")
         raise HTTPException(status_code=500, detail="Impossible de créer la session.")
@@ -73,6 +80,7 @@ def create_pool(payload: CreatePoolSessionRequest) -> CreateSessionResponse:
             payload.title,
             subset_size=payload.subset_size,
             pass_threshold=payload.pass_threshold,
+            acronyms_data=[a.model_dump() for a in payload.acronyms if a.enabled],
         )
     except Exception:
         log.exception("Échec création de session pool")

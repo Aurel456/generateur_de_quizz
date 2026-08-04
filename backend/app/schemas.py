@@ -8,6 +8,18 @@ class ApiModel(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
 
+# ── Acronymes ────────────────────────────────────────────────────────────────
+# Défini en premier : l'upload et la détection des notions renvoient déjà des sigles.
+class AcronymDTO(ApiModel):
+    acronym: str
+    definition: str = ""
+    all_definitions: list[str] = Field(default_factory=list)
+    source_document: str = ""
+    source_pages: list[int] = Field(default_factory=list)
+    enabled: bool = True
+    from_reference: bool = True
+
+
 # ── Documents ────────────────────────────────────────────────────────────────
 class DocumentStats(ApiModel):
     name: str
@@ -21,6 +33,9 @@ class UploadResponse(ApiModel):
     total_tokens: int
     documents: list[DocumentStats]
     chunks_preview: list[dict]
+    # Acronymes reconnus dès l'upload par simple scan du référentiel (sans LLM),
+    # comme l'app Streamlit. Enrichis ensuite par la détection des notions.
+    acronyms: list[AcronymDTO] = Field(default_factory=list)
 
 
 # ── Notions ──────────────────────────────────────────────────────────────────
@@ -36,10 +51,17 @@ class NotionDTO(ApiModel):
 
 class DetectNotionsRequest(ApiModel):
     doc_id: str
+    # Sigles déjà connus côté client : exclus de la détection LLM (évite les doublons).
+    known_acronyms: list[str] = Field(default_factory=list)
 
 
 class DetectNotionsResponse(ApiModel):
     notions: list[NotionDTO]
+    # Acronymes inconnus repérés pendant la détection (même passe LLM).
+    acronyms: list[AcronymDTO] = Field(default_factory=list)
+    # Blocs dont l'analyse a échoué (LLM indisponible, JSON illisible…).
+    failed_chunks: int = 0
+    total_chunks: int = 0
 
 
 # ── Quiz ─────────────────────────────────────────────────────────────────────
@@ -64,6 +86,8 @@ class GenerateQuizRequest(ApiModel):
     enable_thinking: bool = True
     notion_mixing: bool = True
     notions: list[NotionDTO] = Field(default_factory=list)
+    # Glossaire injecté dans le prompt : le modèle emploie les sigles correctement.
+    acronyms: list[AcronymDTO] = Field(default_factory=list)
 
 
 # ── Quiz sans document (base de connaissance du LLM) ──────────────────────────
@@ -138,6 +162,7 @@ class GenerateExercisesRequest(ApiModel):
     enable_thinking: bool = True
     notion_mixing: bool = True
     notions: list[NotionDTO] = Field(default_factory=list)
+    acronyms: list[AcronymDTO] = Field(default_factory=list)
 
 
 class ExercisesResponse(ApiModel):
@@ -155,6 +180,7 @@ class CreateSessionRequest(ApiModel):
     questions: list[QuizQuestionDTO]
     notions: list[NotionDTO] = Field(default_factory=list)
     exercises: list[ExerciseDTO] = Field(default_factory=list)
+    acronyms: list[AcronymDTO] = Field(default_factory=list)
 
 
 class CreatePoolSessionRequest(ApiModel):
@@ -165,6 +191,7 @@ class CreatePoolSessionRequest(ApiModel):
     notions: list[NotionDTO] = Field(default_factory=list)
     subset_size: int = Field(..., ge=1)
     pass_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    acronyms: list[AcronymDTO] = Field(default_factory=list)
 
 
 class CreateSessionResponse(ApiModel):
@@ -254,17 +281,7 @@ class MergeNotionsResponse(ApiModel):
     summary: str = ""
 
 
-# ── Acronymes ────────────────────────────────────────────────────────────────
-class AcronymDTO(ApiModel):
-    acronym: str
-    definition: str = ""
-    all_definitions: list[str] = Field(default_factory=list)
-    source_document: str = ""
-    source_pages: list[int] = Field(default_factory=list)
-    enabled: bool = True
-    from_reference: bool = True
-
-
+# ── Acronymes (détection dédiée) ─────────────────────────────────────────────
 class DetectAcronymsRequest(ApiModel):
     doc_id: str
     use_llm: bool = True
@@ -309,7 +326,8 @@ class UpdateWorkshopRequest(ApiModel):
     questions: list[QuizQuestionDTO] = Field(default_factory=list)
     exercises: list[ExerciseDTO] = Field(default_factory=list)
     notions: list[NotionDTO] = Field(default_factory=list)
-    acronyms: list[AcronymDTO] = Field(default_factory=list)
+    # None (champ absent) = ne pas toucher au glossaire enregistré ; [] = le vider.
+    acronyms: list[AcronymDTO] | None = None
 
 
 class WorkshopResponse(ApiModel):
@@ -321,6 +339,7 @@ class WorkshopResponse(ApiModel):
     questions: list[QuizQuestionDTO] = Field(default_factory=list)
     exercises: list[ExerciseDTO] = Field(default_factory=list)
     notions: list[NotionDTO] = Field(default_factory=list)
+    acronyms: list[AcronymDTO] = Field(default_factory=list)
 
 
 class WorkshopSummary(ApiModel):

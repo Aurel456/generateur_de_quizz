@@ -17,22 +17,14 @@ export interface DocumentStats {
     total_tokens: number;
 }
 
-/** Options avancées de traitement documentaire (chunking, vision, one-shot). */
-export interface UploadOptions {
-    vision_mode?: boolean;
-    one_shot?: boolean;
-    max_tokens?: number;
-    max_images_per_chunk?: number;
-    min_dpi?: number;
-    max_dpi?: number;
-}
-
 export interface UploadResponse {
     doc_id: string;
     num_chunks: number;
     total_tokens: number;
     documents: DocumentStats[];
     chunks_preview: { source_document: string; source_pages: number[]; text_preview: string }[];
+    /** Sigles reconnus dès l'upload via le référentiel (sans appel LLM). */
+    acronyms: Acronym[];
 }
 
 export interface QuizQuestion {
@@ -77,7 +69,10 @@ export interface GenerateExercisesPayload {
     classify_instructions?: boolean;
     custom_exercise_prompts?: Record<string, string> | null;
     batch_mode: boolean;
+    notion_mixing?: boolean;
     notions: Notion[];
+    /** Glossaire injecté dans le prompt (sigles actifs uniquement). */
+    acronyms: Acronym[];
 }
 
 export interface GenerateQuizPayload {
@@ -94,7 +89,9 @@ export interface GenerateQuizPayload {
     user_instructions: string;
     classify_instructions?: boolean;
     difficulty_prompts?: Record<string, string> | null;
+    notion_mixing?: boolean;
     notions: Notion[];
+    acronyms: Acronym[];
 }
 
 export interface GenerateQuizFromKnowledgePayload {
@@ -108,6 +105,14 @@ export interface GenerateQuizFromKnowledgePayload {
     vrai_faux: boolean;
     batch_mode: boolean;
     notions: Notion[];
+}
+
+/** Résultat de la détection des notions : notions + sigles inconnus (même passe LLM). */
+export interface DetectNotionsResult {
+    notions: Notion[];
+    acronyms: Acronym[];
+    failed_chunks: number;
+    total_chunks: number;
 }
 
 /** Prompts par défaut éditables par niveau (+ description des règles fixes). */
@@ -217,6 +222,7 @@ export interface Workshop extends WorkshopSummary {
     questions: QuizQuestion[];
     exercises: Exercise[];
     notions: Notion[];
+    acronyms: Acronym[];
 }
 
 export interface ChatResponse {
@@ -287,14 +293,18 @@ function jsonPost(path: string, body: unknown): Promise<{ job_id: string }> {
 }
 
 /**
- * Lance une tâche asynchrone (`POST …-async` → job_id) puis interroge `GET /jobs/{id}`
- * jusqu'à `done`/`error`, en notifiant `onProgress` à chaque instantané. Renvoie le
- * `result` final typé. Le polling est robuste derrière tout reverse-proxy.
+ * Interroge `GET /jobs/{id}` jusqu'à `done`/`error`, en notifiant `onProgress` à chaque
+ * instantané. Le polling est robuste derrière tout reverse-proxy. Utilisable seul pour
+ * se rebrancher sur une tâche déjà lancée (rechargement de page en pleine génération).
  */
-async function runJob<T>(submitPath: string, body: unknown, onProgress?: JobProgress): Promise<T> {
-    const { job_id } = await jsonPost(submitPath, body);
+export async function followJob<T>(
+    jobId: string,
+    onProgress?: JobProgress,
+    onStart?: (jobId: string) => void,
+): Promise<T> {
+    onStart?.(jobId);
     for (;;) {
-        const status = await request<JobStatus>(`/jobs/${encodeURIComponent(job_id)}`);
+        const status = await request<JobStatus>(`/jobs/${encodeURIComponent(jobId)}`);
         onProgress?.(status);
         if (status.status === 'done') {
             return (status.result ?? {}) as T;
@@ -306,36 +316,59 @@ async function runJob<T>(submitPath: string, body: unknown, onProgress?: JobProg
     }
 }
 
+/** Lance une tâche asynchrone (`POST …-async` → job_id) puis suit sa progression. */
+async function runJob<T>(
+    submitPath: string,
+    body: unknown,
+    onProgress?: JobProgress,
+    onStart?: (jobId: string) => void,
+): Promise<T> {
+    const { job_id } = await jsonPost(submitPath, body);
+    return followJob<T>(job_id, onProgress, onStart);
+}
+
 export const api = {
-    uploadDocuments(files: File[], options: UploadOptions = {}): Promise<UploadResponse> {
+    /**
+     * Analyse des documents. Le traitement est toujours en **one-shot vision** : le
+     * modèle à grand contexte voit les pages telles quelles (schémas, tableaux), et
+     * le serveur découpe automatiquement au-delà de son budget de contexte.
+     */
+    uploadDocuments(files: File[]): Promise<UploadResponse> {
         const form = new FormData();
         files.forEach((file) => form.append('files', file));
-        form.append('vision_mode', String(options.vision_mode ?? false));
-        form.append('one_shot', String(options.one_shot ?? false));
-        if (options.max_tokens) form.append('max_tokens', String(options.max_tokens));
-        if (options.max_images_per_chunk)
-            form.append('max_images_per_chunk', String(options.max_images_per_chunk));
-        if (options.min_dpi) form.append('min_dpi', String(options.min_dpi));
-        if (options.max_dpi) form.append('max_dpi', String(options.max_dpi));
+        form.append('vision_mode', 'true');
+        form.append('one_shot', 'true');
         return request<UploadResponse>('/documents', { method: 'POST', body: form });
     },
 
-    detectNotions(docId: string, onProgress?: JobProgress): Promise<{ notions: Notion[] }> {
-        return runJob('/notions/detect-async', { doc_id: docId }, onProgress);
+    detectNotions(
+        docId: string,
+        knownAcronyms: string[],
+        onProgress?: JobProgress,
+        onStart?: (jobId: string) => void,
+    ): Promise<DetectNotionsResult> {
+        return runJob(
+            '/notions/detect-async',
+            { doc_id: docId, known_acronyms: knownAcronyms },
+            onProgress,
+            onStart,
+        );
     },
 
     generateQuiz(
         payload: GenerateQuizPayload,
         onProgress?: JobProgress,
+        onStart?: (jobId: string) => void,
     ): Promise<{ title: string; difficulty: string; questions: QuizQuestion[] }> {
-        return runJob('/quiz/generate-async', payload, onProgress);
+        return runJob('/quiz/generate-async', payload, onProgress, onStart);
     },
 
     generateQuizFromKnowledge(
         payload: GenerateQuizFromKnowledgePayload,
         onProgress?: JobProgress,
+        onStart?: (jobId: string) => void,
     ): Promise<{ title: string; difficulty: string; questions: QuizQuestion[] }> {
-        return runJob('/quiz/generate-from-knowledge-async', payload, onProgress);
+        return runJob('/quiz/generate-from-knowledge-async', payload, onProgress, onStart);
     },
 
     getPromptDefaults(): Promise<PromptDefaults> {
@@ -353,8 +386,9 @@ export const api = {
     generateExercises(
         payload: GenerateExercisesPayload,
         onProgress?: JobProgress,
+        onStart?: (jobId: string) => void,
     ): Promise<{ exercises: Exercise[] }> {
-        return runJob('/exercises/generate-async', payload, onProgress);
+        return runJob('/exercises/generate-async', payload, onProgress, onStart);
     },
 
     improveExercise(exercise: Exercise, instruction: string): Promise<Exercise> {
@@ -370,11 +404,12 @@ export const api = {
         questions: QuizQuestion[],
         notions: Notion[],
         exercises: Exercise[] = [],
+        acronyms: Acronym[] = [],
     ): Promise<{ session_code: string; title: string }> {
         return request('/sessions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, questions, notions, exercises }),
+            body: JSON.stringify({ title, questions, notions, exercises, acronyms }),
         });
     },
 
@@ -384,6 +419,7 @@ export const api = {
         notions: Notion[];
         subset_size: number;
         pass_threshold: number;
+        acronyms: Acronym[];
     }): Promise<{ session_code: string; title: string }> {
         return request('/sessions/create-pool', {
             method: 'POST',
@@ -432,8 +468,9 @@ export const api = {
         docId: string,
         questions: QuizQuestion[],
         onProgress?: JobProgress,
+        onStart?: (jobId: string) => void,
     ): Promise<{ questions: QuizQuestion[]; results: VerificationResult[] }> {
-        return runJob('/quiz/verify-async', { doc_id: docId, questions }, onProgress);
+        return runJob('/quiz/verify-async', { doc_id: docId, questions }, onProgress, onStart);
     },
 
     editNotions(notions: Notion[], instruction: string): Promise<{ notions: Notion[] }> {
@@ -501,6 +538,7 @@ export const api = {
         questions: QuizQuestion[];
         exercises: Exercise[];
         notions: Notion[];
+        acronyms: Acronym[];
     }): Promise<Workshop> {
         return request('/workshops', {
             method: 'POST',

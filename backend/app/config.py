@@ -27,12 +27,18 @@ class Settings:
     CHUNK_MAX_TOKENS = int(os.getenv("CHUNK_MAX_TOKENS", "10000"))
     CHUNK_OVERLAP_TOKENS = int(os.getenv("CHUNK_OVERLAP_TOKENS", "200"))
 
+    # Mode one-shot : budget de contexte du modèle. Au-delà, les documents sont
+    # découpés automatiquement (1 bloc par document, puis par tranches).
+    ONESHOT_MAX_TOTAL_TOKENS = int(os.getenv("ONESHOT_MAX_TOTAL_TOKENS", "190000"))
+    ONESHOT_SLICE_TOKENS = int(os.getenv("ONESHOT_SLICE_TOKENS", "50000"))
+
     CORS_ORIGINS = _csv(
         "CORS_ORIGINS",
         ["http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:3052"],
     )
     CORS_CREDENTIALS = _bool("CORS_CREDENTIALS", False)
-    CORS_METHODS = _csv("CORS_METHODS", ["GET", "POST", "OPTIONS"])
+    # PUT est utilisé par l'enregistrement d'un atelier (`PUT /workshops/{code}`).
+    CORS_METHODS = _csv("CORS_METHODS", ["GET", "POST", "PUT", "OPTIONS"])
     CORS_HEADERS = _csv("CORS_HEADERS", ["*"])
 
 

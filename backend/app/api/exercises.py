@@ -8,7 +8,12 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from backend.app.converters import dict_to_exercise, dict_to_notion, exercise_to_dict
+from backend.app.converters import (
+    dict_to_acronym,
+    dict_to_exercise,
+    dict_to_notion,
+    exercise_to_dict,
+)
 from backend.app.doc_store import DocEntry, doc_store
 from backend.app.jobs import Job, job_store
 from backend.app.schemas import (
@@ -62,6 +67,7 @@ def _run_generation(
     job: Job | None = None,
 ) -> ExercisesResponse:
     notions = [dict_to_notion(n.model_dump()) for n in payload.notions if n.enabled]
+    acronyms = [dict_to_acronym(a.model_dump()) for a in payload.acronyms if a.enabled]
     stream = on_item is not None and not payload.batch_mode
     user_instructions, user_context = _split_instructions(payload, job=job)
 
@@ -76,6 +82,7 @@ def _run_generation(
         enable_thinking=payload.enable_thinking,
         notion_mixing=payload.notion_mixing,
         notions=notions or None,
+        acronyms=acronyms or None,
         vision_mode=entry.vision,
         batch_mode=payload.batch_mode,
         model=_VISION_MODEL if entry.vision else None,

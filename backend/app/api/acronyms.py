@@ -1,9 +1,9 @@
 """Détection d'acronymes (réutilise generation.acronym_detector)."""
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException
 
+from backend.app.acronym_reference import detect_reference_acronyms
 from backend.app.converters import acronym_to_dict, dict_to_acronym
 from backend.app.doc_store import doc_store
 from backend.app.schemas import (
@@ -13,17 +13,10 @@ from backend.app.schemas import (
     EditAcronymsRequest,
     EditAcronymsResponse,
 )
-from generation.acronym_detector import (
-    detect_acronyms_from_text,
-    detect_unknown_acronyms_with_llm,
-    edit_acronyms_with_llm,
-    load_acronym_reference,
-)
+from generation.acronym_detector import detect_unknown_acronyms_with_llm, edit_acronyms_with_llm
 
 router = APIRouter(prefix="/acronyms", tags=["acronyms"])
 log = logging.getLogger(__name__)
-
-REFERENCE_PATH = os.getenv("ACRONYMS_REFERENCE", "reference_data/acronyms.json")
 
 
 @router.post("/detect", response_model=DetectAcronymsResponse)
@@ -33,14 +26,7 @@ def detect(payload: DetectAcronymsRequest) -> DetectAcronymsResponse:
         raise HTTPException(status_code=404, detail="Document inconnu ou expiré (doc_id).")
 
     # 1) Détection par référence (best-effort : le fichier peut être absent).
-    acronyms = []
-    try:
-        reference = load_acronym_reference(REFERENCE_PATH)
-        acronyms = detect_acronyms_from_text(entry.chunks, reference)
-    except FileNotFoundError:
-        log.info("Référentiel d'acronymes absent (%s) — détection LLM seule.", REFERENCE_PATH)
-    except Exception:
-        log.exception("Erreur lecture référentiel acronymes")
+    acronyms = detect_reference_acronyms(entry.chunks)
 
     # 2) Détection LLM des acronymes inconnus.
     if payload.use_llm:

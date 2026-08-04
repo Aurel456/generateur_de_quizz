@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia';
 import {
     api,
+    followJob,
     type Acronym,
+    type DetectNotionsResult,
     type Exercise,
     type ExerciseType,
     type GenerateQuizFromKnowledgePayload,
@@ -9,10 +11,10 @@ import {
     type Notion,
     type PromptDefaults,
     type QuizQuestion,
-    type UploadOptions,
     type UploadResponse,
     type VerificationResult,
 } from '@/services/api';
+import { loadState, saveState } from '@/services/persist';
 
 type Busy =
     | ''
@@ -46,6 +48,25 @@ const EMPTY_PROGRESS: Progress = {
     lastItemLabel: '',
 };
 
+/** Clé de persistance de l'état de travail (cf. services/persist.ts). */
+const STORAGE_KEY = 'quizz.generation.v1';
+
+/**
+ * Écritures regroupées : pendant une génération l'état change à chaque question
+ * reçue, il serait inutile de sérialiser le quiz complet à chaque fois.
+ */
+const PERSIST_DEBOUNCE_MS = 400;
+
+/** Tâche en cours au moment d'un rechargement : on s'y rebranche au retour. */
+interface ActiveJob {
+    kind: Busy;
+    jobId: string;
+}
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+/** La restauration n'a lieu qu'une fois par chargement de page. */
+let restored = false;
+
 /** Instantané pour l'historique des modifications (undo). */
 interface Snapshot {
     questions: QuizQuestion[];
@@ -66,10 +87,25 @@ interface GenerationState {
     quizTitle: string;
     busy: Busy;
     error: string;
+    notice: string;
     progress: Progress;
     promptDefaults: PromptDefaults | null;
     history: Snapshot[];
+    activeJob: ActiveJob | null;
 }
+
+/** Champs sauvegardés dans le navigateur (l'état volatil en est exclu). */
+type PersistedState = Pick<
+    GenerationState,
+    | 'upload'
+    | 'notions'
+    | 'acronyms'
+    | 'questions'
+    | 'exercises'
+    | 'verifyResults'
+    | 'quizTitle'
+    | 'activeJob'
+>;
 
 export const useGenerationStore = defineStore('generation', {
     state: (): GenerationState => ({
@@ -82,13 +118,16 @@ export const useGenerationStore = defineStore('generation', {
         quizTitle: '',
         busy: '',
         error: '',
+        notice: '',
         progress: { ...EMPTY_PROGRESS },
         promptDefaults: null,
         history: [],
+        activeJob: null,
     }),
     getters: {
         docId: (state) => state.upload?.doc_id ?? '',
         enabledNotions: (state) => state.notions.filter((n) => n.enabled),
+        enabledAcronyms: (state) => state.acronyms.filter((a) => a.enabled),
         progressPercent: (state) =>
             state.progress.total > 0
                 ? Math.min(100, Math.round((state.progress.current / state.progress.total) * 100))
@@ -104,19 +143,166 @@ export const useGenerationStore = defineStore('generation', {
             }
             return counts;
         },
-        /** Notions regroupées par thématique (catégorie), pour l'affichage groupé. */
-        notionsByCategory: (state): Record<string, Notion[]> => {
-            const groups: Record<string, Notion[]> = {};
+        /**
+         * Notions regroupées par thématique. Chaque entrée porte l'index d'origine :
+         * l'affichage groupé reste ainsi adressable sans recherche par identité
+         * (fragile dès qu'une notion est éditée ou remplacée par l'IA).
+         */
+        notionsByCategory: (state): [string, { notion: Notion; index: number }[]][] => {
+            const groups = new Map<string, { notion: Notion; index: number }[]>();
+            state.notions.forEach((notion, index) => {
+                const key = notion.category?.trim() || 'Sans catégorie';
+                const group = groups.get(key) ?? [];
+                group.push({ notion, index });
+                groups.set(key, group);
+            });
+            // Catégories par ordre alphabétique, « Sans catégorie » en dernier.
+            return [...groups.entries()].sort(([a], [b]) => {
+                if (a === 'Sans catégorie') return 1;
+                if (b === 'Sans catégorie') return -1;
+                return a.localeCompare(b, 'fr');
+            });
+        },
+        /** Catégories existantes, pour proposer des valeurs cohérentes à l'édition. */
+        notionCategories: (state): string[] => {
+            const seen = new Set<string>();
             for (const n of state.notions) {
-                const key = n.category?.trim() || 'Sans catégorie';
-                (groups[key] ??= []).push(n);
+                const key = n.category?.trim();
+                if (key) seen.add(key);
             }
-            return groups;
+            return [...seen].sort((a, b) => a.localeCompare(b, 'fr'));
         },
     },
     actions: {
         reset() {
             this.$reset();
+        },
+
+        // ── Persistance locale (survie au rechargement de page) ──────────────
+        /** Écrit l'état de travail dans le navigateur (regroupé, cf. PERSIST_DEBOUNCE_MS). */
+        persist(immediate = false) {
+            if (persistTimer !== null) clearTimeout(persistTimer);
+            const write = () => {
+                persistTimer = null;
+                const {
+                    upload,
+                    notions,
+                    acronyms,
+                    questions,
+                    exercises,
+                    verifyResults,
+                    quizTitle,
+                    activeJob,
+                } = this;
+                saveState<PersistedState>(STORAGE_KEY, {
+                    upload,
+                    notions,
+                    acronyms,
+                    questions,
+                    exercises,
+                    verifyResults,
+                    quizTitle,
+                    activeJob,
+                });
+            };
+            if (immediate) write();
+            else persistTimer = setTimeout(write, PERSIST_DEBOUNCE_MS);
+        },
+
+        /**
+         * Restaure l'état sauvegardé, branche la sauvegarde automatique, puis — si une
+         * génération était en cours — se rebranche dessus (le job continue de tourner
+         * côté serveur pendant le rechargement).
+         */
+        restore() {
+            if (restored) return;
+            restored = true;
+
+            const saved = loadState<PersistedState>(STORAGE_KEY);
+            if (saved) {
+                this.upload = saved.upload ?? null;
+                this.notions = saved.notions ?? [];
+                this.acronyms = saved.acronyms ?? [];
+                this.questions = saved.questions ?? [];
+                this.exercises = saved.exercises ?? [];
+                this.verifyResults = saved.verifyResults ?? [];
+                this.quizTitle = saved.quizTitle ?? '';
+                this.activeJob = saved.activeJob ?? null;
+            }
+
+            // Toute mutation ultérieure est sauvegardée automatiquement.
+            this.$subscribe(() => this.persist(), { detached: true });
+            // Le rechargement ne doit pas perdre une écriture encore en attente.
+            window.addEventListener('pagehide', () => this.persist(true));
+
+            // Sans `await` : une génération peut durer plusieurs minutes et ne doit pas
+            // retarder le reste de l'initialisation de la page.
+            if (this.activeJob) void this.resumeJob();
+        },
+
+        /** Mémorise la tâche en cours pour pouvoir la reprendre après rechargement. */
+        _trackJob(kind: Busy, jobId: string) {
+            this.activeJob = { kind, jobId };
+            this.persist(true);
+        },
+
+        _untrackJob() {
+            this.activeJob = null;
+        },
+
+        /** Reprend le suivi d'une génération lancée avant le rechargement. */
+        async resumeJob() {
+            const job = this.activeJob;
+            if (!job) return;
+            this.busy = job.kind;
+            this.error = '';
+            this._startProgress(job.kind);
+            const base = job.kind === 'exercises' ? [...this.exercises] : [];
+            try {
+                const result = await followJob<Record<string, unknown>>(job.jobId, (s) => {
+                    this._onProgress(s);
+                    // Le mode batch ne diffuse pas d'items : ne rien écraser tant que la
+                    // tâche n'a rien produit, l'état restauré reste affiché.
+                    if (!s.items?.length) return;
+                    if (job.kind === 'quiz') this.questions = s.items as unknown as QuizQuestion[];
+                    if (job.kind === 'notions') this.notions = s.items as unknown as Notion[];
+                    if (job.kind === 'exercises')
+                        this.exercises = [...base, ...(s.items as unknown as Exercise[])];
+                });
+                this._applyJobResult(job.kind, result, base);
+                this.notice = 'Génération reprise après rechargement de la page.';
+            } catch (err) {
+                // Un job inconnu (redémarrage du serveur) n'est pas une erreur bloquante :
+                // l'état restauré reste exploitable.
+                this.notice =
+                    'La génération lancée avant le rechargement n’a pas pu être reprise ' +
+                    `(${err instanceof Error ? err.message : 'tâche expirée'}).`;
+            } finally {
+                this.busy = '';
+                this._endProgress();
+                this._untrackJob();
+            }
+        },
+
+        /** Applique le résultat final d'un job repris, selon sa nature. */
+        _applyJobResult(kind: Busy, result: Record<string, unknown>, base: Exercise[]) {
+            if (kind === 'quiz') {
+                const quiz = result as unknown as { title: string; questions: QuizQuestion[] };
+                if (quiz.questions) this.questions = quiz.questions;
+                if (quiz.title) this.quizTitle = quiz.title;
+            } else if (kind === 'notions') {
+                this._applyDetection(result as unknown as DetectNotionsResult);
+            } else if (kind === 'exercises') {
+                const { exercises } = result as unknown as { exercises: Exercise[] };
+                if (exercises) this.exercises = [...base, ...exercises];
+            } else if (kind === 'verify') {
+                const verified = result as unknown as {
+                    questions: QuizQuestion[];
+                    results: VerificationResult[];
+                };
+                if (verified.questions) this.questions = verified.questions;
+                if (verified.results) this.verifyResults = verified.results;
+            }
         },
 
         async loadPromptDefaults() {
@@ -171,13 +357,15 @@ export const useGenerationStore = defineStore('generation', {
             };
         },
 
-        async uploadDocuments(files: File[], options: UploadOptions = {}) {
+        async uploadDocuments(files: File[]) {
             this.busy = 'upload';
             this.error = '';
+            this.notice = '';
             try {
-                this.upload = await api.uploadDocuments(files, options);
+                this.upload = await api.uploadDocuments(files);
                 this.notions = [];
-                this.acronyms = [];
+                // Sigles déjà reconnus par le référentiel dès l'analyse (sans LLM).
+                this.acronyms = this.upload.acronyms ?? [];
                 this.questions = [];
                 this.exercises = [];
                 this.verifyResults = [];
@@ -189,19 +377,49 @@ export const useGenerationStore = defineStore('generation', {
             }
         },
 
+        /** Fusionne le résultat d'une détection : notions + sigles inconnus. */
+        _applyDetection(result: DetectNotionsResult) {
+            this.notions = result.notions ?? [];
+            // Les sigles trouvés par le LLM complètent ceux du référentiel.
+            const known = new Set(this.acronyms.map((a) => a.acronym));
+            for (const acronym of result.acronyms ?? []) {
+                if (!known.has(acronym.acronym)) {
+                    known.add(acronym.acronym);
+                    this.acronyms.push(acronym);
+                }
+            }
+            if (result.failed_chunks) {
+                this.notice =
+                    `⚠️ ${result.failed_chunks} bloc(s) sur ${result.total_chunks} n’ont pas pu être ` +
+                    'analysés (réponse du modèle illisible) : la liste peut être incomplète.';
+            }
+        },
+
         async detectNotions() {
             if (!this.docId) return;
             this.busy = 'notions';
             this.error = '';
+            this.notice = '';
+            this.notions = [];
             this._startProgress('notions');
             try {
-                const { notions } = await api.detectNotions(this.docId, (s) => this._onProgress(s));
-                this.notions = notions;
+                const result = await api.detectNotions(
+                    this.docId,
+                    this.acronyms.map((a) => a.acronym),
+                    (s) => {
+                        this._onProgress(s);
+                        // Affichage au fil de l'eau : chaque notion apparaît dès sa détection.
+                        this.notions = s.items as unknown as Notion[];
+                    },
+                    (jobId) => this._trackJob('notions', jobId),
+                );
+                this._applyDetection(result); // liste finale (autoritaire)
             } catch (err) {
                 this.error = err instanceof Error ? err.message : 'Échec de la détection.';
             } finally {
                 this.busy = '';
                 this._endProgress();
+                this._untrackJob();
             }
         },
 
@@ -224,17 +442,24 @@ export const useGenerationStore = defineStore('generation', {
             if (!this.docId) return;
             this.busy = 'quiz';
             this.error = '';
+            this.notice = '';
             this.questions = [];
             this.verifyResults = [];
             this._startProgress('quiz');
             try {
                 const result = await api.generateQuiz(
-                    { doc_id: this.docId, notions: this.notions, ...config },
+                    {
+                        doc_id: this.docId,
+                        notions: this.notions,
+                        acronyms: this.enabledAcronyms,
+                        ...config,
+                    },
                     (s) => {
                         this._onProgress(s);
                         // Affichage incrémental : les questions s'affichent au fil de l'eau.
                         this.questions = s.items as unknown as QuizQuestion[];
                     },
+                    (jobId) => this._trackJob('quiz', jobId),
                 );
                 this.questions = result.questions; // liste finale (autoritaire)
                 this.quizTitle = result.title;
@@ -243,6 +468,7 @@ export const useGenerationStore = defineStore('generation', {
             } finally {
                 this.busy = '';
                 this._endProgress();
+                this._untrackJob();
             }
         },
 
@@ -262,6 +488,7 @@ export const useGenerationStore = defineStore('generation', {
                         this._onProgress(s);
                         this.questions = [...base, ...(s.items as unknown as QuizQuestion[])];
                     },
+                    (jobId) => this._trackJob('quiz', jobId),
                 );
                 this.questions = [...base, ...result.questions];
                 if (!this.quizTitle) this.quizTitle = result.title;
@@ -271,6 +498,7 @@ export const useGenerationStore = defineStore('generation', {
             } finally {
                 this.busy = '';
                 this._endProgress();
+                this._untrackJob();
             }
         },
 
@@ -350,6 +578,13 @@ export const useGenerationStore = defineStore('generation', {
             this.notions.forEach((n) => (n.enabled = enabled));
         },
 
+        /** Remplace une notion après édition manuelle (le brouillon est validé). */
+        updateNotion(index: number, notion: Notion) {
+            if (index >= 0 && index < this.notions.length) {
+                this.notions[index] = notion;
+            }
+        },
+
         /** Ajoute une notion vierge à éditer manuellement. */
         addNotion() {
             this.notions.push({
@@ -363,9 +598,10 @@ export const useGenerationStore = defineStore('generation', {
             });
         },
 
-        deleteNotion(notion: Notion) {
-            const i = this.notions.indexOf(notion);
-            if (i >= 0) this.notions.splice(i, 1);
+        deleteNotion(index: number) {
+            if (index >= 0 && index < this.notions.length) {
+                this.notions.splice(index, 1);
+            }
         },
 
         async verifyQuiz() {
@@ -379,6 +615,7 @@ export const useGenerationStore = defineStore('generation', {
                     this.docId,
                     this.questions,
                     (s) => this._onProgress(s),
+                    (jobId) => this._trackJob('verify', jobId),
                 );
                 this.questions = questions;
                 this.verifyResults = results;
@@ -387,6 +624,7 @@ export const useGenerationStore = defineStore('generation', {
             } finally {
                 this.busy = '';
                 this._endProgress();
+                this._untrackJob();
             }
         },
 
@@ -444,17 +682,24 @@ export const useGenerationStore = defineStore('generation', {
             if (!this.docId) return;
             this.busy = 'exercises';
             this.error = '';
+            this.notice = '';
             this._startProgress('exercises');
             // Accumulation : les nouveaux exercices s'ajoutent aux précédents.
             const base = [...this.exercises];
             try {
                 const { exercises } = await api.generateExercises(
-                    { doc_id: this.docId, notions: this.notions, ...config },
+                    {
+                        doc_id: this.docId,
+                        notions: this.notions,
+                        acronyms: this.enabledAcronyms,
+                        ...config,
+                    },
                     (s) => {
                         this._onProgress(s);
                         // Affichage incrémental : exercices existants + ceux reçus au fil de l'eau.
                         this.exercises = [...base, ...(s.items as unknown as Exercise[])];
                     },
+                    (jobId) => this._trackJob('exercises', jobId),
                 );
                 this.exercises = [...base, ...exercises]; // liste finale (autoritaire)
             } catch (err) {
@@ -463,6 +708,7 @@ export const useGenerationStore = defineStore('generation', {
             } finally {
                 this.busy = '';
                 this._endProgress();
+                this._untrackJob();
             }
         },
 
@@ -521,6 +767,7 @@ export const useGenerationStore = defineStore('generation', {
                     this.questions,
                     this.enabledNotions,
                     this.exercises,
+                    this.enabledAcronyms,
                 );
                 return session_code;
             } catch (err) {
@@ -546,6 +793,7 @@ export const useGenerationStore = defineStore('generation', {
                     notions: this.enabledNotions,
                     subset_size: subsetSize,
                     pass_threshold: passThreshold,
+                    acronyms: this.enabledAcronyms,
                 });
                 return session_code;
             } catch (err) {
@@ -565,7 +813,8 @@ export const useGenerationStore = defineStore('generation', {
                     title: this.quizTitle || 'Quiz',
                     questions: this.questions,
                     exercises: this.exercises,
-                    acronyms: this.acronyms,
+                    // Glossaire des exports : seuls les sigles cochés.
+                    acronyms: this.enabledAcronyms,
                 });
             } catch (err) {
                 this.error = err instanceof Error ? err.message : 'Échec de l’export.';
@@ -582,6 +831,7 @@ export const useGenerationStore = defineStore('generation', {
                     questions: this.questions,
                     exercises: this.exercises,
                     notions: this.enabledNotions,
+                    acronyms: this.acronyms,
                 });
                 return ws.work_code;
             } catch (err) {

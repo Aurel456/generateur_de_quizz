@@ -10,6 +10,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from backend.app.converters import (
+    dict_to_acronym,
     dict_to_notion,
     dict_to_question,
     question_to_dict,
@@ -88,8 +89,9 @@ def _run_generation(
     job: Job | None = None,
 ) -> QuizResponse:
     """Cœur de la génération, partagé par les variantes sync et async."""
-    # Seules les notions activées guident la génération.
+    # Seules les notions (et les sigles) activés guident la génération.
     notions = [dict_to_notion(n.model_dump()) for n in payload.notions if n.enabled]
+    acronyms = [dict_to_acronym(a.model_dump()) for a in payload.acronyms if a.enabled]
     model = _VISION_MODEL if entry.vision else None
     # Streaming incrémental possible hors mode batch (le batch agrège les résultats).
     stream = on_item is not None and not payload.batch_mode
@@ -111,6 +113,7 @@ def _run_generation(
         enable_thinking=payload.enable_thinking,
         notion_mixing=payload.notion_mixing,
         notions=notions or None,
+        acronyms=acronyms or None,
         vision_mode=entry.vision,
         batch_mode=payload.batch_mode,
         model=model,
