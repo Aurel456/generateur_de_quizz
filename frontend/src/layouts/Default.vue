@@ -21,7 +21,7 @@
     </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, getCurrentInstance, ref } from 'vue';
 import FrHeaderConfig from './FrHeaderConfig';
 import FrNavigationConfig from './FrNavigationConfig';
@@ -45,7 +45,7 @@ const containerClass = computed(() => {
     return clir?.isFluid ? 'fr-container--fluid fr-px-5v' : 'fr-container';
 });
 
-function display(nextOriginId) {
+function display(nextOriginId: string) {
     originId.value = nextOriginId;
     showModal.value = true;
 }

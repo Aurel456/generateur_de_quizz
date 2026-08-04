@@ -46,21 +46,8 @@
             · {{ workshop.notions.length }} notion(s) · statut : {{ workshop.status }}
         </p>
 
-        <!-- Onglets -->
-        <ul class="fr-tabs__list" role="tablist">
-            <li v-for="t in tabs" :key="t.key" role="presentation">
-                <button
-                    class="fr-tag fr-mr-1w fr-mb-1w"
-                    :class="{ 'fr-tag--dismiss': false, active: tab === t.key }"
-                    @click="tab = t.key"
-                >
-                    {{ t.label }}
-                </button>
-            </li>
-        </ul>
-
-        <!-- Onglet Questions -->
-        <section v-show="tab === 'questions'">
+        <DsfrTabs v-model="tab" :tabs="tabs" tabs-label="Sections de l'atelier">
+        <template #questions>
             <p v-if="!workshop.questions.length" class="fr-text--sm">Aucune question.</p>
             <div v-for="(q, qi) in workshop.questions" :key="qi" class="fr-mb-2w fr-p-2w card">
                 <div class="fr-grid-row fr-grid-row--middle fr-mb-1v">
@@ -79,10 +66,9 @@
                     <span class="fr-col"><input class="fr-input" v-model="q.choices[label]" /></span>
                 </div>
             </div>
-        </section>
+        </template>
 
-        <!-- Onglet Exercices -->
-        <section v-show="tab === 'exercises'">
+        <template #exercises>
             <p v-if="!workshop.exercises.length" class="fr-text--sm">Aucun exercice.</p>
             <div v-for="(ex, ei) in workshop.exercises" :key="ei" class="fr-mb-2w fr-p-2w card">
                 <div class="fr-grid-row fr-grid-row--middle fr-mb-1v">
@@ -96,10 +82,9 @@
                 <textarea class="fr-input fr-mb-1v" rows="2" v-model="ex.statement" />
                 <input v-if="ex.expected_answer !== undefined" class="fr-input" v-model="ex.expected_answer" placeholder="Réponse attendue" />
             </div>
-        </section>
+        </template>
 
-        <!-- Onglet Notions -->
-        <section v-show="tab === 'notions'">
+        <template #notions>
             <p v-if="!workshop.notions.length" class="fr-text--sm">Aucune notion.</p>
             <div v-for="(n, ni) in workshop.notions" :key="ni" class="fr-grid-row fr-grid-row--gutters fr-grid-row--middle fr-mb-1v">
                 <div class="fr-col-4"><input class="fr-input" v-model="n.title" placeholder="Titre" /></div>
@@ -122,10 +107,9 @@
                     </div>
                 </div>
             </div>
-        </section>
+        </template>
 
-        <!-- Onglet Outils -->
-        <section v-show="tab === 'tools'">
+        <template #tools>
             <!-- Fusion d'un autre atelier -->
             <div class="fr-p-3w card fr-mb-3w">
                 <h3 class="fr-h6">Fusionner un autre atelier</h3>
@@ -173,23 +157,19 @@
                     </p>
                 </div>
             </div>
-        </section>
+        </template>
+        </DsfrTabs>
     </template>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { api, type Workshop, type WorkshopSummary } from '@/services/api';
+import DsfrTabs from '@/components/DsfrTabs.vue';
+import type { TabDefinition } from '@/components/dsfrTabs';
 
 defineOptions({ name: 'WorkshopPage' });
-
-const tabs = [
-    { key: 'questions', label: 'Questions' },
-    { key: 'exercises', label: 'Exercices' },
-    { key: 'notions', label: 'Notions' },
-    { key: 'tools', label: 'Outils' },
-] as const;
 
 const route = useRoute();
 const code = ref('');
@@ -202,7 +182,14 @@ const merging = ref(false);
 const busyNotions = ref(false);
 const error = ref('');
 const notice = ref('');
-const tab = ref<'questions' | 'exercises' | 'notions' | 'tools'>('questions');
+const tab = ref('questions');
+
+const tabs = computed<TabDefinition[]>(() => [
+    { key: 'questions', label: 'Questions', badge: workshop.value?.questions.length || undefined },
+    { key: 'exercises', label: 'Exercices', badge: workshop.value?.exercises.length || undefined },
+    { key: 'notions', label: 'Notions', badge: workshop.value?.notions.length || undefined },
+    { key: 'tools', label: 'Outils' },
+]);
 
 const publishTitle = ref('');
 const poolMode = ref(false);

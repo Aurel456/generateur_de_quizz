@@ -5,556 +5,720 @@
         <p>{{ store.error }}</p>
     </div>
 
-    <!-- Étape 1 : Document -->
-    <section class="fr-mb-4w">
-        <h2 class="fr-h4">1. Document(s) source</h2>
-        <div class="fr-upload-group">
-            <label class="fr-label" for="files">
-                Fichiers
-                <span class="fr-hint-text">PDF, DOCX, PPTX, ODT, TXT — plusieurs possibles.</span>
-            </label>
-            <input
-                id="files"
-                class="fr-upload"
-                type="file"
-                multiple
-                accept=".pdf,.docx,.pptx,.odt,.odp,.ods,.txt"
-                :disabled="store.busy === 'upload'"
-                @change="onFilesChange"
-            />
-        </div>
-        <div class="fr-checkbox-group fr-mt-1w">
-            <input id="vision" type="checkbox" v-model="visionMode" :disabled="store.busy === 'upload' || oneShot" />
-            <label class="fr-label" for="vision">
-                Mode Vision (PDF → images)
-                <span class="fr-hint-text">Analyse les pages PDF en images (schémas, formules). Nécessite un modèle vision configuré.</span>
-            </label>
-        </div>
-        <div class="fr-checkbox-group">
-            <input id="oneshot" type="checkbox" v-model="oneShot" :disabled="store.busy === 'upload'" />
-            <label class="fr-label" for="oneshot">
-                Mode One-shot
-                <span class="fr-hint-text">
-                    Envoie tout le(s) document(s) en un minimum de blocs au modèle à grand contexte
-                    (vision, DPI fixe). Idéal pour une vue d'ensemble.
-                </span>
-            </label>
-        </div>
+    <!-- Récapitulatif : ce que les onglets ne montrent plus d'un seul coup d'œil. -->
+    <ul v-if="store.upload" class="fr-tags-group fr-mb-2w">
+        <li>
+            <span class="fr-badge fr-badge--sm fr-badge--blue-cumulus">
+                {{ store.upload.documents.length }} document(s) · {{ store.upload.num_chunks }} bloc(s)
+            </span>
+        </li>
+        <li>
+            <span class="fr-badge fr-badge--sm">{{ store.notions.length }} notion(s)</span>
+        </li>
+        <li>
+            <span class="fr-badge fr-badge--sm">{{ store.questions.length }} question(s)</span>
+        </li>
+        <li>
+            <span class="fr-badge fr-badge--sm">{{ store.exercises.length }} exercice(s)</span>
+        </li>
+    </ul>
 
-        <details class="fr-mt-2w prompt-editor">
-            <summary class="fr-text--sm">⚙️ Réglages avancés du découpage</summary>
-            <div class="fr-grid-row fr-grid-row--gutters fr-mt-1w">
-                <div class="fr-col-12 fr-col-md-6">
-                    <label class="fr-label fr-text--sm" for="adv-maxtok">
-                        Taille de bloc (tokens, mode texte)
-                        <span class="fr-hint-text">0 = valeur par défaut</span>
-                    </label>
-                    <input id="adv-maxtok" class="fr-input" type="number" min="0" step="1000" v-model.number="advUpload.max_tokens" />
-                </div>
-                <div class="fr-col-12 fr-col-md-6">
-                    <label class="fr-label fr-text--sm" for="adv-imgpc">
-                        Pages par bloc (mode vision)
-                    </label>
-                    <input id="adv-imgpc" class="fr-input" type="number" min="1" max="50" v-model.number="advUpload.max_images_per_chunk" />
-                </div>
-                <div class="fr-col-6 fr-col-md-6">
-                    <label class="fr-label fr-text--sm" for="adv-mindpi">DPI min (vision)</label>
-                    <input id="adv-mindpi" class="fr-input" type="number" min="40" max="300" v-model.number="advUpload.min_dpi" />
-                </div>
-                <div class="fr-col-6 fr-col-md-6">
-                    <label class="fr-label fr-text--sm" for="adv-maxdpi">DPI max (vision)</label>
-                    <input id="adv-maxdpi" class="fr-input" type="number" min="40" max="300" v-model.number="advUpload.max_dpi" />
-                </div>
+    <DsfrTabs v-model="tab" :tabs="tabs" tabs-label="Étapes de génération du quiz">
+        <!-- ─── Documents ──────────────────────────────────────────────────── -->
+        <template #documents>
+            <h2 class="fr-h4">Document(s) source</h2>
+            <div class="fr-upload-group">
+                <label class="fr-label" for="files">
+                    Fichiers
+                    <span class="fr-hint-text">PDF, DOCX, PPTX, ODT, TXT — plusieurs possibles.</span>
+                </label>
+                <input
+                    id="files"
+                    class="fr-upload"
+                    type="file"
+                    multiple
+                    accept=".pdf,.docx,.pptx,.odt,.odp,.ods,.txt"
+                    :disabled="store.busy === 'upload'"
+                    @change="onFilesChange"
+                />
             </div>
-        </details>
-
-        <div v-if="selectedFiles.length" class="fr-mt-2w">
-            <p class="fr-text--sm fr-mb-1v">
-                <strong>{{ selectedFiles.length }}</strong> fichier(s) sélectionné(s) :
-            </p>
-            <ul class="fr-tags-group">
-                <li v-for="f in selectedFiles" :key="f.name">
-                    <span class="fr-tag fr-tag--sm">📄 {{ f.name }} · {{ formatSize(f.size) }}</span>
-                </li>
-            </ul>
-        </div>
-
-        <button
-            class="fr-btn fr-mt-2w"
-            :disabled="!selectedFiles.length || store.busy === 'upload'"
-            @click="upload"
-        >
-            {{ store.busy === 'upload' ? 'Analyse…' : 'Analyser les documents' }}
-        </button>
-
-        <div v-if="store.upload" class="fr-mt-2w">
-            <div class="fr-alert fr-alert--success fr-alert--sm fr-mb-2w">
-                <p class="fr-mb-0">
-                    ✅ Analyse terminée : <strong>{{ store.upload.documents.length }}</strong>
-                    document(s), <strong>{{ store.upload.num_chunks }}</strong> blocs,
-                    <strong>{{ store.upload.total_tokens.toLocaleString('fr-FR') }}</strong> tokens.
-                </p>
+            <div class="fr-checkbox-group fr-mt-1w">
+                <input id="vision" type="checkbox" v-model="visionMode" :disabled="store.busy === 'upload' || oneShot" />
+                <label class="fr-label" for="vision">
+                    Mode Vision (PDF → images)
+                    <span class="fr-hint-text">Analyse les pages PDF en images (schémas, formules). Nécessite un modèle vision configuré.</span>
+                </label>
             </div>
-            <div class="fr-table fr-table--sm fr-table--bordered">
-                <table>
-                    <thead>
-                        <tr>
-                            <th scope="col">Document</th>
-                            <th scope="col">Pages</th>
-                            <th scope="col">Tokens</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="doc in store.upload.documents" :key="doc.name">
-                            <td>{{ doc.name }}</td>
-                            <td>{{ doc.num_pages || '—' }}</td>
-                            <td>{{ doc.total_tokens.toLocaleString('fr-FR') }}</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </section>
-
-    <!-- Étape 2 : Notions -->
-    <section v-if="store.upload" class="fr-mb-4w">
-        <h2 class="fr-h4">2. Notions fondamentales</h2>
-        <button
-            class="fr-btn fr-btn--secondary"
-            :disabled="store.busy === 'notions'"
-            @click="store.detectNotions()"
-        >
-            {{ store.busy === 'notions' ? 'Détection…' : 'Détecter les notions' }}
-        </button>
-        <button class="fr-btn fr-btn--secondary fr-ml-1w" @click="addNotionAndEdit">
-            ➕ Ajouter une notion
-        </button>
-        <GenerationProgress kind="notions" />
-
-        <div v-if="store.notions.length" class="fr-mt-2w">
-            <div class="fr-grid-row fr-grid-row--middle fr-mb-1v">
-                <p class="fr-col fr-text--sm fr-mb-0">
-                    {{ store.enabledNotions.length }} / {{ store.notions.length }} notions activées
-                </p>
-                <div class="fr-col-auto">
-                    <button
-                        class="fr-btn fr-btn--tertiary fr-btn--sm"
-                        :disabled="store.busy === 'notions'"
-                        @click="store.toggleAllNotions(true)"
-                    >
-                        ✓ Tout cocher
-                    </button>
-                    <button
-                        class="fr-btn fr-btn--tertiary fr-btn--sm"
-                        :disabled="store.busy === 'notions'"
-                        @click="store.toggleAllNotions(false)"
-                    >
-                        ✗ Tout décocher
-                    </button>
-                    <button
-                        class="fr-btn fr-btn--tertiary fr-btn--sm"
-                        :disabled="store.busy === 'notions'"
-                        @click="store.mergeNotions()"
-                    >
-                        🔗 Fusionner (IA)
-                    </button>
-                    <button
-                        class="fr-btn fr-btn--tertiary fr-btn--sm"
-                        :class="{ 'fr-btn--secondary': notionsGrouped }"
-                        @click="notionsGrouped = !notionsGrouped"
-                    >
-                        🗂️ Par thématique
-                    </button>
-                </div>
+            <div class="fr-checkbox-group">
+                <input id="oneshot" type="checkbox" v-model="oneShot" :disabled="store.busy === 'upload'" />
+                <label class="fr-label" for="oneshot">
+                    Mode One-shot
+                    <span class="fr-hint-text">
+                        Envoie tout le(s) document(s) en un minimum de blocs au modèle à grand contexte
+                        (vision, DPI fixe). Idéal pour une vue d'ensemble.
+                    </span>
+                </label>
             </div>
 
-            <template v-for="[category, group] in displayGroups" :key="category || '_flat'">
-                <h3 v-if="notionsGrouped" class="fr-h6 fr-mt-2w fr-mb-1v">{{ category }}</h3>
-                <div
-                    v-for="notion in group"
-                    :key="notionIndex(notion)"
-                    class="notion-row fr-mb-1v"
-                >
-                    <!-- Édition manuelle d'une notion -->
-                    <div v-if="editingNotionIndex === notionIndex(notion)" class="notion-edit fr-p-2w">
-                        <input class="fr-input fr-mb-1v" v-model="notion.title" placeholder="Titre" />
-                        <input class="fr-input fr-mb-1v" v-model="notion.category" placeholder="Catégorie / thématique" />
-                        <textarea class="fr-input fr-mb-1v" rows="2" v-model="notion.description" placeholder="Description" />
-                        <button class="fr-btn fr-btn--sm" @click="editingNotionIndex = -1">✓ Terminer</button>
+            <details class="fr-mt-2w prompt-editor">
+                <summary class="fr-text--sm">⚙️ Réglages avancés du découpage</summary>
+                <div class="fr-grid-row fr-grid-row--gutters fr-mt-1w">
+                    <div class="fr-col-12 fr-col-md-6">
+                        <label class="fr-label fr-text--sm" for="adv-maxtok">
+                            Taille de bloc (tokens, mode texte)
+                            <span class="fr-hint-text">0 = valeur par défaut</span>
+                        </label>
+                        <input id="adv-maxtok" class="fr-input" type="number" min="0" step="1000" v-model.number="advUpload.max_tokens" />
                     </div>
-                    <!-- Lecture -->
-                    <div v-else class="fr-grid-row fr-grid-row--middle">
-                        <div class="fr-col">
-                            <div class="fr-checkbox-group fr-checkbox-group--sm">
-                                <input :id="`notion-${notionIndex(notion)}`" type="checkbox" v-model="notion.enabled" />
-                                <label class="fr-label" :for="`notion-${notionIndex(notion)}`">
-                                    <strong>{{ notion.title || '(sans titre)' }}</strong>
-                                    <span v-if="notion.category && !notionsGrouped" class="fr-badge fr-badge--sm fr-ml-1v">
-                                        {{ notion.category }}
-                                    </span>
-                                    <span
-                                        v-if="store.notionQuestionCounts[notion.title]"
-                                        class="fr-badge fr-badge--sm fr-badge--green-emeraude fr-ml-1v"
-                                        title="Questions rattachées à cette notion"
-                                    >
-                                        {{ store.notionQuestionCounts[notion.title] }} Q
-                                    </span>
-                                    <span class="fr-hint-text">{{ notion.description }}</span>
-                                </label>
+                    <div class="fr-col-12 fr-col-md-6">
+                        <label class="fr-label fr-text--sm" for="adv-imgpc">
+                            Pages par bloc (mode vision)
+                        </label>
+                        <input id="adv-imgpc" class="fr-input" type="number" min="1" max="50" v-model.number="advUpload.max_images_per_chunk" />
+                    </div>
+                    <div class="fr-col-6 fr-col-md-6">
+                        <label class="fr-label fr-text--sm" for="adv-mindpi">DPI min (vision)</label>
+                        <input id="adv-mindpi" class="fr-input" type="number" min="40" max="300" v-model.number="advUpload.min_dpi" />
+                    </div>
+                    <div class="fr-col-6 fr-col-md-6">
+                        <label class="fr-label fr-text--sm" for="adv-maxdpi">DPI max (vision)</label>
+                        <input id="adv-maxdpi" class="fr-input" type="number" min="40" max="300" v-model.number="advUpload.max_dpi" />
+                    </div>
+                </div>
+            </details>
+
+            <div v-if="selectedFiles.length" class="fr-mt-2w">
+                <p class="fr-text--sm fr-mb-1v">
+                    <strong>{{ selectedFiles.length }}</strong> fichier(s) sélectionné(s) :
+                </p>
+                <ul class="fr-tags-group">
+                    <li v-for="f in selectedFiles" :key="f.name">
+                        <span class="fr-tag fr-tag--sm">📄 {{ f.name }} · {{ formatSize(f.size) }}</span>
+                    </li>
+                </ul>
+            </div>
+
+            <button
+                class="fr-btn fr-mt-2w"
+                :disabled="!selectedFiles.length || store.busy === 'upload'"
+                @click="upload"
+            >
+                {{ store.busy === 'upload' ? 'Analyse…' : 'Analyser les documents' }}
+            </button>
+
+            <div v-if="store.upload" class="fr-mt-2w">
+                <div class="fr-alert fr-alert--success fr-alert--sm fr-mb-2w">
+                    <p class="fr-mb-0">
+                        ✅ Analyse terminée : <strong>{{ store.upload.documents.length }}</strong>
+                        document(s), <strong>{{ store.upload.num_chunks }}</strong> blocs,
+                        <strong>{{ store.upload.total_tokens.toLocaleString('fr-FR') }}</strong> tokens.
+                    </p>
+                </div>
+                <div class="fr-table fr-table--sm fr-table--bordered">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Document</th>
+                                <th scope="col">Pages</th>
+                                <th scope="col">Tokens</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="doc in store.upload.documents" :key="doc.name">
+                                <td>{{ doc.name }}</td>
+                                <td>{{ doc.num_pages || '—' }}</td>
+                                <td>{{ doc.total_tokens.toLocaleString('fr-FR') }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <button class="fr-btn fr-btn--secondary fr-mt-2w" @click="tab = 'notions'">
+                    Continuer vers les notions →
+                </button>
+            </div>
+        </template>
+
+        <!-- ─── Notions & acronymes ────────────────────────────────────────── -->
+        <template #notions>
+            <h2 class="fr-h4">Notions fondamentales</h2>
+            <button
+                class="fr-btn fr-btn--secondary"
+                :disabled="store.busy === 'notions'"
+                @click="store.detectNotions()"
+            >
+                {{ store.busy === 'notions' ? 'Détection…' : 'Détecter les notions' }}
+            </button>
+            <button class="fr-btn fr-btn--secondary fr-ml-1w" @click="addNotionAndEdit">
+                ➕ Ajouter une notion
+            </button>
+            <GenerationProgress kind="notions" />
+
+            <div v-if="store.notions.length" class="fr-mt-2w">
+                <div class="fr-grid-row fr-grid-row--middle fr-mb-1v">
+                    <p class="fr-col fr-text--sm fr-mb-0">
+                        {{ store.enabledNotions.length }} / {{ store.notions.length }} notions activées
+                    </p>
+                    <div class="fr-col-auto">
+                        <button
+                            class="fr-btn fr-btn--tertiary fr-btn--sm"
+                            :disabled="store.busy === 'notions'"
+                            @click="store.toggleAllNotions(true)"
+                        >
+                            ✓ Tout cocher
+                        </button>
+                        <button
+                            class="fr-btn fr-btn--tertiary fr-btn--sm"
+                            :disabled="store.busy === 'notions'"
+                            @click="store.toggleAllNotions(false)"
+                        >
+                            ✗ Tout décocher
+                        </button>
+                        <button
+                            class="fr-btn fr-btn--tertiary fr-btn--sm"
+                            :disabled="store.busy === 'notions'"
+                            @click="store.mergeNotions()"
+                        >
+                            🔗 Fusionner (IA)
+                        </button>
+                        <button
+                            class="fr-btn fr-btn--tertiary fr-btn--sm"
+                            :class="{ 'fr-btn--secondary': notionsGrouped }"
+                            @click="notionsGrouped = !notionsGrouped"
+                        >
+                            🗂️ Par thématique
+                        </button>
+                    </div>
+                </div>
+
+                <template v-for="[category, group] in displayGroups" :key="category || '_flat'">
+                    <h3 v-if="notionsGrouped" class="fr-h6 fr-mt-2w fr-mb-1v">{{ category }}</h3>
+                    <div
+                        v-for="notion in group"
+                        :key="notionIndex(notion)"
+                        class="notion-row fr-mb-1v"
+                    >
+                        <!-- Édition manuelle d'une notion -->
+                        <div v-if="editingNotionIndex === notionIndex(notion)" class="notion-edit fr-p-2w">
+                            <input class="fr-input fr-mb-1v" v-model="notion.title" placeholder="Titre" />
+                            <input class="fr-input fr-mb-1v" v-model="notion.category" placeholder="Catégorie / thématique" />
+                            <textarea class="fr-input fr-mb-1v" rows="2" v-model="notion.description" placeholder="Description" />
+                            <button class="fr-btn fr-btn--sm" @click="editingNotionIndex = -1">✓ Terminer</button>
+                        </div>
+                        <!-- Lecture -->
+                        <div v-else class="fr-grid-row fr-grid-row--middle">
+                            <div class="fr-col">
+                                <div class="fr-checkbox-group fr-checkbox-group--sm">
+                                    <input :id="`notion-${notionIndex(notion)}`" type="checkbox" v-model="notion.enabled" />
+                                    <label class="fr-label" :for="`notion-${notionIndex(notion)}`">
+                                        <strong>{{ notion.title || '(sans titre)' }}</strong>
+                                        <span v-if="notion.category && !notionsGrouped" class="fr-badge fr-badge--sm fr-ml-1v">
+                                            {{ notion.category }}
+                                        </span>
+                                        <span
+                                            v-if="store.notionQuestionCounts[notion.title]"
+                                            class="fr-badge fr-badge--sm fr-badge--green-emeraude fr-ml-1v"
+                                            title="Questions rattachées à cette notion"
+                                        >
+                                            {{ store.notionQuestionCounts[notion.title] }} Q
+                                        </span>
+                                        <span class="fr-hint-text">{{ notion.description }}</span>
+                                    </label>
+                                </div>
                             </div>
+                            <div class="fr-col-auto">
+                                <button
+                                    class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm"
+                                    @click="editingNotionIndex = notionIndex(notion)"
+                                >
+                                    ✏️
+                                </button>
+                                <button
+                                    class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm"
+                                    @click="store.deleteNotion(notion)"
+                                >
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <div class="fr-input-group fr-mt-2w">
+                    <label class="fr-label fr-text--sm" for="notion-edit">💬 Modifier les notions avec l'IA</label>
+                    <div class="fr-grid-row fr-grid-row--gutters fr-grid-row--bottom">
+                        <div class="fr-col">
+                            <input
+                                id="notion-edit"
+                                class="fr-input"
+                                v-model="notionInstruction"
+                                placeholder="Ex : ajoute une notion sur les dérivées partielles"
+                                :disabled="store.busy === 'notions'"
+                                @keyup.enter="editNotions"
+                            />
                         </div>
                         <div class="fr-col-auto">
                             <button
-                                class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm"
-                                @click="editingNotionIndex = notionIndex(notion)"
+                                class="fr-btn fr-btn--secondary"
+                                :disabled="store.busy === 'notions' || !notionInstruction.trim()"
+                                @click="editNotions"
                             >
-                                ✏️
-                            </button>
-                            <button
-                                class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm"
-                                @click="store.deleteNotion(notion)"
-                            >
-                                🗑️
+                                Appliquer
                             </button>
                         </div>
                     </div>
                 </div>
-            </template>
-
-            <div class="fr-input-group fr-mt-2w">
-                <label class="fr-label fr-text--sm" for="notion-edit">💬 Modifier les notions avec l'IA</label>
-                <div class="fr-grid-row fr-grid-row--gutters fr-grid-row--bottom">
-                    <div class="fr-col">
-                        <input
-                            id="notion-edit"
-                            class="fr-input"
-                            v-model="notionInstruction"
-                            placeholder="Ex : ajoute une notion sur les dérivées partielles"
-                            :disabled="store.busy === 'notions'"
-                            @keyup.enter="editNotions"
-                        />
-                    </div>
-                    <div class="fr-col-auto">
-                        <button
-                            class="fr-btn fr-btn--secondary"
-                            :disabled="store.busy === 'notions' || !notionInstruction.trim()"
-                            @click="editNotions"
-                        >
-                            Appliquer
-                        </button>
-                    </div>
-                </div>
             </div>
-        </div>
-    </section>
 
-    <!-- Étape 2 bis : Acronymes -->
-    <section v-if="store.upload" class="fr-mb-4w">
-        <h2 class="fr-h4">2 bis. Acronymes</h2>
-        <button
-            class="fr-btn fr-btn--secondary"
-            :disabled="store.busy === 'acronyms'"
-            @click="store.detectAcronyms()"
-        >
-            {{ store.busy === 'acronyms' ? 'Détection…' : 'Détecter les acronymes' }}
-        </button>
-        <button class="fr-btn fr-btn--secondary fr-ml-1w" @click="store.addAcronym()">
-            ➕ Ajouter un acronyme
-        </button>
-
-        <div v-if="store.acronyms.length" class="fr-mt-2w">
-            <div
-                v-for="(a, i) in store.acronyms"
-                :key="i"
-                class="fr-grid-row fr-grid-row--gutters fr-grid-row--middle fr-mb-1v"
+            <h2 class="fr-h4 fr-mt-4w">Acronymes</h2>
+            <button
+                class="fr-btn fr-btn--secondary"
+                :disabled="store.busy === 'acronyms'"
+                @click="store.detectAcronyms()"
             >
-                <div class="fr-col-auto">
-                    <div class="fr-checkbox-group fr-checkbox-group--sm">
-                        <input :id="`acro-${i}`" type="checkbox" v-model="a.enabled" />
-                        <label class="fr-label" :for="`acro-${i}`">
-                            <span class="fr-sr-only">Acronyme actif</span>
-                        </label>
-                    </div>
-                </div>
-                <div class="fr-col-3">
-                    <input class="fr-input" v-model="a.acronym" placeholder="Sigle" />
-                </div>
-                <div class="fr-col">
-                    <input class="fr-input" v-model="a.definition" placeholder="Définition" />
-                </div>
-                <div class="fr-col-auto">
-                    <button
-                        class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm"
-                        @click="store.deleteAcronym(i)"
-                    >
-                        🗑️
-                    </button>
-                </div>
-            </div>
+                {{ store.busy === 'acronyms' ? 'Détection…' : 'Détecter les acronymes' }}
+            </button>
+            <button class="fr-btn fr-btn--secondary fr-ml-1w" @click="store.addAcronym()">
+                ➕ Ajouter un acronyme
+            </button>
 
-            <div class="fr-input-group fr-mt-2w">
-                <label class="fr-label fr-text--sm" for="acro-edit">💬 Modifier les acronymes avec l'IA</label>
-                <div class="fr-grid-row fr-grid-row--gutters fr-grid-row--bottom">
+            <div v-if="store.acronyms.length" class="fr-mt-2w">
+                <div
+                    v-for="(a, i) in store.acronyms"
+                    :key="i"
+                    class="fr-grid-row fr-grid-row--gutters fr-grid-row--middle fr-mb-1v"
+                >
+                    <div class="fr-col-auto">
+                        <div class="fr-checkbox-group fr-checkbox-group--sm">
+                            <input :id="`acro-${i}`" type="checkbox" v-model="a.enabled" />
+                            <label class="fr-label" :for="`acro-${i}`">
+                                <span class="fr-sr-only">Acronyme actif</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="fr-col-3">
+                        <input class="fr-input" v-model="a.acronym" placeholder="Sigle" />
+                    </div>
                     <div class="fr-col">
-                        <input
-                            id="acro-edit"
-                            class="fr-input"
-                            v-model="acronymInstruction"
-                            placeholder="Ex : ajoute la définition de DGFIP, supprime les sigles non pertinents"
-                            :disabled="store.busy === 'acronyms'"
-                            @keyup.enter="editAcronyms"
-                        />
+                        <input class="fr-input" v-model="a.definition" placeholder="Définition" />
                     </div>
                     <div class="fr-col-auto">
                         <button
-                            class="fr-btn fr-btn--secondary"
-                            :disabled="store.busy === 'acronyms' || !acronymInstruction.trim()"
-                            @click="editAcronyms"
+                            class="fr-btn fr-btn--tertiary-no-outline fr-btn--sm"
+                            @click="store.deleteAcronym(i)"
                         >
-                            Appliquer
+                            🗑️
                         </button>
                     </div>
                 </div>
-            </div>
-        </div>
-    </section>
 
-    <!-- Étape 3 : Configuration -->
-    <section v-if="store.upload" class="fr-mb-4w">
-        <h2 class="fr-h4">3. Configuration</h2>
-        <div class="fr-grid-row fr-grid-row--gutters">
-            <div class="fr-col-6 fr-col-md-3" v-for="level in levels" :key="level.key">
-                <label class="fr-label" :for="`count-${level.key}`">{{ level.label }}</label>
-                <input
-                    :id="`count-${level.key}`"
-                    class="fr-input"
-                    type="number"
-                    min="0"
-                    max="50"
-                    v-model.number="counts[level.key]"
-                />
+                <div class="fr-input-group fr-mt-2w">
+                    <label class="fr-label fr-text--sm" for="acro-edit">💬 Modifier les acronymes avec l'IA</label>
+                    <div class="fr-grid-row fr-grid-row--gutters fr-grid-row--bottom">
+                        <div class="fr-col">
+                            <input
+                                id="acro-edit"
+                                class="fr-input"
+                                v-model="acronymInstruction"
+                                placeholder="Ex : ajoute la définition de DGFIP, supprime les sigles non pertinents"
+                                :disabled="store.busy === 'acronyms'"
+                                @keyup.enter="editAcronyms"
+                            />
+                        </div>
+                        <div class="fr-col-auto">
+                            <button
+                                class="fr-btn fr-btn--secondary"
+                                :disabled="store.busy === 'acronyms' || !acronymInstruction.trim()"
+                                @click="editAcronyms"
+                            >
+                                Appliquer
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
-        </div>
+        </template>
 
-        <div class="fr-grid-row fr-grid-row--gutters fr-mt-1w">
-            <div class="fr-col-6 fr-col-md-3">
-                <label class="fr-label" for="num-choices">Choix par question</label>
-                <input
-                    id="num-choices"
-                    class="fr-input"
-                    type="number"
-                    min="2"
-                    max="6"
-                    v-model.number="config.num_choices"
-                />
-            </div>
-            <div class="fr-col-6 fr-col-md-3">
-                <label class="fr-label" for="num-correct">Bonnes réponses</label>
-                <input
-                    id="num-correct"
-                    class="fr-input"
-                    type="number"
-                    min="1"
-                    :max="config.num_choices - 1"
-                    :disabled="config.variable_correct || config.vrai_faux"
-                    v-model.number="config.num_correct"
-                />
-            </div>
-        </div>
-
-        <div class="fr-mt-2w">
-            <div class="fr-checkbox-group">
-                <input id="variable" type="checkbox" v-model="config.variable_correct" />
-                <label class="fr-label" for="variable">Nombre de bonnes réponses variable</label>
-            </div>
-            <div class="fr-checkbox-group">
-                <input id="vraifaux" type="checkbox" v-model="config.vrai_faux" />
-                <label class="fr-label" for="vraifaux">Mode Vrai / Faux</label>
-            </div>
-            <div class="fr-checkbox-group">
-                <input id="humor" type="checkbox" v-model="config.humor" />
-                <label class="fr-label" for="humor">Touche d'humour</label>
-            </div>
-            <div class="fr-checkbox-group">
-                <input id="batch" type="checkbox" v-model="config.batch_mode" />
-                <label class="fr-label" for="batch">
-                    Traitement par lots (Batch API)
-                    <span class="fr-hint-text">Plus rapide si le serveur supporte /v1/batches.</span>
-                </label>
-            </div>
-            <div class="fr-checkbox-group">
-                <input id="thinking" type="checkbox" v-model="config.enable_thinking" />
-                <label class="fr-label" for="thinking">
-                    Mode raisonnement (thinking)
-                    <span class="fr-hint-text">Améliore la qualité des questions ; un peu plus lent.</span>
-                </label>
-            </div>
-            <div class="fr-checkbox-group">
-                <input id="mixing" type="checkbox" v-model="config.notion_mixing" />
-                <label class="fr-label" for="mixing">
-                    Mélange des notions
-                    <span class="fr-hint-text">Répartit les questions sur l'ensemble des notions sélectionnées.</span>
-                </label>
-            </div>
-        </div>
-
-        <div class="fr-input-group fr-mt-2w">
-            <label class="fr-label" for="persona">
-                Persona expert <span class="fr-hint-text">(optionnel)</span>
-            </label>
-            <input
-                id="persona"
-                class="fr-input"
-                v-model="config.persona"
-                placeholder="Ex : Tu es un expert en droit fiscal."
-            />
-        </div>
-        <div class="fr-input-group">
-            <label class="fr-label" for="instructions">
-                Consignes libres <span class="fr-hint-text">(optionnel)</span>
-            </label>
-            <textarea id="instructions" class="fr-input" rows="3" v-model="config.user_instructions" />
-        </div>
-        <div class="fr-checkbox-group">
-            <input id="classify-quiz" type="checkbox" v-model="classifyQuiz" />
-            <label class="fr-label" for="classify-quiz">
-                Analyser la consigne (style vs périmètre)
-                <span class="fr-hint-text">
-                    Sépare automatiquement la consigne : le « périmètre » filtre les passages du
-                    document, le « style » guide la formulation.
-                </span>
-            </label>
-        </div>
-
-        <details class="fr-mt-2w prompt-editor">
-            <summary class="fr-text--sm">⚙️ Personnaliser les consignes par niveau (quiz)</summary>
-            <p v-if="store.promptDefaults?.fixed_rules.quiz" class="fr-text--sm fr-mt-1w fixed-rules">
-                🔒 {{ store.promptDefaults.fixed_rules.quiz }}
-            </p>
-            <div v-for="level in levels" :key="`qp-${level.key}`" class="fr-input-group fr-mt-1w">
-                <label class="fr-label fr-text--sm" :for="`qp-${level.key}`">{{ level.label }}</label>
-                <textarea
-                    :id="`qp-${level.key}`"
-                    class="fr-input"
-                    rows="3"
-                    v-model="quizPrompts[level.key]"
-                />
-            </div>
-            <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="applyQuizDefaults">
-                ↺ Réinitialiser
-            </button>
-        </details>
-
-        <button
-            class="fr-btn fr-mt-2w"
-            :disabled="store.busy === 'quiz' || totalQuestions === 0"
-            @click="generate"
-        >
-            {{ store.busy === 'quiz' ? 'Génération en cours…' : `Générer ${totalQuestions} question(s)` }}
-        </button>
-        <button class="fr-btn fr-btn--secondary fr-mt-2w fr-ml-1w" @click="store.addQuestion()">
-            ➕ Ajouter une question manuelle
-        </button>
-        <GenerationProgress kind="quiz" />
-        <p v-if="store.busy === 'quiz' && !store.progress.total" class="fr-text--sm fr-mt-1v">
-            La génération peut prendre plusieurs minutes selon le volume.
-        </p>
-
-        <details class="fr-mt-3w prompt-editor">
-            <summary class="fr-text--sm">🧠 Générer des questions sans document (base du modèle)</summary>
-            <p class="fr-text--sm fr-mt-1w">
-                Utile pour compléter un document : pose des questions générales sur un sujet ou
-                une notion au-delà de ce que le document contient. Les questions sont ajoutées au
-                quiz courant et signalées comme issues de la base du modèle.
-            </p>
-            <div class="fr-input-group">
-                <label class="fr-label fr-text--sm" for="kb-topic">Sujet</label>
-                <input
-                    id="kb-topic"
-                    class="fr-input"
-                    v-model="kb.topic"
-                    placeholder="Ex : la laïcité dans le service public"
-                />
-            </div>
-            <div class="fr-input-group">
-                <label class="fr-label fr-text--sm" for="kb-context">
-                    Périmètre / contexte <span class="fr-hint-text">(optionnel)</span>
-                </label>
-                <textarea
-                    id="kb-context"
-                    class="fr-input"
-                    rows="2"
-                    v-model="kb.additional_context"
-                />
-            </div>
+        <!-- ─── Quiz QCM ───────────────────────────────────────────────────── -->
+        <template #quiz>
+            <h2 class="fr-h4">Configuration du quiz</h2>
             <div class="fr-grid-row fr-grid-row--gutters">
-                <div class="fr-col-4" v-for="level in levels" :key="`kb-${level.key}`">
-                    <label class="fr-label fr-text--sm" :for="`kb-count-${level.key}`">
-                        {{ level.label }}
-                    </label>
+                <div class="fr-col-6 fr-col-md-3" v-for="level in levels" :key="level.key">
+                    <label class="fr-label" :for="`count-${level.key}`">{{ level.label }}</label>
                     <input
-                        :id="`kb-count-${level.key}`"
+                        :id="`count-${level.key}`"
                         class="fr-input"
                         type="number"
                         min="0"
                         max="50"
-                        v-model.number="kbCounts[level.key]"
+                        v-model.number="counts[level.key]"
                     />
                 </div>
             </div>
+
+            <div class="fr-grid-row fr-grid-row--gutters fr-mt-1w">
+                <div class="fr-col-6 fr-col-md-3">
+                    <label class="fr-label" for="num-choices">Choix par question</label>
+                    <input
+                        id="num-choices"
+                        class="fr-input"
+                        type="number"
+                        min="2"
+                        max="6"
+                        v-model.number="config.num_choices"
+                    />
+                </div>
+                <div class="fr-col-6 fr-col-md-3">
+                    <label class="fr-label" for="num-correct">Bonnes réponses</label>
+                    <input
+                        id="num-correct"
+                        class="fr-input"
+                        type="number"
+                        min="1"
+                        :max="config.num_choices - 1"
+                        :disabled="config.variable_correct || config.vrai_faux"
+                        v-model.number="config.num_correct"
+                    />
+                </div>
+            </div>
+
+            <div class="fr-mt-2w">
+                <div class="fr-checkbox-group">
+                    <input id="variable" type="checkbox" v-model="config.variable_correct" />
+                    <label class="fr-label" for="variable">Nombre de bonnes réponses variable</label>
+                </div>
+                <div class="fr-checkbox-group">
+                    <input id="vraifaux" type="checkbox" v-model="config.vrai_faux" />
+                    <label class="fr-label" for="vraifaux">Mode Vrai / Faux</label>
+                </div>
+                <div class="fr-checkbox-group">
+                    <input id="humor" type="checkbox" v-model="config.humor" />
+                    <label class="fr-label" for="humor">Touche d'humour</label>
+                </div>
+                <div class="fr-checkbox-group">
+                    <input id="batch" type="checkbox" v-model="config.batch_mode" />
+                    <label class="fr-label" for="batch">
+                        Traitement par lots (Batch API)
+                        <span class="fr-hint-text">Plus rapide si le serveur supporte /v1/batches.</span>
+                    </label>
+                </div>
+                <div class="fr-checkbox-group">
+                    <input id="thinking" type="checkbox" v-model="config.enable_thinking" />
+                    <label class="fr-label" for="thinking">
+                        Mode raisonnement (thinking)
+                        <span class="fr-hint-text">Améliore la qualité des questions ; un peu plus lent.</span>
+                    </label>
+                </div>
+                <div class="fr-checkbox-group">
+                    <input id="mixing" type="checkbox" v-model="config.notion_mixing" />
+                    <label class="fr-label" for="mixing">
+                        Mélange des notions
+                        <span class="fr-hint-text">Répartit les questions sur l'ensemble des notions sélectionnées.</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="fr-input-group fr-mt-2w">
+                <label class="fr-label" for="persona">
+                    Persona expert <span class="fr-hint-text">(optionnel)</span>
+                </label>
+                <input
+                    id="persona"
+                    class="fr-input"
+                    v-model="config.persona"
+                    placeholder="Ex : Tu es un expert en droit fiscal."
+                />
+            </div>
+            <div class="fr-input-group">
+                <label class="fr-label" for="instructions">
+                    Consignes libres <span class="fr-hint-text">(optionnel)</span>
+                </label>
+                <textarea id="instructions" class="fr-input" rows="3" v-model="config.user_instructions" />
+            </div>
+            <div class="fr-checkbox-group">
+                <input id="classify-quiz" type="checkbox" v-model="classifyQuiz" />
+                <label class="fr-label" for="classify-quiz">
+                    Analyser la consigne (style vs périmètre)
+                    <span class="fr-hint-text">
+                        Sépare automatiquement la consigne : le « périmètre » filtre les passages du
+                        document, le « style » guide la formulation.
+                    </span>
+                </label>
+            </div>
+
+            <details class="fr-mt-2w prompt-editor">
+                <summary class="fr-text--sm">⚙️ Personnaliser les consignes par niveau (quiz)</summary>
+                <p v-if="store.promptDefaults?.fixed_rules.quiz" class="fr-text--sm fr-mt-1w fixed-rules">
+                    🔒 {{ store.promptDefaults.fixed_rules.quiz }}
+                </p>
+                <div v-for="level in levels" :key="`qp-${level.key}`" class="fr-input-group fr-mt-1w">
+                    <label class="fr-label fr-text--sm" :for="`qp-${level.key}`">{{ level.label }}</label>
+                    <textarea
+                        :id="`qp-${level.key}`"
+                        class="fr-input"
+                        rows="3"
+                        v-model="quizPrompts[level.key]"
+                    />
+                </div>
+                <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="applyQuizDefaults">
+                    ↺ Réinitialiser
+                </button>
+            </details>
+
             <button
-                class="fr-btn fr-btn--secondary fr-mt-2w"
-                :disabled="store.busy === 'quiz' || !kb.topic.trim() || kbTotal === 0"
-                @click="generateFromKnowledge"
+                class="fr-btn fr-mt-2w"
+                :disabled="store.busy === 'quiz' || totalQuestions === 0"
+                @click="generate"
             >
-                {{ store.busy === 'quiz' ? 'Génération…' : `Générer ${kbTotal} question(s) sans document` }}
+                {{ store.busy === 'quiz' ? 'Génération en cours…' : `Générer ${totalQuestions} question(s)` }}
             </button>
-        </details>
-    </section>
-
-    <!-- Étape 4 : Résultats -->
-    <section v-if="store.questions.length" class="fr-mb-4w">
-        <h2 class="fr-h4">4. Quiz généré ({{ store.questions.length }} questions)</h2>
-
-        <div class="fr-grid-row fr-grid-row--middle fr-mb-2w fr-grid-row--gutters">
-            <div class="fr-col-auto">
-                <button
-                    class="fr-btn fr-btn--secondary"
-                    :disabled="store.busy === 'verify'"
-                    @click="store.verifyQuiz()"
-                >
-                    {{ store.busy === 'verify' ? 'Vérification…' : '🔍 Vérifier les réponses (IA)' }}
-                </button>
-            </div>
-            <div class="fr-col-auto">
-                <button
-                    class="fr-btn fr-btn--tertiary"
-                    :disabled="!store.canUndo"
-                    @click="store.undo()"
-                >
-                    ↩ Annuler la dernière modification
-                </button>
-            </div>
-        </div>
-        <GenerationProgress kind="verify" />
-        <div v-if="store.verifyResults.length" class="fr-alert fr-alert--info fr-mb-2w">
-            <p class="fr-mb-0">
-                Vérification : {{ verifySummary.verified }} validée(s),
-                {{ verifySummary.reformulated }} reformulée(s),
-                {{ verifySummary.deleted }} supprimée(s).
+            <button class="fr-btn fr-btn--secondary fr-mt-2w fr-ml-1w" @click="store.addQuestion()">
+                ➕ Ajouter une question manuelle
+            </button>
+            <GenerationProgress kind="quiz" />
+            <p v-if="store.busy === 'quiz' && !store.progress.total" class="fr-text--sm fr-mt-1v">
+                La génération peut prendre plusieurs minutes selon le volume.
             </p>
-        </div>
 
-        <QuestionCard
-            v-for="(q, qi) in store.questions"
-            :key="qi"
-            :question="q"
-            :index="qi"
-        />
+            <details class="fr-mt-3w prompt-editor">
+                <summary class="fr-text--sm">🧠 Générer des questions sans document (base du modèle)</summary>
+                <p class="fr-text--sm fr-mt-1w">
+                    Utile pour compléter un document : pose des questions générales sur un sujet ou
+                    une notion au-delà de ce que le document contient. Les questions sont ajoutées au
+                    quiz courant et signalées comme issues de la base du modèle.
+                </p>
+                <div class="fr-input-group">
+                    <label class="fr-label fr-text--sm" for="kb-topic">Sujet</label>
+                    <input
+                        id="kb-topic"
+                        class="fr-input"
+                        v-model="kb.topic"
+                        placeholder="Ex : la laïcité dans le service public"
+                    />
+                </div>
+                <div class="fr-input-group">
+                    <label class="fr-label fr-text--sm" for="kb-context">
+                        Périmètre / contexte <span class="fr-hint-text">(optionnel)</span>
+                    </label>
+                    <textarea
+                        id="kb-context"
+                        class="fr-input"
+                        rows="2"
+                        v-model="kb.additional_context"
+                    />
+                </div>
+                <div class="fr-grid-row fr-grid-row--gutters">
+                    <div class="fr-col-4" v-for="level in levels" :key="`kb-${level.key}`">
+                        <label class="fr-label fr-text--sm" :for="`kb-count-${level.key}`">
+                            {{ level.label }}
+                        </label>
+                        <input
+                            :id="`kb-count-${level.key}`"
+                            class="fr-input"
+                            type="number"
+                            min="0"
+                            max="50"
+                            v-model.number="kbCounts[level.key]"
+                        />
+                    </div>
+                </div>
+                <button
+                    class="fr-btn fr-btn--secondary fr-mt-2w"
+                    :disabled="store.busy === 'quiz' || !kb.topic.trim() || kbTotal === 0"
+                    @click="generateFromKnowledge"
+                >
+                    {{ store.busy === 'quiz' ? 'Génération…' : `Générer ${kbTotal} question(s) sans document` }}
+                </button>
+            </details>
 
-        <!-- Exports -->
-        <div class="fr-p-3w session-box fr-mb-3w">
-            <h3 class="fr-h6">Exporter</h3>
+            <template v-if="store.questions.length">
+                <h2 class="fr-h4 fr-mt-4w">Quiz généré ({{ store.questions.length }} questions)</h2>
+
+                <div class="fr-grid-row fr-grid-row--middle fr-mb-2w fr-grid-row--gutters">
+                    <div class="fr-col-auto">
+                        <button
+                            class="fr-btn fr-btn--secondary"
+                            :disabled="store.busy === 'verify'"
+                            @click="store.verifyQuiz()"
+                        >
+                            {{ store.busy === 'verify' ? 'Vérification…' : '🔍 Vérifier les réponses (IA)' }}
+                        </button>
+                    </div>
+                    <div class="fr-col-auto">
+                        <button
+                            class="fr-btn fr-btn--tertiary"
+                            :disabled="!store.canUndo"
+                            @click="store.undo()"
+                        >
+                            ↩ Annuler la dernière modification
+                        </button>
+                    </div>
+                    <div class="fr-col-auto">
+                        <button class="fr-btn fr-btn--tertiary" @click="tab = 'exports'">
+                            📦 Exporter / partager
+                        </button>
+                    </div>
+                </div>
+                <GenerationProgress kind="verify" />
+                <div v-if="store.verifyResults.length" class="fr-alert fr-alert--info fr-mb-2w">
+                    <p class="fr-mb-0">
+                        Vérification : {{ verifySummary.verified }} validée(s),
+                        {{ verifySummary.reformulated }} reformulée(s),
+                        {{ verifySummary.deleted }} supprimée(s).
+                    </p>
+                </div>
+
+                <QuestionCard
+                    v-for="(q, qi) in store.questions"
+                    :key="qi"
+                    :question="q"
+                    :index="qi"
+                />
+            </template>
+        </template>
+
+        <!-- ─── Exercices ──────────────────────────────────────────────────── -->
+        <template #exercices>
+            <h2 class="fr-h4">Exercices</h2>
+            <div class="fr-grid-row fr-grid-row--gutters">
+                <div class="fr-col-12 fr-col-md-4">
+                    <label class="fr-label" for="ex-type">Type</label>
+                    <select id="ex-type" class="fr-select" v-model="exConfig.exercise_type">
+                        <option value="calcul">Calcul numérique</option>
+                        <option value="trou">Texte à trou</option>
+                        <option value="cas_pratique">Cas pratique</option>
+                    </select>
+                </div>
+                <div class="fr-col-4 fr-col-md-2" v-for="level in levels" :key="`ex-${level.key}`">
+                    <label class="fr-label" :for="`ex-count-${level.key}`">{{ level.label }}</label>
+                    <input
+                        :id="`ex-count-${level.key}`"
+                        class="fr-input"
+                        type="number"
+                        min="0"
+                        max="20"
+                        v-model.number="exCounts[level.key]"
+                    />
+                </div>
+            </div>
+
+            <div class="fr-input-group fr-mt-2w">
+                <label class="fr-label" for="ex-persona">
+                    Persona expert <span class="fr-hint-text">(optionnel)</span>
+                </label>
+                <input id="ex-persona" class="fr-input" v-model="exConfig.persona" />
+            </div>
+            <div class="fr-input-group">
+                <label class="fr-label" for="ex-instructions">
+                    Consignes libres <span class="fr-hint-text">(optionnel)</span>
+                </label>
+                <textarea
+                    id="ex-instructions"
+                    class="fr-input"
+                    rows="2"
+                    v-model="exConfig.user_instructions"
+                />
+            </div>
+            <div class="fr-checkbox-group">
+                <input id="ex-batch" type="checkbox" v-model="exConfig.batch_mode" />
+                <label class="fr-label" for="ex-batch">Traitement par lots (Batch API)</label>
+            </div>
+            <div class="fr-checkbox-group">
+                <input id="classify-ex" type="checkbox" v-model="classifyEx" />
+                <label class="fr-label" for="classify-ex">
+                    Analyser la consigne (style vs périmètre)
+                </label>
+            </div>
+            <div class="fr-checkbox-group">
+                <input id="ex-thinking" type="checkbox" v-model="exConfig.enable_thinking" />
+                <label class="fr-label" for="ex-thinking">Mode raisonnement (thinking)</label>
+            </div>
+            <div class="fr-checkbox-group">
+                <input id="ex-mixing" type="checkbox" v-model="exConfig.notion_mixing" />
+                <label class="fr-label" for="ex-mixing">Mélange des notions</label>
+            </div>
+
+            <details v-if="exPrompts[exConfig.exercise_type]" class="fr-mt-2w prompt-editor">
+                <summary class="fr-text--sm">⚙️ Personnaliser les consignes par niveau (exercices)</summary>
+                <p v-if="store.promptDefaults?.fixed_rules.exercises" class="fr-text--sm fr-mt-1w fixed-rules">
+                    🔒 {{ store.promptDefaults.fixed_rules.exercises }}
+                </p>
+                <div v-for="level in levels" :key="`ep-${level.key}`" class="fr-input-group fr-mt-1w">
+                    <label class="fr-label fr-text--sm" :for="`ep-${level.key}`">{{ level.label }}</label>
+                    <textarea
+                        :id="`ep-${level.key}`"
+                        class="fr-input"
+                        rows="3"
+                        v-model="exPrompts[exConfig.exercise_type][level.key]"
+                    />
+                </div>
+                <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="applyExerciseDefaults">
+                    ↺ Réinitialiser
+                </button>
+            </details>
+
+            <button
+                class="fr-btn fr-mt-1w"
+                :disabled="store.busy === 'exercises' || totalExercises === 0"
+                @click="generateExercises"
+            >
+                {{ store.busy === 'exercises' ? 'Génération…' : `Générer ${totalExercises} exercice(s)` }}
+            </button>
+            <button
+                class="fr-btn fr-btn--secondary fr-mt-1w fr-ml-1w"
+                @click="store.addExercise(exConfig.exercise_type)"
+            >
+                ➕ Ajouter un exercice manuel
+            </button>
+            <GenerationProgress kind="exercises" />
+            <p v-if="exConfig.exercise_type === 'calcul'" class="fr-text--sm fr-mt-1v">
+                ⚠️ Les exercices de calcul sont auto-vérifiés par exécution Python côté serveur
+                (sandbox).
+            </p>
+
+            <div v-if="store.exercises.length" class="fr-mt-3w">
+                <h3 class="fr-h6">{{ store.exercises.length }} exercice(s)</h3>
+                <ExerciseCard
+                    v-for="(ex, ei) in store.exercises"
+                    :key="ei"
+                    :exercise="ex"
+                    :index="ei"
+                />
+            </div>
+        </template>
+
+        <!-- ─── Aperçu texte ───────────────────────────────────────────────── -->
+        <template #apercu>
+            <h2 class="fr-h4">Aperçu du texte extrait</h2>
+            <p class="fr-text--sm">
+                Ce que le modèle voit réellement de vos documents, bloc par bloc. Utile pour
+                vérifier une extraction douteuse (PDF scanné, tableau, colonnes) avant de
+                lancer une génération.
+            </p>
+
+            <template v-if="store.upload">
+                <div
+                    v-for="(chunk, ci) in store.upload.chunks_preview"
+                    :key="ci"
+                    class="fr-mb-2w chunk-preview"
+                >
+                    <p class="fr-text--sm fr-mb-1v">
+                        <span class="fr-badge fr-badge--sm">Bloc {{ ci + 1 }}</span>
+                        <span class="fr-ml-1v">{{ chunk.source_document }}</span>
+                        <span v-if="chunk.source_pages.length" class="fr-hint-text fr-ml-1v">
+                            page(s) {{ chunk.source_pages.join(', ') }}
+                        </span>
+                    </p>
+                    <pre class="chunk-preview--text">{{ chunk.text_preview }}</pre>
+                </div>
+                <p v-if="!store.upload.chunks_preview.length" class="fr-text--sm">
+                    Aucun aperçu renvoyé par le serveur pour ces documents.
+                </p>
+            </template>
+        </template>
+
+        <!-- ─── Exports & partage ──────────────────────────────────────────── -->
+        <template #exports>
+            <h2 class="fr-h4">Exporter</h2>
             <div class="fr-btns-group fr-btns-group--inline fr-btns-group--sm">
                 <button class="fr-btn fr-btn--tertiary" @click="store.exportFile('html', 'quiz')">
                     Quiz HTML
@@ -580,185 +744,74 @@
                     Quiz + Exercices HTML
                 </button>
             </div>
-        </div>
 
-        <!-- Création de session partagée -->
-        <div class="fr-p-3w session-box">
-            <h3 class="fr-h6">Partager en session</h3>
-            <div class="fr-input-group">
-                <label class="fr-label" for="session-title">Titre de la session</label>
-                <input id="session-title" class="fr-input" v-model="sessionTitle" />
-            </div>
-            <div class="fr-checkbox-group">
-                <input id="pool-mode" type="checkbox" v-model="poolMode" />
-                <label class="fr-label" for="pool-mode">
-                    Mode Pool
-                    <span class="fr-hint-text">
-                        Chaque participant tire un sous-ensemble aléatoire de questions ; il peut
-                        réessayer avec de nouvelles questions.
-                    </span>
-                </label>
-            </div>
-            <div v-if="poolMode" class="fr-grid-row fr-grid-row--gutters">
-                <div class="fr-col-6">
-                    <label class="fr-label fr-text--sm" for="subset-size">Questions par participant</label>
-                    <input id="subset-size" class="fr-input" type="number" min="1" :max="store.questions.length" v-model.number="subsetSize" />
+            <h2 class="fr-h4 fr-mt-4w">Partager en session</h2>
+            <div class="fr-p-3w session-box">
+                <div class="fr-input-group">
+                    <label class="fr-label" for="session-title">Titre de la session</label>
+                    <input id="session-title" class="fr-input" v-model="sessionTitle" />
                 </div>
-                <div class="fr-col-6">
-                    <label class="fr-label fr-text--sm" for="pass-threshold">Seuil de réussite (%)</label>
-                    <input id="pass-threshold" class="fr-input" type="number" min="0" max="100" v-model.number="passThreshold" />
+                <div class="fr-checkbox-group">
+                    <input id="pool-mode" type="checkbox" v-model="poolMode" />
+                    <label class="fr-label" for="pool-mode">
+                        Mode Pool
+                        <span class="fr-hint-text">
+                            Chaque participant tire un sous-ensemble aléatoire de questions ; il peut
+                            réessayer avec de nouvelles questions.
+                        </span>
+                    </label>
+                </div>
+                <div v-if="poolMode" class="fr-grid-row fr-grid-row--gutters">
+                    <div class="fr-col-6">
+                        <label class="fr-label fr-text--sm" for="subset-size">Questions par participant</label>
+                        <input id="subset-size" class="fr-input" type="number" min="1" :max="store.questions.length" v-model.number="subsetSize" />
+                    </div>
+                    <div class="fr-col-6">
+                        <label class="fr-label fr-text--sm" for="pass-threshold">Seuil de réussite (%)</label>
+                        <input id="pass-threshold" class="fr-input" type="number" min="0" max="100" v-model.number="passThreshold" />
+                    </div>
+                </div>
+                <button
+                    class="fr-btn fr-mt-1w"
+                    :disabled="store.busy === 'session' || !sessionTitle.trim()"
+                    @click="createSession"
+                >
+                    {{ store.busy === 'session' ? 'Création…' : poolMode ? 'Créer la session pool' : 'Créer la session' }}
+                </button>
+
+                <div v-if="sessionCode" class="fr-alert fr-alert--success fr-mt-2w">
+                    <p>
+                        Session créée — code <strong>{{ sessionCode }}</strong>.
+                        <RouterLink :to="{ name: 'ParticipantPage', query: { code: sessionCode } }">
+                            Page participant
+                        </RouterLink>
+                        ·
+                        <RouterLink :to="{ name: 'AnalyticsPage', query: { code: sessionCode } }">
+                            Analytics
+                        </RouterLink>
+                    </p>
+                </div>
+
+                <hr class="fr-mt-2w fr-mb-2w" />
+                <h3 class="fr-h6">Ou exporter vers un atelier formateur</h3>
+                <button
+                    class="fr-btn fr-btn--secondary"
+                    :disabled="store.busy === 'workshop' || !sessionTitle.trim()"
+                    @click="createWorkshop"
+                >
+                    {{ store.busy === 'workshop' ? 'Création…' : 'Créer un atelier' }}
+                </button>
+                <div v-if="workshopCode" class="fr-alert fr-alert--success fr-mt-2w">
+                    <p>
+                        Atelier créé — code <strong>{{ workshopCode }}</strong>.
+                        <RouterLink :to="{ name: 'WorkshopPage', query: { code: workshopCode } }">
+                            Ouvrir l'atelier
+                        </RouterLink>
+                    </p>
                 </div>
             </div>
-            <button
-                class="fr-btn fr-mt-1w"
-                :disabled="store.busy === 'session' || !sessionTitle.trim()"
-                @click="createSession"
-            >
-                {{ store.busy === 'session' ? 'Création…' : poolMode ? 'Créer la session pool' : 'Créer la session' }}
-            </button>
-
-            <div v-if="sessionCode" class="fr-alert fr-alert--success fr-mt-2w">
-                <p>
-                    Session créée — code <strong>{{ sessionCode }}</strong>.
-                    <RouterLink :to="{ name: 'ParticipantPage', query: { code: sessionCode } }">
-                        Page participant
-                    </RouterLink>
-                    ·
-                    <RouterLink :to="{ name: 'AnalyticsPage', query: { code: sessionCode } }">
-                        Analytics
-                    </RouterLink>
-                </p>
-            </div>
-
-            <hr class="fr-mt-2w fr-mb-2w" />
-            <h3 class="fr-h6">Ou exporter vers un atelier formateur</h3>
-            <button
-                class="fr-btn fr-btn--secondary"
-                :disabled="store.busy === 'workshop' || !sessionTitle.trim()"
-                @click="createWorkshop"
-            >
-                {{ store.busy === 'workshop' ? 'Création…' : 'Créer un atelier' }}
-            </button>
-            <div v-if="workshopCode" class="fr-alert fr-alert--success fr-mt-2w">
-                <p>
-                    Atelier créé — code <strong>{{ workshopCode }}</strong>.
-                    <RouterLink :to="{ name: 'WorkshopPage', query: { code: workshopCode } }">
-                        Ouvrir l'atelier
-                    </RouterLink>
-                </p>
-            </div>
-        </div>
-    </section>
-
-    <!-- Étape 5 : Exercices -->
-    <section v-if="store.upload" class="fr-mb-4w">
-        <h2 class="fr-h4">5. Exercices</h2>
-        <div class="fr-grid-row fr-grid-row--gutters">
-            <div class="fr-col-12 fr-col-md-4">
-                <label class="fr-label" for="ex-type">Type</label>
-                <select id="ex-type" class="fr-select" v-model="exConfig.exercise_type">
-                    <option value="calcul">Calcul numérique</option>
-                    <option value="trou">Texte à trou</option>
-                    <option value="cas_pratique">Cas pratique</option>
-                </select>
-            </div>
-            <div class="fr-col-4 fr-col-md-2" v-for="level in levels" :key="`ex-${level.key}`">
-                <label class="fr-label" :for="`ex-count-${level.key}`">{{ level.label }}</label>
-                <input
-                    :id="`ex-count-${level.key}`"
-                    class="fr-input"
-                    type="number"
-                    min="0"
-                    max="20"
-                    v-model.number="exCounts[level.key]"
-                />
-            </div>
-        </div>
-
-        <div class="fr-input-group fr-mt-2w">
-            <label class="fr-label" for="ex-persona">
-                Persona expert <span class="fr-hint-text">(optionnel)</span>
-            </label>
-            <input id="ex-persona" class="fr-input" v-model="exConfig.persona" />
-        </div>
-        <div class="fr-input-group">
-            <label class="fr-label" for="ex-instructions">
-                Consignes libres <span class="fr-hint-text">(optionnel)</span>
-            </label>
-            <textarea
-                id="ex-instructions"
-                class="fr-input"
-                rows="2"
-                v-model="exConfig.user_instructions"
-            />
-        </div>
-        <div class="fr-checkbox-group">
-            <input id="ex-batch" type="checkbox" v-model="exConfig.batch_mode" />
-            <label class="fr-label" for="ex-batch">Traitement par lots (Batch API)</label>
-        </div>
-        <div class="fr-checkbox-group">
-            <input id="classify-ex" type="checkbox" v-model="classifyEx" />
-            <label class="fr-label" for="classify-ex">
-                Analyser la consigne (style vs périmètre)
-            </label>
-        </div>
-        <div class="fr-checkbox-group">
-            <input id="ex-thinking" type="checkbox" v-model="exConfig.enable_thinking" />
-            <label class="fr-label" for="ex-thinking">Mode raisonnement (thinking)</label>
-        </div>
-        <div class="fr-checkbox-group">
-            <input id="ex-mixing" type="checkbox" v-model="exConfig.notion_mixing" />
-            <label class="fr-label" for="ex-mixing">Mélange des notions</label>
-        </div>
-
-        <details v-if="exPrompts[exConfig.exercise_type]" class="fr-mt-2w prompt-editor">
-            <summary class="fr-text--sm">⚙️ Personnaliser les consignes par niveau (exercices)</summary>
-            <p v-if="store.promptDefaults?.fixed_rules.exercises" class="fr-text--sm fr-mt-1w fixed-rules">
-                🔒 {{ store.promptDefaults.fixed_rules.exercises }}
-            </p>
-            <div v-for="level in levels" :key="`ep-${level.key}`" class="fr-input-group fr-mt-1w">
-                <label class="fr-label fr-text--sm" :for="`ep-${level.key}`">{{ level.label }}</label>
-                <textarea
-                    :id="`ep-${level.key}`"
-                    class="fr-input"
-                    rows="3"
-                    v-model="exPrompts[exConfig.exercise_type][level.key]"
-                />
-            </div>
-            <button class="fr-btn fr-btn--tertiary fr-btn--sm" @click="applyExerciseDefaults">
-                ↺ Réinitialiser
-            </button>
-        </details>
-
-        <button
-            class="fr-btn fr-mt-1w"
-            :disabled="store.busy === 'exercises' || totalExercises === 0"
-            @click="generateExercises"
-        >
-            {{ store.busy === 'exercises' ? 'Génération…' : `Générer ${totalExercises} exercice(s)` }}
-        </button>
-        <button
-            class="fr-btn fr-btn--secondary fr-mt-1w fr-ml-1w"
-            @click="store.addExercise(exConfig.exercise_type)"
-        >
-            ➕ Ajouter un exercice manuel
-        </button>
-        <GenerationProgress kind="exercises" />
-        <p v-if="exConfig.exercise_type === 'calcul'" class="fr-text--sm fr-mt-1v">
-            ⚠️ Les exercices de calcul sont auto-vérifiés par exécution Python côté serveur
-            (sandbox).
-        </p>
-
-        <div v-if="store.exercises.length" class="fr-mt-3w">
-            <h3 class="fr-h6">{{ store.exercises.length }} exercice(s)</h3>
-            <ExerciseCard
-                v-for="(ex, ei) in store.exercises"
-                :key="ei"
-                :exercise="ex"
-                :index="ei"
-            />
-        </div>
-    </section>
+        </template>
+    </DsfrTabs>
 </template>
 
 <script setup lang="ts">
@@ -768,6 +821,8 @@ import { useGenerationStore } from '@/stores/generationStore';
 import QuestionCard from '@/components/QuestionCard.vue';
 import ExerciseCard from '@/components/ExerciseCard.vue';
 import GenerationProgress from '@/components/GenerationProgress.vue';
+import DsfrTabs from '@/components/DsfrTabs.vue';
+import type { TabDefinition } from '@/components/dsfrTabs';
 
 defineOptions({ name: 'GeneratePage' });
 
@@ -778,6 +833,63 @@ const levels = [
     { key: 'moyen', label: '🟡 Moyen' },
     { key: 'difficile', label: '🔴 Difficile' },
 ] as const;
+
+// ── Onglets ──────────────────────────────────────────────────────────────────
+// Reprend le découpage de l'interface Streamlit historique. Les onglets qui
+// supposent un document analysé restent désactivés tant que l'upload n'a pas eu
+// lieu ; celui des exports attend qu'il y ait quelque chose à exporter.
+const tab = ref('documents');
+
+const tabs = computed<TabDefinition[]>(() => {
+    const needsDocument = "Analysez d'abord un document dans l'onglet « Documents ».";
+    const uploaded = Boolean(store.upload);
+    return [
+        {
+            key: 'documents',
+            label: '📄 Documents',
+            badge: store.upload?.documents.length,
+        },
+        {
+            key: 'notions',
+            label: '📚 Notions',
+            disabled: !uploaded,
+            disabledHint: needsDocument,
+            badge: store.notions.length || undefined,
+        },
+        {
+            key: 'quiz',
+            label: '🎯 Quiz QCM',
+            disabled: !uploaded,
+            disabledHint: needsDocument,
+            badge: store.questions.length || undefined,
+        },
+        {
+            key: 'exercices',
+            label: '🧮 Exercices',
+            disabled: !uploaded,
+            disabledHint: needsDocument,
+            badge: store.exercises.length || undefined,
+        },
+        {
+            key: 'apercu',
+            label: '👁️ Aperçu texte',
+            disabled: !uploaded,
+            disabledHint: needsDocument,
+        },
+        {
+            key: 'exports',
+            label: '📦 Exports & partage',
+            disabled: !store.questions.length && !store.exercises.length,
+            disabledHint: 'Générez au moins une question ou un exercice.',
+        },
+    ];
+});
+
+// Un onglet peut devenir inaccessible (remise à zéro, suppression du dernier
+// contenu exportable) : on revient alors sur « Documents ».
+watch(tabs, (list) => {
+    if (list.find((t) => t.key === tab.value)?.disabled) tab.value = 'documents';
+});
 
 // ── Prompts éditables par niveau ─────────────────────────────────────────────
 const quizPrompts = reactive<Record<string, string>>({ facile: '', moyen: '', difficile: '' });
@@ -982,5 +1094,21 @@ async function createWorkshop() {
     border: 1px dashed var(--border-default-grey);
     border-radius: 0.25rem;
     background: var(--background-alt-grey);
+}
+.chunk-preview {
+    border: 1px solid var(--border-default-grey);
+    border-radius: 0.5rem;
+    padding: 1rem;
+}
+.chunk-preview--text {
+    margin: 0;
+    max-height: 18rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.875rem;
+    background: var(--background-alt-grey);
+    padding: 0.75rem;
+    border-radius: 0.25rem;
 }
 </style>

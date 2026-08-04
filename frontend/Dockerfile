@@ -4,14 +4,16 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# DGFIP: registre nexus interne pour le CLIR (décommenter sur l'intranet).
-# RUN npm config set registry https://nexus3.appli.dgfip/repository/npmjs_group/ \
-#     && npm config set strict-ssl false
-
 # Installation reproductible depuis le package-lock.json COMMITTÉ.
-# npm ci installe EXACTEMENT les versions du lock (présentes dans le miroir nexus figé) ;
-# npm install chercherait du plus récent -> 404. Voir docs/MIGRATION_DSFR / template.
-COPY package.json package-lock.json ./
+#
+# Leçon 1 (miroir nexus FIGÉ) : `npm ci` installe EXACTEMENT les versions du lock
+# (présentes dans le miroir) ; `npm install` chercherait du plus récent -> 404.
+#
+# Leçon 2 (miroir nexus INCOMPLET) : un paquet absent se prend sur registry.npmjs.org
+# via une ligne `@scope:registry` du .npmrc — d'où le .npmrc copié AVANT `npm ci`,
+# sinon la redirection ne s'applique pas au build. Le `*` le rend optionnel : l'image
+# se build aussi hors DGFIP. Voir README.md.
+COPY package.json package-lock.json* .npmrc* ./
 RUN npm ci
 
 COPY . .

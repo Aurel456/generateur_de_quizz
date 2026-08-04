@@ -4,3 +4,18 @@ proxy=http://proxy.infra.dgfip:3128
 https-proxy=http://proxy.infra.dgfip:3128
 noproxy=nexus3.appli.dgfip
 strict-ssl=false
+
+# Paquets absents du nexus (404 à l'installation) : le miroir n'est pas exhaustif.
+# Règle : ce qu'on ne récupère pas sur le nexus, on le prend sur registry.npmjs.org.
+# Pour un paquet SCOPÉ, décommenter et adapter (une ligne par scope manquant) :
+# @scope:registry=https://registry.npmjs.org
+#
+# Pour un paquet NON scopé, npm ne sait pas cibler un registre paquet par paquet :
+# `npm install <paquet> --registry=https://registry.npmjs.org` au coup par coup, ou —
+# si les cas se multiplient — inverser la logique de ce fichier :
+#   registry=https://registry.npmjs.org
+#   @dgfip:registry=https://nexus3.appli.dgfip/repository/npmjs_group/
+#
+# ⚠️ Ce fichier est prioritaire sur les variables HTTP_PROXY/HTTPS_PROXY du Dockerfile,
+# et tout paquet redirigé vers npmjs rend le lockfile MIXTE : la machine qui builde doit
+# alors avoir un accès sortant vers npmjs. Voir README.md.
