@@ -166,9 +166,13 @@ Application Streamlit permettant de générer automatiquement des **Quiz QCM** e
 - **Archive ZIP d'items `.quiz`** importables dans **SCENARI** (chaîne éditoriale libre). Un fichier XML par question/exercice, regroupant quiz QCM et exercices.
 - **Correspondance des primitives SCENARI** :
   - QCM à **1 bonne réponse** (y compris Vrai/Faux) → **QCU** (`ent:mcqSur`, avec `<sc:solution choice="N"/>`).
-  - QCM à **plusieurs bonnes réponses** → **QCM cases à cocher** (`ent:mcqMurBool`, `solution="checked"` + explication globale).
+  - QCM à **plusieurs bonnes réponses** → **QCM cases à cocher** (`ent:mcqMurBool`, `solution="checked"` / `solution="unchecked"` sur **chaque** choix).
   - Exercice **type "trou"** → **Texte à trou** (`ent:cloze`) — menu déroulant (`sp:options`) si des variantes existent, sinon saisie libre.
   - Exercice **type "cas pratique" / "calcul"** → **Quiz rédactionnel** (`ent:practQuiz`, énoncé dans `sp:desc`, corrigé dans `sp:sol`).
+- **Conformité à l'ergonomie SCENARI** :
+  - L'explication est toujours placée dans **« Explication globale »** (`sc:globalExplanation`), affichée **après** les réponses — jamais rattachée à un choix.
+  - Le champ **« Titre accroche »** (`sp:title`) est laissé vide : l'énoncé n'apparaît que dans le champ « Énoncé ». L'item reste identifiable par son nom de fichier `.quiz`.
+  - Les **renvois aux réponses sont renumérotés** (« les réponses A et B » → « les réponses 1 et 2 »), SCENARI numérotant les choix au lieu de les lettrer. Les sigles et lettres isolées légitimes sont préservés. Les exports HTML/CSV conservent les lettres.
 - Bouton **"🗂️ SCENARI .quiz"** dans l'onglet Exports (Streamlit) et dans la page Génération (interface DSFR).
 
 ---
@@ -410,6 +414,15 @@ generateur_de_quizz/
 ---
 
 ## 📋 Changelog
+
+### v5.2.1 — Export SCENARI, retours du test d'intégration
+
+Corrections issues du test d'import réel en atelier SCENARI (toutes dans `export/scenari_exporter.py`) :
+
+- **Explication placée dans « Explication globale »** : pour les QCU (`ent:mcqSur` — Vrai/Faux et QCM à une seule bonne réponse), l'explication alimentait `<sc:choiceExplanation>` du bon choix, donc le champ « Réponse N » de SCENARI, et s'affichait au niveau de la réponse. Elle passe dans `<sc:globalExplanation>`, affichée après les réponses — comportement déjà en place pour le QCM multi-réponses.
+- **QCM à plusieurs bonnes réponses réparé** : l'attribut `solution` n'était posé que sur les bonnes réponses ; le champ « Solution » des mauvaises réponses restait vide à l'import, ce qui rendait l'item non fonctionnel. Chaque choix porte désormais `solution="checked"` ou `solution="unchecked"`.
+- **Plus de titre en double** : l'énoncé tronqué était recopié dans `<sp:title>`, donc affiché à la fois en « Titre accroche » et en « Énoncé ». `<ent:quizM/>` est maintenant émis sans titre pour les 4 primitives (QCU, QCM, texte à trou, quiz rédactionnel). Un titre explicite reste possible via le paramètre `title` de `question_to_scenari()` / `exercise_to_scenari()`.
+- **Renvois aux réponses renumérotés** : SCENARI numérote les choix (1, 2, 3…) là où l'application les lettre (A, B, C…). `_renumber_choice_refs()` convertit les renvois textuels (« la réponse C », « les réponses A et B », « (A) ») dans l'énoncé, les libellés de choix et l'explication, en se basant sur le rang réel du choix dans l'item. Conversion limitée aux lettres qui correspondent à un choix existant et aux tournures déclenchées par un mot-clé (réponse, choix, proposition, option, affirmation…) — les sigles (TVA, CGI) et expressions type « de A à Z » sont préservés. **Uniquement à l'export SCENARI** : HTML et CSV gardent les lettres.
 
 ### v5.2
 

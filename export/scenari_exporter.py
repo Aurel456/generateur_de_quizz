@@ -75,7 +75,15 @@ def _flow(text: str, em: bool = False) -> str:
     return f"<ent:flow><sp:txt>{_txt(text, em)}</sp:txt></ent:flow>"
 
 
-def _quizm(title: str) -> str:
+def _quizm(title: Optional[str] = None) -> str:
+    """Bloc `<ent:quizM>` — `sp:title` alimente le champ « Titre accroche » de SCENARI.
+
+    Par défaut on ne le remplit PAS : y recopier l'énoncé le fait apparaître deux
+    fois dans SCENARI (« Titre accroche » + « Énoncé »). L'item reste identifiable
+    par son nom de fichier `.quiz`.
+    """
+    if not (title or "").strip():
+        return "<ent:quizM/>"
     return f"<ent:quizM><sp:title>{_esc(title)}</sp:title></ent:quizM>"
 
 
@@ -85,16 +93,63 @@ def _slugify(text: str, fallback: str = "item") -> str:
     return s[:50] or fallback
 
 
-def _short_title(text: str, max_len: int = 60) -> str:
-    """Titre court pour `sp:title` (workspace SCENARI)."""
-    s = re.sub(r"\s+", " ", str(text or "")).strip()
-    if len(s) > max_len:
-        s = s[: max_len - 1].rstrip() + "…"
-    return s or "Question"
-
-
 def _wrap_item(body: str) -> str:
     return f"{_XML_HEADER}\n{_ITEM_OPEN}{body}{_ITEM_CLOSE}"
+
+
+# ──────────────── Renumérotation des renvois aux choix ──────────────
+#
+# SCENARI numérote les réponses (1, 2, 3…) alors que l'application les étiquette
+# par des lettres (A, B, C…). Les renvois rédigés par le LLM (« les réponses A et
+# B sont correctes ») doivent donc être convertis à l'export — uniquement ici :
+# les exports HTML/CSV continuent d'afficher les lettres.
+
+_CHOICE_KEYWORDS = r"r[ée]ponses?|choix|propositions?|options?|affirmations?|assertions?|items?"
+_LETTER_SEP = r"(?:,|;|/|&|et|ou|à)"
+
+# « la réponse C », « les réponses A et B », « choix A, B et D »
+_KEYWORD_REF_RE = re.compile(
+    rf"(?i:{_CHOICE_KEYWORDS})"
+    rf"(?:\s+n(?:°|o)\s*|\s+)"
+    rf"[A-Z]\b(?:\s*{_LETTER_SEP}\s*[A-Z]\b)*"
+)
+# « (A) »
+_PAREN_REF_RE = re.compile(r"\(([A-Z])\)")
+# « A et B sont correctes » (sans mot déclencheur devant)
+_BARE_PAIR_RE = re.compile(rf"\b([A-Z])\b(\s*{_LETTER_SEP}\s*)\b([A-Z])\b")
+
+_SINGLE_LETTER_RE = re.compile(r"\b([A-Z])\b")
+
+
+def _renumber_choice_refs(text: str, mapping: dict) -> str:
+    """Remplace les renvois « réponse A » par « réponse 1 » selon `mapping`.
+
+    `mapping` associe chaque label de choix (A, B…) à son rang 1-based tel qu'il
+    apparaît dans l'item SCENARI. Une lettre absente du mapping est laissée
+    intacte (sigles, « de A à Z », etc.).
+    """
+    if not text or not mapping:
+        return text
+
+    def _sub_letters(match):
+        return _SINGLE_LETTER_RE.sub(
+            lambda m: mapping.get(m.group(1), m.group(1)), match.group(0)
+        )
+
+    def _sub_paren(match):
+        letter = match.group(1)
+        return f"({mapping[letter]})" if letter in mapping else match.group(0)
+
+    def _sub_pair(match):
+        first, sep, second = match.group(1), match.group(2), match.group(3)
+        if first in mapping and second in mapping:
+            return f"{mapping[first]}{sep}{mapping[second]}"
+        return match.group(0)
+
+    out = _KEYWORD_REF_RE.sub(_sub_letters, text)
+    out = _PAREN_REF_RE.sub(_sub_paren, out)
+    out = _BARE_PAIR_RE.sub(_sub_pair, out)
+    return out
 
 
 # ─────────────────────────── QCM → SCENARI ──────────────────────────
@@ -103,30 +158,42 @@ def question_to_scenari(q, title: Optional[str] = None) -> str:
     """Convertit une `QuizQuestion` en item SCENARI (mcqSur ou mcqMurBool)."""
     labels = sorted(q.choices.keys())
     correct = set(q.correct_answers or [])
-    item_title = title or _short_title(q.question)
+    # A → "1", B → "2"… pour convertir les renvois textuels aux choix
+    numbering = {label: str(i) for i, label in enumerate(labels, start=1)}
 
     question_block = (
-        f"<sc:question>{_flow(q.question, em=True)}</sc:question>"
+        f"<sc:question>{_flow(_renumber_choice_refs(q.question, numbering), em=True)}</sc:question>"
     )
 
     if len(correct) <= 1:
-        return _wrap_item(_build_mcq_sur(q, labels, item_title, question_block))
-    return _wrap_item(_build_mcq_mur_bool(q, labels, correct, item_title, question_block))
+        return _wrap_item(_build_mcq_sur(q, labels, numbering, title, question_block))
+    return _wrap_item(
+        _build_mcq_mur_bool(q, labels, correct, numbering, title, question_block)
+    )
 
 
-def _build_mcq_sur(q, labels, item_title, question_block) -> str:
-    """QCU : une seule bonne réponse, `<sc:solution choice="N"/>` (1-based)."""
+def _build_mcq_sur(q, labels, numbering, item_title, question_block) -> str:
+    """QCU : une seule bonne réponse, `<sc:solution choice="N"/>` (1-based).
+
+    L'explication va dans `<sc:globalExplanation>` (« Explication globale »,
+    affichée après les réponses) et non dans le `<sc:choiceExplanation>` du bon
+    choix, qui l'accrochait au champ « Réponse N ».
+    """
     correct_label = (q.correct_answers or [None])[0]
     choices_xml = []
     solution_index = 1
     for i, label in enumerate(labels, start=1):
-        is_correct = label == correct_label
-        if is_correct:
+        if label == correct_label:
             solution_index = i
-        choice = f"<sc:choiceLabel>{_txt(q.choices[label])}</sc:choiceLabel>"
-        if is_correct and q.explanation:
-            choice += f"<sc:choiceExplanation>{_txt(q.explanation)}</sc:choiceExplanation>"
-        choices_xml.append(f"<sc:choice>{choice}</sc:choice>")
+        choice_text = _renumber_choice_refs(q.choices[label], numbering)
+        choices_xml.append(
+            f"<sc:choice><sc:choiceLabel>{_txt(choice_text)}</sc:choiceLabel></sc:choice>"
+        )
+
+    explanation_xml = ""
+    if q.explanation:
+        explanation = _renumber_choice_refs(q.explanation, numbering)
+        explanation_xml = f"<sc:globalExplanation>{_flow(explanation)}</sc:globalExplanation>"
 
     return (
         "<ent:mcqSur>"
@@ -134,23 +201,30 @@ def _build_mcq_sur(q, labels, item_title, question_block) -> str:
         f"{question_block}"
         f"<sc:choices>{''.join(choices_xml)}</sc:choices>"
         f'<sc:solution choice="{solution_index}"/>'
+        f"{explanation_xml}"
         "</ent:mcqSur>"
     )
 
 
-def _build_mcq_mur_bool(q, labels, correct, item_title, question_block) -> str:
-    """QCM cases à cocher : `solution="checked"` sur les bonnes réponses."""
+def _build_mcq_mur_bool(q, labels, correct, numbering, item_title, question_block) -> str:
+    """QCM cases à cocher : `solution` renseigné sur CHAQUE choix.
+
+    SCENARI attend explicitement « Coché » / « Non coché » ; omettre l'attribut
+    sur les mauvaises réponses laisse le champ vide à l'import et casse l'item.
+    """
     choices_xml = []
     for label in labels:
-        attr = ' solution="checked"' if label in correct else ""
+        attr = "checked" if label in correct else "unchecked"
+        choice_text = _renumber_choice_refs(q.choices[label], numbering)
         choices_xml.append(
-            f"<sc:choice{attr}>"
-            f"<sc:choiceLabel>{_txt(q.choices[label])}</sc:choiceLabel>"
+            f'<sc:choice solution="{attr}">'
+            f"<sc:choiceLabel>{_txt(choice_text)}</sc:choiceLabel>"
             "</sc:choice>"
         )
     explanation_xml = ""
     if q.explanation:
-        explanation_xml = f"<sc:globalExplanation>{_flow(q.explanation)}</sc:globalExplanation>"
+        explanation = _renumber_choice_refs(q.explanation, numbering)
+        explanation_xml = f"<sc:globalExplanation>{_flow(explanation)}</sc:globalExplanation>"
 
     return (
         "<ent:mcqMurBool>"
@@ -167,13 +241,12 @@ def _build_mcq_mur_bool(q, labels, correct, item_title, question_block) -> str:
 def exercise_to_scenari(ex, title: Optional[str] = None) -> str:
     """Convertit un `Exercise` en item SCENARI (cloze pour trou, practQuiz sinon)."""
     ex_type = getattr(ex, "exercise_type", "calcul")
-    item_title = title or _short_title(ex.statement)
     if ex_type == "trou":
-        return _wrap_item(_build_cloze(ex, item_title))
-    return _wrap_item(_build_pract_quiz(ex, item_title))
+        return _wrap_item(_build_cloze(ex, title))
+    return _wrap_item(_build_pract_quiz(ex, title))
 
 
-def _build_cloze(ex, item_title) -> str:
+def _build_cloze(ex, item_title=None) -> str:
     """Texte à trou : remplace les `___` par des `textLeaf role="gap"`.
 
     Chaque trou devient un menu déroulant (`sp:options`) si des variantes existent,
@@ -214,7 +287,7 @@ def _build_cloze(ex, item_title) -> str:
     )
 
 
-def _build_pract_quiz(ex, item_title) -> str:
+def _build_pract_quiz(ex, item_title=None) -> str:
     """Quiz rédactionnel : énoncé dans `sp:desc`, corrigé dans `sp:sol`."""
     # ── Énoncé (desc) ──
     desc_parts = [_paras(ex.statement)]

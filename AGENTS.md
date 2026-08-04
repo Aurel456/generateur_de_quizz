@@ -196,7 +196,15 @@ Internes streaming : `_execute_completion_stream()`, `_execute_responses_stream(
 
 **`export/quiz_exporter.py`** : `export_quiz_html()`, `export_quiz_csv()`, `export_exercises_html()`, `export_exercises_csv()`, `export_combined_html()`, `export_combined_csv()`, `export_quiz_moodle_xml()`
 
-**`export/scenari_exporter.py`** : `question_to_scenari()` (QCU `ent:mcqSur` si 1 bonne réponse, sinon QCM `ent:mcqMurBool`), `exercise_to_scenari()` (`ent:cloze` pour type "trou", `ent:practQuiz` sinon), `build_scenari_items()` → liste `(nom.quiz, xml)`, `export_scenari_zip()` → bytes ZIP. Câblé : `app.py` onglet Exports, `backend/app/api/exports.py` (`format=scenari`), `frontend` (bouton GeneratePage.vue).
+**`export/scenari_exporter.py`** : `question_to_scenari()` (QCU `ent:mcqSur` si 1 bonne réponse, sinon QCM `ent:mcqMurBool`), `exercise_to_scenari()` (`ent:cloze` pour type "trou", `ent:practQuiz` sinon), `_renumber_choice_refs()` (lettres A/B/C → 1/2/3 dans les renvois textuels), `build_scenari_items()` → liste `(nom.quiz, xml)`, `export_scenari_zip()` → bytes ZIP. Câblé : `app.py` onglet Exports, `backend/app/api/exports.py` (`format=scenari`), `frontend` (bouton GeneratePage.vue).
+
+**Contraintes SCENARI à respecter** (issues d'un test d'import réel — ne pas régresser) :
+
+- `<sp:title>` alimente le champ « Titre accroche » : le laisser **vide** (`<ent:quizM/>`), sinon l'énoncé s'affiche deux fois. `_quizm(title=None)` gère les deux cas.
+- L'explication va dans `<sc:globalExplanation>` (« Explication globale », affichée après les réponses), **jamais** dans `<sc:choiceExplanation>` qui la rattache au champ « Réponse N ».
+- Pour `ent:mcqMurBool`, l'attribut `solution` doit être présent sur **chaque** `<sc:choice>` (`checked` **ou** `unchecked`) — l'omettre laisse le champ « Solution » vide à l'import et casse l'item.
+- SCENARI numérote les choix (1, 2, 3…) : les renvois « réponse A » du LLM sont convertis à l'export via `_renumber_choice_refs()`. Ne pas propager cette conversion aux exports HTML/CSV, qui affichent les lettres.
+- Fichiers `.quiz` de référence exportés depuis SCENARI à la racine du repo (gitignorés) — s'y référer pour toute évolution du schéma.
 
 **`sessions/session_store.py`** : `init_db()`, `create_session()`, `get_session()`, `submit_result()`, `get_session_results()`, `get_session_analytics()`, `deactivate_session()`, `list_sessions()`, `create_pool_session()`, `get_next_subset()`, `create_work_session()`, `get_work_session()`, `update_work_session_draft()`, `publish_work_session()`, `list_work_sessions()`
 

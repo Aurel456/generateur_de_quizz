@@ -74,6 +74,19 @@ def test_qcu_mcqsur_single_correct():
     assert sol.get("choice") == "2"
 
 
+def test_qcu_explanation_goes_to_global_not_choice():
+    """L'explication doit alimenter « Explication globale », pas « Réponse N »."""
+    q = FakeQuestion(correct_answers=["B"], explanation="ESCALE sécurise les échanges.")
+    xml = se.question_to_scenari(q)
+    root = _parse(xml)
+    mcq = root.find("ent:mcqSur", NS)
+    glob = mcq.find("sc:globalExplanation", NS)
+    assert glob is not None
+    assert "ESCALE sécurise" in "".join(glob.itertext())
+    # Plus aucune explication accrochée à un choix
+    assert mcq.find(".//sc:choiceExplanation", NS) is None
+
+
 def test_qcm_mcqmurbool_multiple_correct():
     q = FakeQuestion(
         choices={"A": "un", "B": "deux"},
@@ -86,6 +99,75 @@ def test_qcm_mcqmurbool_multiple_correct():
     checked = [c for c in mcq.findall("sc:choices/sc:choice", NS) if c.get("solution") == "checked"]
     assert len(checked) == 2
     assert mcq.find("sc:globalExplanation", NS) is not None
+
+
+def test_qcm_mcqmurbool_marks_wrong_choices_unchecked():
+    """SCENARI exige « Non coché » explicite sur les mauvaises réponses."""
+    q = FakeQuestion(
+        choices={"A": "un", "B": "deux", "C": "trois"},
+        correct_answers=["A", "C"],
+    )
+    xml = se.question_to_scenari(q)
+    root = _parse(xml)
+    choices = root.findall("ent:mcqMurBool/sc:choices/sc:choice", NS)
+    assert [c.get("solution") for c in choices] == ["checked", "unchecked", "checked"]
+
+
+def test_no_title_accroche_on_any_primitive():
+    """`sp:title` vide → l'énoncé n'apparaît que dans « Énoncé »."""
+    items = [
+        se.question_to_scenari(FakeQuestion(correct_answers=["A"])),
+        se.question_to_scenari(FakeQuestion(correct_answers=["A", "B"])),
+        se.exercise_to_scenari(FakeExercise(exercise_type="calcul")),
+        se.exercise_to_scenari(
+            FakeExercise(statement="Sens ___ ici.", exercise_type="trou",
+                         blanks=[{"answer": "contraire"}])
+        ),
+    ]
+    for xml in items:
+        root = _parse(xml)
+        assert root.find(".//sp:title", NS) is None
+        assert root.find(".//ent:quizM", NS) is not None
+
+
+def test_explicit_title_still_supported():
+    xml = se.question_to_scenari(FakeQuestion(correct_answers=["A"]), title="Mon titre")
+    root = _parse(xml)
+    assert root.find(".//sp:title", NS).text == "Mon titre"
+
+
+# ──────────────── Renvois aux choix : lettres → chiffres ────────────
+
+def test_letter_refs_converted_to_numbers():
+    q = FakeQuestion(
+        choices={"A": "un", "B": "deux", "C": "trois"},
+        correct_answers=["A", "B"],
+        explanation="Les réponses A et B sont correctes, la réponse C est fausse.",
+    )
+    xml = se.question_to_scenari(q)
+    assert "Les réponses 1 et 2 sont correctes, la réponse 3 est fausse." in xml
+    assert "réponse A" not in xml
+
+
+def test_letter_refs_in_choice_labels():
+    q = FakeQuestion(
+        choices={"A": "un", "B": "deux", "C": "A et B sont correctes"},
+        correct_answers=["C"],
+        explanation="",
+    )
+    xml = se.question_to_scenari(q)
+    assert "1 et 2 sont correctes" in xml
+
+
+def test_acronyms_and_unknown_letters_left_intact():
+    q = FakeQuestion(
+        choices={"A": "un", "B": "deux"},
+        correct_answers=["A"],
+        explanation="La TVA relève du CGI ; le classement va de A à Z.",
+    )
+    xml = se.question_to_scenari(q)
+    assert "La TVA relève du CGI" in xml
+    assert "de A à Z" in xml
 
 
 def test_xml_escaping():
